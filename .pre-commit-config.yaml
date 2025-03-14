@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: cargo-fmt
+        name: cargo fmt
+        description: Format Rust code using rustfmt
+        entry: cargo fmt --
+        language: system
+        types: [rust]
+        pass_filenames: false

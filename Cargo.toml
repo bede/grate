@@ -1,0 +1,56 @@
+[package]
+name = "deacon"
+version = "0.1.0"
+description = "Fast alignment-free sequence filter"
+authors = ["Bede Constantinides <b@bede.im>"]
+edition = "2024"
+repository = "https://github.com/bede/deacon"
+homepage = "https://github.com/bede/deacon"
+keywords = ["bioinformatics", "genomics", "filtering", "decontamination"]
+categories = ["science", "command-line-utilities"]
+license-file = "LICENSE"
+exclude = ["bench/*"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1.1"
+anyhow = "1.0"
+thiserror = "2.0"
+simd-minimizers = "1.0.0"
+packed-seq = "1.0.2"
+rustc-hash = "2.1.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+bincode = "1.0"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+needletail = "0.6"
+zstd = "0.13"
+indicatif = "0.17"
+
+# Test dependencies for integration tests
+[dev-dependencies]
+assert_cmd = "2.0"
+predicates = "3.0"
+tempfile = "3.8"
+rstest = "0.25"
+
+# No special target.cfg needed, dev-dependencies are available to unit tests
+
+# Define test files for organization
+[[test]]
+name = "cli_tests"
+path = "tests/cli_tests.rs"
+
+[[test]]
+name = "index_tests"
+path = "tests/index_tests.rs"
+
+[[test]]
+name = "filter_tests"
+path = "tests/filter_tests.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
