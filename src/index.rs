@@ -1,6 +1,6 @@
 use crate::index_format::IndexHeader;
 use anyhow::{Context, Result};
-use bincode::serialize_into;
+use bincode::serde::{decode_from_std_read, encode_into_std_write};
 use rustc_hash::FxHashSet;
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
@@ -20,19 +20,21 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
 
     // Deserialize header
     let header: IndexHeader =
-        bincode::deserialize_from(&mut reader).context("Failed to deserialize index header")?;
+    decode_from_std_read(&mut reader, bincode::config::standard())
+        .context("Failed to deserialize index header")?;
     header.validate()?;
 
     // Deserialize the count of minimizers so we can init a FxHashSet with the right capacity
     let count: usize =
-        bincode::deserialize_from(&mut reader).context("Failed to deserialize minimizer count")?;
+        decode_from_std_read(&mut reader, bincode::config::standard())
+            .context("Failed to deserialize minimizer count")?;
 
     // Pre-allocate the FxHashSet with the right capacity
     let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
 
     // Populate the FxHashSet
     for _ in 0..count {
-        let hash: u64 = bincode::deserialize_from(&mut reader)
+        let hash: u64 = decode_from_std_read(&mut reader, bincode::config::standard())
             .context("Failed to deserialize minimizer hash")?;
         minimizers.insert(hash);
     }
@@ -61,16 +63,18 @@ pub fn write_minimizers(
 
     // Serialize header and minimizers
     let mut writer = BufWriter::new(writer);
-    serialize_into(&mut writer, header).context("Failed to serialize index header")?;
+    encode_into_std_write(header, &mut writer, bincode::config::standard())
+        .context("Failed to serialize index header")?;
 
     // Serialize the count of minimizers first
     let count = minimizers.len();
-    serialize_into(&mut writer, &count).context("Failed to serialize minimizer count")?;
+    encode_into_std_write(&count, &mut writer, bincode::config::standard())
+        .context("Failed to serialize minimizer count")?;
 
     // Serialize each minimizer directly
     for &hash in minimizers {
-        serialize_into(&mut writer, &hash).context("Failed to serialize minimizer hash")?;
+        encode_into_std_write(&hash, &mut writer, bincode::config::standard())
+            .context("Failed to serialize minimizer hash")?;
     }
-
     Ok(())
 }

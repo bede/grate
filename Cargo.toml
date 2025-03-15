@@ -9,7 +9,7 @@ homepage = "https://github.com/bede/deacon"
 keywords = ["bioinformatics", "genomics", "filtering", "decontamination"]
 categories = ["science", "command-line-utilities"]
 license-file = "LICENSE"
-exclude = ["bench/*"]
+exclude = ["bench/*", "data/*"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -21,7 +21,7 @@ packed-seq = "1.0.2"
 rustc-hash = "2.1.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-bincode = "1.0"
+bincode = { version = "2.0", features = ["serde"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 needletail = "0.6"
 zstd = "0.13"
