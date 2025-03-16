@@ -19,15 +19,13 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
     let mut reader = BufReader::new(file);
 
     // Deserialize header
-    let header: IndexHeader =
-    decode_from_std_read(&mut reader, bincode::config::standard())
+    let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
         .context("Failed to deserialize index header")?;
     header.validate()?;
 
     // Deserialize the count of minimizers so we can init a FxHashSet with the right capacity
-    let count: usize =
-        decode_from_std_read(&mut reader, bincode::config::standard())
-            .context("Failed to deserialize minimizer count")?;
+    let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
+        .context("Failed to deserialize minimizer count")?;
 
     // Pre-allocate the FxHashSet with the right capacity
     let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
