@@ -182,24 +182,21 @@ fn hash_canonical_kmer(kmer: &[u8]) -> u64 {
 }
 
 /// Hash revcomp k-mers
-#[inline]
 fn hash_reverse_complement(kmer: &[u8]) -> u64 {
-    // Allocate revcomp buffer
-    let mut rc = Vec::with_capacity(kmer.len());
+    let mut state = xxhash_rust::xxh3::Xxh3::new();
 
-    // Calculate ervcomp
     for &nucleotide in kmer.iter().rev() {
         let complement = match nucleotide {
             b'A' => b'T',
             b'C' => b'G',
             b'G' => b'C',
             b'T' => b'A',
-            _ => b'N', // Screwup
+            _ => b'N',
         };
-        rc.push(complement);
+        state.update(&[complement]);
     }
 
-    xxh3_64(&rc)
+    state.digest()
 }
 
 #[cfg(test)]

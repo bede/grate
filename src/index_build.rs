@@ -22,7 +22,7 @@ pub fn build<P: AsRef<Path>>(
 
     // Init FxHashSet with 0.5B capacity
     let mut all_minimizers: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(500_000_000, Default::default());
+        FxHashSet::with_capacity_and_hasher(250_000_000, Default::default());
 
     eprintln!("Indexing (k={}, w={})…", kmer_length, window_size);
     let mut seq_count = 0;
