@@ -2,7 +2,7 @@
 
 # Deacon
 
-A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host decontamination. Default behaviour removes query sequences with one or more minimizers present in the index. Filters at 50Mbp/s using a single Apple M1 core. Indexing the human genome takes 90s. Peak memory usage is ~2.5GB for a human genome with default parameters.
+A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host decontamination. Default behaviour removes query sequences with one or more minimizers present in the index. Filters at 50Mbp/s using a single Apple M1 core. Indexing the human genome takes one minute. Peak memory usage is ~2.5GB for a human genome with default parameters.
 
 The sensitivity/specificity/memory tradeoff can be tuned using kmer length (`-k`), minimizer window size (`-w`), and match threshold (`-m`). With long reads, speed can be increased to hundreds of megabases per second by considering the first `-n` bases of each query sequence. This project is currently experimental and unstable.
 

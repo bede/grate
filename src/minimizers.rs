@@ -1,6 +1,5 @@
 use packed_seq::AsciiSeq;
-use std::collections::HashSet;
-use xxhash_rust::xxh3::xxh3_64;
+use xxhash_rust::xxh3;
 
 pub const DEFAULT_KMER_LENGTH: usize = 31;
 pub const DEFAULT_WINDOW_SIZE: usize = 21;
@@ -94,18 +93,17 @@ fn canonicalize_sequence(seq: &[u8]) -> Vec<u8> {
 }
 
 /// Returns set of all distinct minimizer hashes for a sequence
+/// Returns vector of all minimizer hashes for a sequence
 pub fn compute_minimizer_hashes(
     seq: &[u8],
     kmer_length: usize,
     window_size: usize,
-) -> HashSet<u64> {
+) -> Vec<u64> {
     // Skip if sequence is short
     if seq.len() < kmer_length {
-        return HashSet::new();
+        return Vec::new();
     }
-
     let canonical_seq = canonicalize_sequence(seq);
-
     // Get minimizer positions using simd-minimizers
     let mut positions = Vec::with_capacity(seq.len() / window_size + 1);
     simd_minimizers::canonical_minimizer_positions(
@@ -114,7 +112,6 @@ pub fn compute_minimizer_hashes(
         window_size,
         &mut positions,
     );
-
     // Convert positions to hash values with xxh3_64
     positions
         .iter()
@@ -168,7 +165,7 @@ pub fn fill_minimizer_hashes(
 /// Hash forward k-mers
 #[inline]
 fn hash_kmer(kmer: &[u8]) -> u64 {
-    xxh3_64(kmer)
+    xxh3::xxh3_64(kmer)
 }
 
 /// Hash function for canonical k-mers (min of forward and reverse complement)
@@ -183,7 +180,7 @@ fn hash_canonical_kmer(kmer: &[u8]) -> u64 {
 
 /// Hash revcomp k-mers
 fn hash_reverse_complement(kmer: &[u8]) -> u64 {
-    let mut state = xxhash_rust::xxh3::Xxh3::new();
+    let mut state = xxh3::Xxh3::new();
 
     for &nucleotide in kmer.iter().rev() {
         let complement = match nucleotide {
