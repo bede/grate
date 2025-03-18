@@ -24,14 +24,14 @@ pub fn diff<P: AsRef<Path>>(first: P, second: P, output: Option<&PathBuf>) -> Re
 
     // Validate compatible headers
     if second_header.kmer_length() != header.kmer_length()
-        || second_header.window_size() != header.window_size()
+        || second_header.window_length() != header.window_length()
     {
         return Err(anyhow::anyhow!(
             "Incompatible headers: second index has k={}, w={}, but first index has k={}, w={}",
             second_header.kmer_length(),
-            second_header.window_size(),
+            second_header.window_length(),
             header.kmer_length(),
-            header.window_size()
+            header.window_length()
         ));
     }
 

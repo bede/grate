@@ -18,7 +18,7 @@ pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<(
     eprintln!(
         "Performing union of indexes (k={}, w={})",
         header.kmer_length(),
-        header.window_size()
+        header.window_length()
     );
     eprintln!(
         "Loaded {} minimizers from first index",
@@ -29,15 +29,15 @@ pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<(
         let (minimizers, file_header) = load_minimizer_hashes(path)?;
         // Verify header compat
         if file_header.kmer_length() != header.kmer_length()
-            || file_header.window_size() != header.window_size()
+            || file_header.window_length() != header.window_length()
         {
             return Err(anyhow::anyhow!(
                 "Incompatible headers: index at {:?} has k={}, w={}, but first index has k={}, w={}",
                 path.as_ref(),
                 file_header.kmer_length(),
-                file_header.window_size(),
+                file_header.window_length(),
                 header.kmer_length(),
-                header.window_size()
+                header.window_length()
             ));
         }
         // Count minimizers before union

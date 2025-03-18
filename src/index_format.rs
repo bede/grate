@@ -5,15 +5,15 @@ use serde::{Deserialize, Serialize};
 pub struct IndexHeader {
     pub format_version: u8,
     pub kmer_length: u8,
-    pub window_size: u8,
+    pub window_length: u8,
 }
 
 impl IndexHeader {
-    pub fn new(kmer_length: usize, window_size: usize) -> Self {
+    pub fn new(kmer_length: usize, window_length: usize) -> Self {
         IndexHeader {
             format_version: 1,
             kmer_length: kmer_length as u8,
-            window_size: window_size as u8,
+            window_length: window_length as u8,
         }
     }
 
@@ -35,8 +35,8 @@ impl IndexHeader {
     }
 
     /// Get w
-    pub fn window_size(&self) -> usize {
-        self.window_size as usize
+    pub fn window_length(&self) -> usize {
+        self.window_length as usize
     }
 }
 
@@ -50,7 +50,7 @@ mod tests {
 
         assert_eq!(header.format_version, 1);
         assert_eq!(header.kmer_length(), 31);
-        assert_eq!(header.window_size(), 21);
+        assert_eq!(header.window_length(), 21);
     }
 
     #[test]
@@ -59,7 +59,7 @@ mod tests {
         let valid_header = IndexHeader {
             format_version: 1,
             kmer_length: 31,
-            window_size: 21,
+            window_length: 21,
         };
         assert!(valid_header.validate().is_ok());
 
@@ -67,7 +67,7 @@ mod tests {
         let invalid_header = IndexHeader {
             format_version: 2, // Unsupported version
             kmer_length: 31,
-            window_size: 21,
+            window_length: 21,
         };
         assert!(invalid_header.validate().is_err());
     }

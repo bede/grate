@@ -7,11 +7,11 @@ use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-/// Build an index of minimizers from a FASTX file
+/// Build an index of minimizers from a fastx file
 pub fn build<P: AsRef<Path>>(
     input: P,
     kmer_length: usize,
-    window_size: usize,
+    window_length: usize,
     output: Option<PathBuf>,
 ) -> Result<()> {
     let start_time = Instant::now();
@@ -24,7 +24,7 @@ pub fn build<P: AsRef<Path>>(
     let mut all_minimizers: FxHashSet<u64> =
         FxHashSet::with_capacity_and_hasher(250_000_000, Default::default());
 
-    eprintln!("Indexing (k={}, w={})…", kmer_length, window_size);
+    eprintln!("Indexing (k={}, w={})…", kmer_length, window_length);
     let mut seq_count = 0;
     let mut total_bp = 0;
 
@@ -36,7 +36,7 @@ pub fn build<P: AsRef<Path>>(
         all_minimizers.extend(compute_minimizer_hashes(
             seq.as_ref(),
             kmer_length,
-            window_size,
+            window_length,
         ));
 
         // Update counters
@@ -61,7 +61,7 @@ pub fn build<P: AsRef<Path>>(
     );
 
     // Create header
-    let header = IndexHeader::new(kmer_length, window_size);
+    let header = IndexHeader::new(kmer_length, window_length);
 
     // Write to output path or stdout
     write_minimizers(&all_minimizers, &header, output.as_ref())?;

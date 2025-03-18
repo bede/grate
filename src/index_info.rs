@@ -15,7 +15,7 @@ pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
     eprintln!("Index information:");
     eprintln!("  Format version: {}", header.format_version);
     eprintln!("  K-mer length (k): {}", header.kmer_length());
-    eprintln!("  Window size (w): {}", header.window_size());
+    eprintln!("  Window size (w): {}", header.window_length());
     eprintln!("  Distinct minimizer count: {}", minimizers.len());
 
     let total_time = start_time.elapsed();

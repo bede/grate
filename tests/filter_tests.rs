@@ -49,7 +49,7 @@ fn test_filter_to_file() {
     let fastq_path = temp_dir.path().join("reads.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
     let output_path = temp_dir.path().join("filtered.fastq");
-    let report_path = temp_dir.path().join("report.json");
+    let log_path = temp_dir.path().join("log.json");
 
     create_test_fasta(&fasta_path);
     create_test_fastq(&fastq_path);
@@ -64,14 +64,14 @@ fn test_filter_to_file() {
         .arg(&fastq_path)
         .arg("--output")
         .arg(&output_path)
-        .arg("--report")
-        .arg(&report_path)
+        .arg("--log")
+        .arg(&log_path)
         .assert()
         .success();
 
-    // Check output and report creation
+    // Check output and log creation
     assert!(output_path.exists(), "Output file wasn't created");
-    assert!(report_path.exists(), "Report file wasn't created");
+    assert!(log_path.exists(), "Report file wasn't created");
 
     // Validate output content
     let output_content = fs::read_to_string(&output_path).unwrap();

@@ -30,29 +30,24 @@ enum Commands {
         /// Minimizer index file path
         minimizers: PathBuf,
 
-        /// Input fastx file path (- for stdin)
+        /// Path to fastx file (or - for stdin)
         #[arg(default_value = "-")]
-        input: String,
+        input1: String,
 
-        /// Optional second input file for paired-end reads
-        /// (use "-" with input also "-" for interleaved paired reads from stdin)
+        /// Path to optional second paired fastx file (or - for interleaved stdin)
         input2: Option<String>,
 
-        /// Path to output fastx file (- for stdout; detects .gz and .zst extensions)
+        /// Path to output fastx file (or - for stdout; detects .gz and .zst)
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
 
-        /// Minimum number of minimizer matches per query sequence or read pair
+        /// Minimum number of minimizer matches per query sequence (pair)
         #[arg(short = 'm', long = "matches", default_value_t = 2)]
         min_matches: usize,
 
         /// Consider only the first N nucleotides per sequence (0 = entire sequence)
         #[arg(short = 'n', long = "nucleotides", default_value_t = 0)]
         prefix_length: usize,
-
-        /// Path to JSON report file
-        #[arg(long = "report")]
-        report: Option<PathBuf>,
 
         /// Invert filtering (keep sequences WITH matches rather than those WITHOUT)
         #[arg(short = 'i', long = "invert", default_value_t = false)]
@@ -61,23 +56,27 @@ enum Commands {
         /// Replace sequence headers with sequential numbers (1, 2, 3...)
         #[arg(short = 'r', long = "rename", default_value_t = false)]
         rename: bool,
+
+        /// Path to JSON output log file
+        #[arg(short = 'l', long = "log")]
+        log: Option<PathBuf>,
     },
 }
 
 #[derive(Subcommand)]
 enum IndexCommands {
-    /// Build index of minimizers contained within a FASTX file
+    /// Build index of minimizers contained within a fastx file
     Build {
-        /// Path to input FASTX file (supports .gz compression)
+        /// Path to input fastx file (supports .gz compression)
         input: PathBuf,
 
         /// K-mer length used for indexing
         #[arg(short = 'k', default_value_t = minimizers::DEFAULT_KMER_LENGTH)]
         kmer_length: usize,
 
-        /// Window size used for indexing
+        /// Minimizer window length used for indexing
         #[arg(short = 'w', default_value_t = minimizers::DEFAULT_WINDOW_SIZE)]
-        window_size: usize,
+        window_length: usize,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
@@ -130,7 +129,7 @@ fn main() -> Result<()> {
             IndexCommands::Build {
                 input,
                 kmer_length,
-                window_size,
+                window_length,
                 output,
             } => {
                 // Convert output string to Option<PathBuf>
@@ -140,7 +139,7 @@ fn main() -> Result<()> {
                     Some(PathBuf::from(output))
                 };
 
-                index::build(input, *kmer_length, *window_size, output_path)
+                index::build(input, *kmer_length, *window_length, output_path)
                     .context("Failed to run index build command")?;
             }
             IndexCommands::Info { index } => {
@@ -161,23 +160,23 @@ fn main() -> Result<()> {
         },
         Commands::Filter {
             minimizers,
-            input,
+            input1,
             input2,
             output,
             min_matches,
             prefix_length,
-            report,
+            log,
             invert,
             rename,
         } => {
             filter::run(
                 minimizers,
-                input,
+                input1,
                 input2.as_deref(),
                 output,
                 *min_matches,
                 *prefix_length,
-                report.as_ref(),
+                log.as_ref(),
                 *invert,
                 *rename,
             )

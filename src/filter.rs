@@ -141,13 +141,13 @@ fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
     }
 }
 
-// JSON report structure
+// JSON log structure
 #[derive(Serialize, Deserialize)]
-pub struct FilterReport {
+pub struct FilterLog {
     version: String,
     index: String,
-    input: String,
-    input2: Option<String>, // Added for paired-end support
+    input1: String,
+    input2: Option<String>,
     output: String,
     k: usize,
     w: usize,
@@ -175,7 +175,7 @@ pub fn run<P: AsRef<Path>>(
     output_path: &str,
     min_matches: usize,
     prefix_length: usize,
-    report_path: Option<&PathBuf>,
+    log_path: Option<&PathBuf>,
     invert: bool,
     rename: bool,
 ) -> Result<()> {
@@ -215,12 +215,12 @@ pub fn run<P: AsRef<Path>>(
     let (minimizer_hashes, header) = load_minimizer_hashes(&minimizers_path)?;
 
     let kmer_length = header.kmer_length();
-    let window_size = header.window_size();
+    let window_length = header.window_length();
 
     let load_time = start_time.elapsed();
     eprintln!(
         "Loaded index (k={}, w={}) in {:.2?}",
-        kmer_length, window_size, load_time
+        kmer_length, window_length, load_time
     );
 
     // Create the appropriate writer based on the output path
@@ -244,16 +244,14 @@ pub fn run<P: AsRef<Path>>(
     let mut filtered_bp = 0;
     let mut output_seq_counter = 0;
 
-    // Process reads based on mode
     if paired_stdin {
-        // Interleaved paired-end mode from stdin
         process_interleaved_paired_seqs(
             &minimizer_hashes,
             &mut writer,
             min_matches,
             prefix_length,
             kmer_length,
-            window_size,
+            window_length,
             invert,
             rename,
             &mut total_seqs,
@@ -266,7 +264,6 @@ pub fn run<P: AsRef<Path>>(
             start_time,
         )?;
     } else if let Some(input2_path) = input2_path {
-        // Regular paired-end mode from files
         process_paired_seqs(
             &minimizer_hashes,
             input_path,
@@ -275,7 +272,7 @@ pub fn run<P: AsRef<Path>>(
             min_matches,
             prefix_length,
             kmer_length,
-            window_size,
+            window_length,
             invert,
             rename,
             &mut total_seqs,
@@ -288,7 +285,6 @@ pub fn run<P: AsRef<Path>>(
             start_time,
         )?;
     } else {
-        // Single-end mode
         process_single_seqs(
             &minimizer_hashes,
             input_path,
@@ -296,7 +292,7 @@ pub fn run<P: AsRef<Path>>(
             min_matches,
             prefix_length,
             kmer_length,
-            window_size,
+            window_length,
             invert,
             rename,
             &mut total_seqs,
@@ -351,19 +347,19 @@ pub fn run<P: AsRef<Path>>(
         total_time, seqs_per_sec, mbp_per_sec
     );
 
-    // Build and write a JSON report if path provided
-    if let Some(report_file) = report_path {
+    // Build and write a JSON log if path provided
+    if let Some(log_file) = log_path {
         // Get number of sequences passing filter
         let seqs_out = total_seqs - filtered_seqs;
 
-        let report = FilterReport {
+        let log = FilterLog {
             version: version,
             index: minimizers_path.as_ref().to_string_lossy().to_string(),
-            input: input_path.to_string(),
+            input1: input_path.to_string(),
             input2: input2_path.map(|s| s.to_string()),
             output: output_path.to_string(),
             k: kmer_length,
-            w: window_size,
+            w: window_length,
             m: min_matches,
             n: prefix_length,
             invert,
@@ -381,15 +377,15 @@ pub fn run<P: AsRef<Path>>(
             bp_per_second: bp_per_sec as u64,
         };
 
-        // Write report file
-        let file = File::create(report_file)
-            .context(format!("Failed to create report file: {:?}", report_file))?;
+        // Write log file
+        let file = File::create(log_file)
+            .context(format!("Failed to create log file: {:?}", log_file))?;
         let writer = BufWriter::new(file);
 
-        // Serialize and write the report as JSON
-        serde_json::to_writer_pretty(writer, &report).context("Failed to write JSON report")?;
+        // Serialize and write the log as JSON
+        serde_json::to_writer_pretty(writer, &log).context("Failed to write JSON log")?;
 
-        eprintln!("JSON report saved to: {:?}", report_file);
+        eprintln!("JSON log saved to: {:?}", log_file);
     }
 
     Ok(())
@@ -402,7 +398,7 @@ fn process_single_seqs(
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
-    window_size: usize,
+    window_length: usize,
     invert: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -452,7 +448,7 @@ fn process_single_seqs(
             fill_minimizer_hashes(
                 effective_seq,
                 kmer_length,
-                window_size,
+                window_length,
                 &mut minimizer_buffer,
             );
 
@@ -550,7 +546,7 @@ fn process_paired_seqs(
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
-    window_size: usize,
+    window_length: usize,
     invert: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -607,7 +603,7 @@ fn process_paired_seqs(
             fill_minimizer_hashes(
                 effective_seq,
                 kmer_length,
-                window_size,
+                window_length,
                 &mut minimizer_buffer1,
             );
 
@@ -636,7 +632,7 @@ fn process_paired_seqs(
             fill_minimizer_hashes(
                 effective_seq,
                 kmer_length,
-                window_size,
+                window_length,
                 &mut minimizer_buffer2,
             );
 
@@ -688,7 +684,7 @@ fn process_paired_seqs(
             );
             writer.write_all(&output_record_buffer)?;
         } else {
-            *filtered_seqs += 2; // Both reads filtered out
+            *filtered_seqs += 2; // Both seqs filtered out
             *filtered_bp += (seq1.len() + seq2.len()) as u64; // Track filtered base pairs
         }
 
@@ -739,7 +735,7 @@ fn process_interleaved_paired_seqs(
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
-    window_size: usize,
+    window_length: usize,
     invert: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -803,7 +799,7 @@ fn process_interleaved_paired_seqs(
         *total_seqs += 2;
         *total_bp += (record1_seq.len() + record2_seq.len()) as u64;
 
-        // Check for minimizer hits in read 1
+        // Check for minimizer hits in seq 1
         let mut hit_count1 = 0;
         if record1_seq.len() >= kmer_length {
             minimizer_buffer1.clear();
@@ -820,7 +816,7 @@ fn process_interleaved_paired_seqs(
             fill_minimizer_hashes(
                 effective_seq,
                 kmer_length,
-                window_size,
+                window_length,
                 &mut minimizer_buffer1,
             );
 
@@ -832,7 +828,7 @@ fn process_interleaved_paired_seqs(
             }
         }
 
-        // Check for minimizer hits in read 2
+        // Check for minimizer hits in seq 2
         let mut hit_count2 = 0;
         if record2_seq.len() >= kmer_length {
             minimizer_buffer2.clear();
@@ -849,7 +845,7 @@ fn process_interleaved_paired_seqs(
             fill_minimizer_hashes(
                 effective_seq,
                 kmer_length,
-                window_size,
+                window_length,
                 &mut minimizer_buffer2,
             );
 
@@ -861,10 +857,10 @@ fn process_interleaved_paired_seqs(
             }
         }
 
-        // Total hit count for the read pair
+        // Total hit count for the seq pair
         let total_hit_count = hit_count1 + hit_count2;
 
-        // Determine if we should output this read pair based on combined hit count and invert flag
+        // Determine if we should output this sequence pair based on combined hit count and invert flag
         let should_output = if !invert {
             // When not inverted, keep pairs with fewer than min_matches combined hits
             total_hit_count < min_matches
@@ -877,7 +873,7 @@ fn process_interleaved_paired_seqs(
             // Track output base pairs
             *output_bp += (record1_seq.len() + record2_seq.len()) as u64;
 
-            // Increment output sequence counter (twice, once for each read)
+            // Increment output sequence counter (twice, once for each sequence)
             *output_seq_counter += 2;
 
             // Format and write record 1
@@ -906,7 +902,7 @@ fn process_interleaved_paired_seqs(
             );
             writer.write_all(&output_record_buffer)?;
         } else {
-            *filtered_seqs += 2; // Both reads filtered out
+            *filtered_seqs += 2; // Both seqs filtered out
             *filtered_bp += (record1_seq.len() + record2_seq.len()) as u64; // Track filtered base pairs
         }
 
@@ -1062,9 +1058,9 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_report() {
-        // Create a sample report
-        let report = FilterReport {
+    fn test_filter_log() {
+        // Create a sample log
+        let log = FilterLog {
             version: "0.1.0".to_string(),
             index: "test.idx".to_string(),
             input: "test.fastq".to_string(),
@@ -1090,8 +1086,8 @@ mod tests {
         };
 
         // Test JSON ser+de
-        let json = serde_json::to_string(&report).unwrap();
-        let parsed: FilterReport = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&log).unwrap();
+        let parsed: FilterLog = serde_json::from_str(&json).unwrap();
 
         // Check values
         assert_eq!(parsed.version, "0.1.0");

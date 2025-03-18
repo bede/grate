@@ -56,15 +56,15 @@ fn test_index_build_with_custom_kmer_window() {
 
     create_test_fasta(&fasta_path, 1);
 
-    // Build index with custom k-mer length and window size using -o
+    // Build index with custom k-mer length and window length using -o
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("index")
         .arg("build")
         .arg(fasta_path)
         .arg("-k")
-        .arg("15") // Custom k-mer length
+        .arg("15")
         .arg("-w")
-        .arg("10") // Custom window size
+        .arg("10")
         .arg("-o")
         .arg(&bin_path)
         .assert()
