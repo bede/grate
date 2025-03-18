@@ -1063,7 +1063,7 @@ mod tests {
         let log = FilterLog {
             version: "0.1.0".to_string(),
             index: "test.idx".to_string(),
-            input: "test.fastq".to_string(),
+            input1: "test.fastq".to_string(),
             input2: Some("test2.fastq".to_string()), // Added for paired-end support
             output: "output.fastq".to_string(),
             k: 31,
@@ -1093,7 +1093,7 @@ mod tests {
         assert_eq!(parsed.version, "0.1.0");
         assert_eq!(parsed.seqs_in, 100);
         assert_eq!(parsed.seqs_removed_proportion, 0.1);
-        assert_eq!(parsed.input, "test.fastq");
+        assert_eq!(parsed.input1, "test.fastq");
         assert_eq!(parsed.input2, Some("test2.fastq".to_string()));
         assert_eq!(parsed.output, "output.fastq");
     }

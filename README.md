@@ -2,11 +2,9 @@
 
 # Deacon
 
-*Currently under development*
+A fast minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host depletion (*deacon*-tamination). Default behaviour removes query sequences with two or more minimizers present in the index. Filters at ~50Mbp/s using a single Apple M1 core and indexes the human genome in under 60s. Peak memory usage is ~2.5GB for a human genome with default parameters.
 
-A fast minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host depletion (*deacon*-tamination). Default behaviour removes query sequences with two or more minimizers present in the index. Filters at 50Mbp/s using a single Apple M1 core and indexes the human genome in under 60s. Peak memory usage is ~2.5GB for a human genome with default parameters.
-
-The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). With long reads, speeds of hundreds of megabases per second are possible by considering only the first `-n` bases of each query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for fast vectorised minimizer calculation. This project is currently unstable.
+The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). With long reads, speeds of hundreds of megabases per second are possible by considering only the first `-n` bases of each query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for fast vectorised minimizer calculation. This project is currently **unstable** and under active development.
 
 
 
@@ -37,7 +35,7 @@ deacon index build -k 41 -m 27 chm13v2.fa > human.k41w27.idx  # Custom minimizer
 
 ### Filtering
 
-Supports FASTA or FASTQ input from stdin or file and outputs to stdout or file. Paired sequences are supported as either separate files or interleaved stdin, and are  written in interleaved format to either stdout or file. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically. Consider piping uncompressed FASTA/Q to pigz to avoid compression bottlenecks when writing gzip output.
+Supports FASTA or FASTQ input from stdin or file and outputs to stdout or file. Paired sequences are supported as either separate files or interleaved stdin, and are  written in interleaved format to either stdout or file. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically. Piping uncompressed FASTA/Q to pigz is advisable in order to avoid compression bottlenecks when writing gzip output directly.
 
 ``` bash
 deacon filter human.idx reads.fq.gz -o filt.fastq  # File input & output
@@ -55,30 +53,30 @@ deacon filter human.idx reads.fq.gz --log log.json > filt.fq  # Log results JSON
 ## Reports
 
 Use `--log results.json` to save filtering results to a JSON file:
-```
+```json
 {
   "version": "0.2.0",
   "index": "data/chm13v2.k31w21.idx",
-  "input1": "data/viruses/ont.100MB.fastq.gz",
+  "input1": "data/HG02334.1m.fastq.gz",
   "input2": null,
   "output": "-",
   "k": 31,
   "w": 21,
-  "m": 3,
+  "m": 1,
   "n": 0,
   "invert": false,
   "rename": false,
-  "seqs_in": 190000,
-  "seqs_out": 189628,
-  "seqs_removed": 372,
-  "seqs_removed_proportion": 0.001957894736842105,
-  "bp_in": 356014239,
-  "bp_out": 354404228,
-  "bp_removed": 1610011,
-  "bp_removed_proportion": 0.004522321928814763,
-  "time": 12.3978525,
-  "seqs_per_second": 15325,
-  "bp_per_second": 28715798
+  "seqs_in": 1000000,
+  "seqs_out": 13452,
+  "seqs_removed": 986548,
+  "seqs_removed_proportion": 0.986548,
+  "bp_in": 5477122928,
+  "bp_out": 5710050,
+  "bp_removed": 5471412878,
+  "bp_removed_proportion": 0.9989574727324798,
+  "time": 125.755103875,
+  "seqs_per_second": 7951,
+  "bp_per_second": 43553881
 }
 ```
 
