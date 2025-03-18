@@ -34,11 +34,15 @@ enum Commands {
         #[arg(default_value = "-")]
         input: String,
 
+        /// Optional second input file for paired-end reads
+        /// (use "-" with input also "-" for interleaved paired reads from stdin)
+        input2: Option<String>,
+
         /// Path to output fastx file (- for stdout; detects .gz and .zst extensions)
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
 
-        /// Minimum number of minimizer matches per query sequence
+        /// Minimum number of minimizer matches per query sequence or read pair
         #[arg(short = 'm', long = "matches", default_value_t = 1)]
         min_matches: usize,
 
@@ -158,6 +162,7 @@ fn main() -> Result<()> {
         Commands::Filter {
             minimizers,
             input,
+            input2,
             output,
             min_matches,
             prefix_length,
@@ -168,6 +173,7 @@ fn main() -> Result<()> {
             filter::run(
                 minimizers,
                 input,
+                input2.as_deref(),
                 output,
                 *min_matches,
                 *prefix_length,
