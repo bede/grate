@@ -43,7 +43,7 @@ enum Commands {
         output: String,
 
         /// Minimum number of minimizer matches per query sequence or read pair
-        #[arg(short = 'm', long = "matches", default_value_t = 1)]
+        #[arg(short = 'm', long = "matches", default_value_t = 2)]
         min_matches: usize,
 
         /// Consider only the first N nucleotides per sequence (0 = entire sequence)
