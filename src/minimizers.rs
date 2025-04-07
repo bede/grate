@@ -92,7 +92,6 @@ fn canonicalize_sequence(seq: &[u8]) -> Vec<u8> {
         .collect()
 }
 
-/// Returns set of all distinct minimizer hashes for a sequence
 /// Returns vector of all minimizer hashes for a sequence
 pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_length: usize) -> Vec<u64> {
     // Skip if sequence is short

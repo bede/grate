@@ -27,21 +27,21 @@ enum Commands {
     },
     /// Filter fastx sequences based on presence/absence of minimizer matches
     Filter {
-        /// Minimizer index file path
+        /// Path to minimizer index file
         minimizers: PathBuf,
 
         /// Path to fastx file (or - for stdin)
         #[arg(default_value = "-")]
         input1: String,
 
-        /// Path to optional second paired fastx file (or - for interleaved stdin)
+        /// Optional path to second paired fastx file (or - for interleaved stdin)
         input2: Option<String>,
 
-        /// Path to output fastx file (or - for stdout; detects .gz and .zst)
+        /// Optional path to output fastx file (or - for stdout; detects .gz and .zst)
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
 
-        /// Minimum number of minimizer matches per query sequence (pair)
+        /// Number of minimizer matches required per query sequence (pair)
         #[arg(short = 'm', long = "matches", default_value_t = 2)]
         min_matches: usize,
 
@@ -53,7 +53,7 @@ enum Commands {
         #[arg(short = 'i', long = "invert", default_value_t = false)]
         invert: bool,
 
-        /// Replace sequence headers with sequential numbers (1, 2, 3...)
+        /// Replace sequence headers with incrementing numbers
         #[arg(short = 'r', long = "rename", default_value_t = false)]
         rename: bool,
 
