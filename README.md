@@ -1,19 +1,23 @@
-[![Crates.io](https://img.shields.io/crates/v/deacon.svg)](https://crates.io/crates/deacon)
+[![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
 
 # Deacon
 
-A fast minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host depletion (*deacon*-tamination). Default behaviour removes query sequences with two or more minimizers present in the index. Filters at ~50Mbp/s using a single Apple M1 core and indexes the human genome in under 60s. Peak memory usage is ~2.5GB for a human genome with default parameters.
+A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host depletion. Default behaviour removes query sequences with two or more minimizers present in the index. Filters at ~50Mbp/s using a single Apple M1 core and indexes the human genome in under 60s. Peak memory usage is ~2.5GB for a human genome with default parameters. Accuracy benchmarks will be published soon.
 
-The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). With long reads, speeds of hundreds of megabases per second are possible by considering only the first `-n` bases of each query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for fast vectorised minimizer calculation. This project is currently **unstable** and under active development.
+The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for accelerated minimizer computation. This project is currently unstable and under active development.
 
 ## Install
 
-### Cargo
-
-[![Crates.io](https://img.shields.io/crates/v/deacon.svg)](https://crates.io/crates/deacon)
+### conda/mamba/pixi  [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
 
 ```bash
-cargo install deacon
+conda install -c bioconda deacon
+```
+
+### cargo [![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon)
+
+```bash
+cargo install deacon  # Requires Rust toolchain
 ```
 
 ## Usage
@@ -44,7 +48,7 @@ deacon filter human.idx reads.fq.gz --log log.json > filt.fq  # Log results JSON
 
 ## Reports
 
-Use `--log results.json` to save filtering results to a JSON file:
+Use `--log results.json` to save a filtering summary to a JSON file:
 ```json
 {
   "version": "0.2.0",
