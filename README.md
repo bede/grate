@@ -4,7 +4,7 @@
 
 A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for efficient host depletion. Default behaviour removes query sequences with two or more minimizers present in the index. Filters at ~50Mbp/s using a single Apple M1 core and indexes the human genome in under 60s. Peak memory usage is ~2.5GB for a human genome with default parameters. Accuracy benchmarks will be published soon.
 
-The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses the [simd-minimizers](https://github.com/rust-seq/simd-minimizers) library for accelerated minimizer computation. This project is currently unstable and under active development.
+The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for accelerated minimizer computation. This project is currently unstable and under active development.
 
 
 
@@ -12,7 +12,7 @@ The sensitivity/specificity/memory tradeoff can be tuned using *k*-mer length (`
 
 ### conda/mamba/pixi  [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
 
-```
+```bash
 conda install -c bioconda deacon
 ```
 
