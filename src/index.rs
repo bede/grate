@@ -1,16 +1,55 @@
-use crate::index_format::IndexHeader;
+// src/index.rs
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
 use rustc_hash::FxHashSet;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
-// Re-export index operations
-pub use crate::index_build::build;
-pub use crate::index_diff::diff;
-pub use crate::index_info::info;
-pub use crate::index_union::union;
+use crate::minimizers::compute_minimizer_hashes;
+use needletail::parse_fastx_file;
+
+/// Serializable header for the index file
+#[derive(Serialize, Deserialize, Debug)]
+pub struct IndexHeader {
+    pub format_version: u8,
+    pub kmer_length: u8,
+    pub window_length: u8,
+}
+
+impl IndexHeader {
+    pub fn new(kmer_length: usize, window_length: usize) -> Self {
+        IndexHeader {
+            format_version: 1,
+            kmer_length: kmer_length as u8,
+            window_length: window_length as u8,
+        }
+    }
+
+    /// Validate header
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.format_version != 1 {
+            return Err(anyhow::anyhow!(
+                "Unsupported file format version: {}",
+                self.format_version
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Get k
+    pub fn kmer_length(&self) -> usize {
+        self.kmer_length as usize
+    }
+
+    /// Get w
+    pub fn window_length(&self) -> usize {
+        self.window_length as usize
+    }
+}
 
 /// Load the hashes without spiking memory usage with an extra vec
 pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>, IndexHeader)> {
@@ -75,4 +114,240 @@ pub fn write_minimizers(
             .context("Failed to serialize minimizer hash")?;
     }
     Ok(())
+}
+
+/// Build an index of minimizers from a fastx file
+pub fn build<P: AsRef<Path>>(
+    input: P,
+    kmer_length: usize,
+    window_length: usize,
+    output: Option<PathBuf>,
+) -> Result<()> {
+    let start_time = Instant::now();
+    let path = input.as_ref();
+
+    // Create a fastx reader using needletail (handles gzip automatically)
+    let mut reader = parse_fastx_file(path).context("Failed to open input file")?;
+
+    // Init FxHashSet with 0.5B capacity
+    let mut all_minimizers: FxHashSet<u64> =
+        FxHashSet::with_capacity_and_hasher(250_000_000, Default::default());
+
+    eprintln!("Indexing (k={}, w={})…", kmer_length, window_length);
+    let mut seq_count = 0;
+    let mut total_bp = 0;
+
+    while let Some(record_result) = reader.next() {
+        let record = record_result.context("Error reading fastx record")?;
+        let seq = record.seq();
+
+        // Compute and insert hashes
+        all_minimizers.extend(compute_minimizer_hashes(
+            seq.as_ref(),
+            kmer_length,
+            window_length,
+        ));
+
+        // Update counters
+        seq_count += 1;
+        total_bp += seq.len();
+
+        // Report progress
+        let id = std::str::from_utf8(record.id()).unwrap_or("unknown");
+        eprintln!(
+            "  {} ({}bp), total minimizers: {}",
+            id,
+            seq.len(),
+            all_minimizers.len()
+        );
+    }
+
+    eprintln!(
+        "Indexed {} minimizers from {} sequence(s) ({}bp)",
+        all_minimizers.len(),
+        seq_count,
+        total_bp
+    );
+
+    // Create header
+    let header = IndexHeader::new(kmer_length, window_length);
+
+    // Write to output path or stdout
+    write_minimizers(&all_minimizers, &header, output.as_ref())?;
+
+    let total_time = start_time.elapsed();
+    eprintln!("Completed in {:.2?}", total_time);
+
+    Ok(())
+}
+
+/// Compute the set difference between two minimizer indexes (A - B)
+pub fn diff<P: AsRef<Path>>(first: P, second: P, output: Option<&PathBuf>) -> Result<()> {
+    let start_time = Instant::now();
+
+    // Load first file
+    let (mut first_minimizers, header) = load_minimizer_hashes(&first)?;
+    eprintln!(
+        "Loaded {} minimizers from first index",
+        first_minimizers.len()
+    );
+
+    // Load second file
+    let (second_minimizers, second_header) = load_minimizer_hashes(&second)?;
+    eprintln!(
+        "Loaded {} minimizers from second index",
+        second_minimizers.len()
+    );
+
+    // Validate compatible headers
+    if second_header.kmer_length() != header.kmer_length()
+        || second_header.window_length() != header.window_length()
+    {
+        return Err(anyhow::anyhow!(
+            "Incompatible headers: second index has k={}, w={}, but first index has k={}, w={}",
+            second_header.kmer_length(),
+            second_header.window_length(),
+            header.kmer_length(),
+            header.window_length()
+        ));
+    }
+
+    // Count minimizers before diff
+    let before_count = first_minimizers.len();
+
+    // Perform diff operation - remove all hashes in second_minimizers from main_minimizers
+    for hash in &second_minimizers {
+        first_minimizers.remove(hash);
+    }
+
+    // Report results
+    eprintln!(
+        "Removed {} minimizers, {} remaining",
+        before_count - first_minimizers.len(),
+        first_minimizers.len()
+    );
+
+    // Write to output
+    write_minimizers(&first_minimizers, &header, output)?;
+
+    let total_time = start_time.elapsed();
+    eprintln!("Completed difference operation in {:.2?}", total_time);
+
+    Ok(())
+}
+
+/// Show info about an index
+pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
+    let start_time = Instant::now();
+
+    // Load index file
+    let (minimizers, header) = load_minimizer_hashes(&index_path)?;
+
+    // Show index info
+    eprintln!("Index information:");
+    eprintln!("  Format version: {}", header.format_version);
+    eprintln!("  K-mer length (k): {}", header.kmer_length());
+    eprintln!("  Window size (w): {}", header.window_length());
+    eprintln!("  Distinct minimizer count: {}", minimizers.len());
+
+    let total_time = start_time.elapsed();
+    eprintln!("Retrieved index info in {:.2?}", total_time);
+
+    Ok(())
+}
+
+/// Combine minimizer indexes (set union)
+pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<()> {
+    let start_time = Instant::now();
+    // Check input files
+    if inputs.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No input files provided for union operation"
+        ));
+    }
+    // Load the first file to get header information
+    let (mut all_minimizers, header) = load_minimizer_hashes(&inputs[0])?;
+    eprintln!(
+        "Performing union of indexes (k={}, w={})",
+        header.kmer_length(),
+        header.window_length()
+    );
+    eprintln!(
+        "Loaded {} minimizers from first index",
+        all_minimizers.len()
+    );
+    // Process remaining files
+    for (_i, path) in inputs.iter().skip(1).enumerate() {
+        let (minimizers, file_header) = load_minimizer_hashes(path)?;
+        // Verify header compat
+        if file_header.kmer_length() != header.kmer_length()
+            || file_header.window_length() != header.window_length()
+        {
+            return Err(anyhow::anyhow!(
+                "Incompatible headers: index at {:?} has k={}, w={}, but first index has k={}, w={}",
+                path.as_ref(),
+                file_header.kmer_length(),
+                file_header.window_length(),
+                header.kmer_length(),
+                header.window_length()
+            ));
+        }
+        // Count minimizers before union
+        let before_count = all_minimizers.len();
+        // Merge minimizers (set union)
+        all_minimizers.extend(minimizers);
+        eprintln!(
+            " Added {} new minimizers, total: {}",
+            all_minimizers.len() - before_count,
+            all_minimizers.len()
+        );
+    }
+
+    // Write output
+    write_minimizers(&all_minimizers, &header, output)?;
+
+    let total_time = start_time.elapsed();
+    eprintln!(
+        "United {} indexes with {} total minimizers in {:.2?}",
+        inputs.len(),
+        all_minimizers.len(),
+        total_time
+    );
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_header_creation() {
+        let header = IndexHeader::new(31, 21);
+
+        assert_eq!(header.format_version, 1);
+        assert_eq!(header.kmer_length(), 31);
+        assert_eq!(header.window_length(), 21);
+    }
+
+    #[test]
+    fn test_header_validation() {
+        // Valid header
+        let valid_header = IndexHeader {
+            format_version: 1,
+            kmer_length: 31,
+            window_length: 21,
+        };
+        assert!(valid_header.validate().is_ok());
+
+        // Invalid format version
+        let invalid_header = IndexHeader {
+            format_version: 2, // Unsupported version
+            kmer_length: 31,
+            window_length: 21,
+        };
+        assert!(invalid_header.validate().is_err());
+    }
+
+    // Add more tests as needed
 }

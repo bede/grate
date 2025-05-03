@@ -1,6 +1,6 @@
 [package]
 name = "deacon"
-version = "0.2.0"
+version = "0.3.0"
 description = "Fast alignment-free sequence filter"
 authors = ["Bede Constantinides <b@bede.im>"]
 edition = "2024"
@@ -54,10 +54,5 @@ opt-level = 3
 lto = true
 codegen-units = 1
 panic = "abort"
-strip = true
-debug = false
-
-[profile.profiling]
-inherits = "release"
 strip = false
-debug = true
+debug = false

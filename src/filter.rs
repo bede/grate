@@ -1036,8 +1036,8 @@ fn output_fastx_record_from_parts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::index::IndexHeader;
     use crate::index::write_minimizers;
-    use crate::index_format::IndexHeader;
     use tempfile::TempDir;
 
     #[allow(dead_code)] // Suppress unused warnings

@@ -10,21 +10,13 @@
 // Re-export public functionality
 pub mod filter;
 pub mod index;
-pub mod index_format;
 pub mod minimizers;
-
-// Keep these modules as internal implementation details
-mod index_build;
-mod index_diff;
-mod index_info;
-mod index_union;
 
 // Re-export the important structures and functions for library users
 pub use filter::{FilterLog, run as run_filter};
 pub use index::{
-    build as build_index, diff as diff_index, info as index_info, union as union_index,
+    IndexHeader, build as build_index, diff as diff_index, info as index_info, union as union_index,
 };
-pub use index_format::IndexHeader;
 pub use minimizers::{
     DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, compute_minimizer_hashes, fill_minimizer_hashes,
 };
@@ -189,7 +181,7 @@ impl IndexConfig {
 
     /// Execute the index building operation with this configuration
     pub fn execute(&self) -> Result<()> {
-        index_build::build(
+        build_index(
             &self.input_path,
             self.kmer_length,
             self.window_length,
@@ -198,15 +190,13 @@ impl IndexConfig {
     }
 }
 
-/// Load minimizer hashes from a file
-pub fn load_minimizers<P: AsRef<Path>>(path: P) -> Result<(FxHashSet<u64>, IndexHeader)> {
+pub fn load_minimizers<P: AsRef<Path>>(path: P) -> Result<(FxHashSet<u64>, index::IndexHeader)> {
     index::load_minimizer_hashes(&path)
 }
 
-/// Write minimizer hashes to a file
 pub fn write_minimizers(
     minimizers: &FxHashSet<u64>,
-    header: &IndexHeader,
+    header: &index::IndexHeader,
     output_path: Option<&PathBuf>,
 ) -> Result<()> {
     index::write_minimizers(minimizers, header, output_path)
