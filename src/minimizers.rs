@@ -2,7 +2,7 @@ use packed_seq::AsciiSeq;
 use xxhash_rust::xxh3;
 
 pub const DEFAULT_KMER_LENGTH: usize = 31;
-pub const DEFAULT_WINDOW_SIZE: usize = 21;
+pub const DEFAULT_WINDOW_SIZE: usize = 15;
 
 /// Canonicalize IUPAC ambiguous nucleotides to ACGT based on position, avoiding compositional bias?
 #[inline]

@@ -5,20 +5,17 @@ use std::path::Path;
 use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
-// Helper to create a small FASTA file for testing
 fn create_test_fasta(path: &Path) {
     let fasta_content = ">seq1\nACGTACGTACGT\n>seq2\nGTACGTACGTAC\n";
     fs::write(path, fasta_content).unwrap();
 }
 
-// Helper to create a small FASTQ file for testing
 fn create_test_fastq(path: &Path) {
     let fastq_content =
         "@seq1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@seq2\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n";
     fs::write(path, fastq_content).unwrap();
 }
 
-// Helper to create small FASTQ files for paired-end testing
 fn create_test_paired_fastq(path1: &Path, path2: &Path) {
     let fastq_content1 =
         "@read1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@read2\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n";
@@ -29,7 +26,6 @@ fn create_test_paired_fastq(path1: &Path, path2: &Path) {
     fs::write(path2, fastq_content2).unwrap();
 }
 
-// Helper to run index build and capture output to a file
 fn build_index(fasta_path: &Path, bin_path: &Path) {
     let output = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"))
         .arg("index")
@@ -40,6 +36,54 @@ fn build_index(fasta_path: &Path, bin_path: &Path) {
 
     fs::write(bin_path, output.stdout).expect("Failed to write index file");
     assert!(output.status.success(), "Index build command failed");
+}
+
+fn create_test_fasta_sc2(path: &Path) {
+    let fasta_content =
+        ">mn908947.3_0:60\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n";
+    fs::write(path, fasta_content).unwrap();
+}
+
+fn create_test_fastq_sc2_fwd(path: &Path) {
+    let fastq_content = "@mn908947.3_0:60_fwd\n\
+        ATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n\
+        +\n\
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    fs::write(path, fastq_content).unwrap();
+}
+
+fn create_test_fastq_sc2_rev(path: &Path) {
+    let fastq_content = "@mn908947.3_0:60_rev\n\
+        AGATCTACAAGAGATCGAAAGTTGGTTGGTTTGTTACCTGGGAAGGTATAAACCTTTAAT\n\
+        +\n\
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    fs::write(path, fastq_content).unwrap();
+}
+
+fn create_test_paired_fastq_sc2_fwd(path1: &Path, path2: &Path) {
+    let fastq_content1 = "@mn908947.3_0:60_fwd\n\
+        ATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n\
+        +\n\
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    let fastq_content2 = "@mn908947.3_60:120_fwd\n\
+        GTTCTCTAAACGAACTTTAAAATCTGTGTGGCTGTCACTCGGCTGCATGCTTAGTGCACT\n\
+        +\n\
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    fs::write(path1, fastq_content1).unwrap();
+    fs::write(path2, fastq_content2).unwrap();
+}
+
+fn create_test_paired_fastq_sc2_rev(path1: &Path, path2: &Path) {
+    let fastq_content1 = "@mn908947.3_0:60_rev\n\
+        AGATCTACAAGAGATCGAAAGTTGGTTGGTTTGTTACCTGGGAAGGTATAAACCTTTAAT\n\
+        +\n\
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    let fastq_content2 = "@mn908947.3_60:120_rev\n\
+        AGTGCACTAAGCATGCAGCCGAGTGACAGCCACACAGATTTTAAAGTTCGTTTAGAGAAC\n\
+        +\n\
+        ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    fs::write(path1, fastq_content1).unwrap();
+    fs::write(path2, fastq_content2).unwrap();
 }
 
 #[test]
@@ -257,7 +301,7 @@ fn test_filter_prefix_length() {
 }
 
 #[test]
-fn test_paired_end_filter() {
+fn test_filter_paired() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let fastq_path1 = temp_dir.path().join("reads_1.fastq");
@@ -291,7 +335,7 @@ fn test_paired_end_filter() {
 }
 
 #[test]
-fn test_paired_end_filter_with_invert() {
+fn test_filter_paired_with_invert() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let fastq_path1 = temp_dir.path().join("reads_1.fastq");
@@ -321,7 +365,7 @@ fn test_paired_end_filter_with_invert() {
 }
 
 #[test]
-fn test_paired_end_with_rename() {
+fn test_filter_paired_with_rename() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let fastq_path1 = temp_dir.path().join("reads_1.fastq");
@@ -357,7 +401,7 @@ fn test_paired_end_with_rename() {
 }
 
 #[test]
-fn test_paired_end_with_min_matches() {
+fn test_filter_paired_with_min_matches() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let fastq_path1 = temp_dir.path().join("reads_1.fastq");
@@ -426,4 +470,138 @@ fn test_interleaved_paired_reads() {
     // Validate output content (should contain processed reads)
     let output_content = fs::read_to_string(&output_path).unwrap();
     assert!(!output_content.is_empty(), "Output file is empty");
+}
+
+#[test]
+fn test_filter_filtration_fwd() {
+    // Tests filtering with forward reads from SC2
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path = temp_dir.path().join("reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq");
+    let log_path = temp_dir.path().join("log.json");
+
+    create_test_fasta_sc2(&fasta_path);
+    create_test_fastq_sc2_fwd(&fastq_path);
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--log")
+        .arg(&log_path)
+        .arg("--matches")
+        .arg("1")
+        .assert()
+        .success();
+
+    assert!(output_path.exists(), "Output file wasn't created");
+    assert!(log_path.exists(), "Report file wasn't created");
+
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(output_content.is_empty(), "Output file is not empty");
+}
+
+#[test]
+fn test_filter_filtration_rev() {
+    // Tests filtering with reverse read from SC2
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path = temp_dir.path().join("reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq");
+    let log_path = temp_dir.path().join("log.json");
+
+    create_test_fasta_sc2(&fasta_path);
+    create_test_fastq_sc2_rev(&fastq_path);
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--log")
+        .arg(&log_path)
+        .assert()
+        .success();
+
+    assert!(output_path.exists(), "Output file wasn't created");
+    assert!(log_path.exists(), "Report file wasn't created");
+
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(output_content.is_empty(), "Output file is not empty");
+}
+
+#[test]
+fn test_filter_paired_filtration_fwd() {
+    // Tests that both reads are filtered when a forward read matches the SC2 ref
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path1 = temp_dir.path().join("reads_1.fastq");
+    let fastq_path2 = temp_dir.path().join("reads_2.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq");
+
+    create_test_fasta_sc2(&fasta_path);
+    create_test_paired_fastq_sc2_fwd(&fastq_path1, &fastq_path2);
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&fastq_path1)
+        .arg(&fastq_path2)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    assert!(output_path.exists(), "Output file wasn't created");
+
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(output_content.is_empty(), "Output file is not empty");
+}
+
+#[test]
+fn test_filter_paired_filtration_rev() {
+    // Tests that both reads are filtered when a reverse read matches the SC2 ref
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path1 = temp_dir.path().join("reads_1.fastq");
+    let fastq_path2 = temp_dir.path().join("reads_2.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq");
+
+    create_test_fasta_sc2(&fasta_path);
+    create_test_paired_fastq_sc2_rev(&fastq_path1, &fastq_path2);
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&fastq_path1)
+        .arg(&fastq_path2)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    assert!(output_path.exists(), "Output file wasn't created");
+
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(output_content.is_empty(), "Output file is not empty");
 }

@@ -8,18 +8,12 @@ repository = "https://github.com/bede/deacon"
 homepage = "https://github.com/bede/deacon"
 keywords = ["bioinformatics", "genomics", "filtering", "decontamination"]
 categories = ["science", "command-line-utilities"]
-license-file = "LICENSE"
+license-file = "MIT"
 exclude = ["bench/*", "data/*"]
 
-# Define the library target
 [lib]
 name = "deacon"
 path = "src/lib.rs"
-
-# Define the binary target
-[[bin]]
-name = "deacon"
-path = "src/main.rs"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
@@ -37,14 +31,12 @@ needletail = "0.6"
 zstd = "0.13"
 indicatif = "0.17"
 
-# Test dependencies for integration tests
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
 tempfile = "3.8"
 rstest = "0.25"
 
-# Define test files for organization
 [[test]]
 name = "cli_tests"
 path = "tests/cli_tests.rs"
@@ -63,3 +55,9 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+debug = false
+
+[profile.profiling]
+inherits = "release"
+strip = false
+debug = true
