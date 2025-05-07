@@ -4,7 +4,7 @@
 
 A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for fast host depletion. Default behaviour removes query sequences with two or more minimizers present in the index. Capable of filtering at >200Mbp/s on Apple M1 and indexing a human genome in under 60s. Peak memory usage is ~4.5GB for the default panhuman index.
 
-The sensitivity/specificity/memory tradeoff can be tuned using indexes built with varying *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for accelerated minimizer computation. This project is currently unstable and under active development.
+The sensitivity/specificity/memory tradeoff can be tuned using indexes built with varying *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for accelerated minimizer computation. This project is currently unstable, but validation and benchmarks will be published soon.
 
 ## Install
 
@@ -34,12 +34,12 @@ Use `deacon index fetch panhuman-1m` to fetch the default panhuman index from ob
 
 ### Filtering
 
-Supports FASTA or FASTQ input from file or stdin and outputs to stdout or file. Paired sequences are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically by file extension. Beware that gzip is a slow legacy compression standard – Deacon runs up to 5x faster when using Zstandard compression.
+Supports FASTA or FASTQ input from file or stdin and outputs to stdout or file. Paired sequences are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically by file extension. Since (de)compression can be rate limiting, consider using Zstandard rather than Gzip for best performance on multicore systems.
 
 ```bash
 deacon filter panhuman-1m.k31w15.idx reads.fq.gz -o filt.fq  # File input & output
 zcat reads.fq.gz | deacon filter panhuman-1m.k31w15.idx > filt.fq  # Stdin and stdout
-deacon filter panhuman-1m.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # Fast gzip
+deacon filter panhuman-1m.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # Parallel gzip
 deacon -n 1000 filter panhuman-1m.k31w15.idx reads.fq.zst | zstd > filt.fq.zst  # Fastest
 deacon filter -m 3 panhuman-1m.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More precise
 deacon filter -m 1 panhuman-1m.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More sensitive

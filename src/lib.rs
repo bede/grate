@@ -53,6 +53,9 @@ pub struct FilterConfig {
 
     /// Replace sequence headers with sequential numbers (1, 2, 3...)
     pub rename: bool,
+
+    /// Number of threads to use for parallel processing (0 = all available)
+    pub threads: usize,
 }
 
 impl FilterConfig {
@@ -68,54 +71,13 @@ impl FilterConfig {
             log_path: None,
             invert: false,
             rename: false,
+            threads: 0, // Use all available threads by default
         }
     }
 
-    /// Set the input path
-    pub fn with_input<S: Into<String>>(mut self, input_path: S) -> Self {
-        self.input_path = input_path.into();
-        self
-    }
-
-    /// Set the second input path for paired-end reads
-    pub fn with_input2<S: Into<String>>(mut self, input2_path: S) -> Self {
-        self.input2_path = Some(input2_path.into());
-        self
-    }
-
-    /// Set the output path
-    pub fn with_output<S: Into<String>>(mut self, output_path: S) -> Self {
-        self.output_path = output_path.into();
-        self
-    }
-
-    /// Set the minimum matches threshold
-    pub fn with_min_matches(mut self, min_matches: usize) -> Self {
-        self.min_matches = min_matches;
-        self
-    }
-
-    /// Set the prefix length
-    pub fn with_prefix_length(mut self, prefix_length: usize) -> Self {
-        self.prefix_length = prefix_length;
-        self
-    }
-
-    /// Set the log file path
-    pub fn with_log<P: AsRef<Path>>(mut self, log_path: P) -> Self {
-        self.log_path = Some(log_path.as_ref().to_path_buf());
-        self
-    }
-
-    /// Set the invert flag
-    pub fn with_invert(mut self, invert: bool) -> Self {
-        self.invert = invert;
-        self
-    }
-
-    /// Set the rename flag
-    pub fn with_rename(mut self, rename: bool) -> Self {
-        self.rename = rename;
+    /// Set the num threads
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
         self
     }
 
@@ -131,11 +93,11 @@ impl FilterConfig {
             self.log_path.as_ref(),
             self.invert,
             self.rename,
+            self.threads,
         )
     }
 }
 
-/// Configuration for index building operations
 pub struct IndexConfig {
     /// Path to input fastx file
     pub input_path: PathBuf,

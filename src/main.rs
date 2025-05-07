@@ -55,6 +55,10 @@ enum Commands {
         /// Path to JSON output log file
         #[arg(short = 'l', long = "log")]
         log: Option<PathBuf>,
+
+        /// Number of threads to use (0 = all)
+        #[arg(short = 't', long = "threads", default_value_t = 0)]
+        threads: usize,
     },
 }
 
@@ -163,6 +167,7 @@ fn main() -> Result<()> {
             log,
             invert,
             rename,
+            threads,
         } => {
             run_filter(
                 minimizers,
@@ -174,6 +179,7 @@ fn main() -> Result<()> {
                 log.as_ref(),
                 *invert,
                 *rename,
+                *threads,
             )
             .context("Failed to run filter command")?;
         }

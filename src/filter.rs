@@ -185,9 +185,18 @@ pub fn run<P: AsRef<Path>>(
     log_path: Option<&PathBuf>,
     invert: bool,
     rename: bool,
+    threads: usize, // Add threads parameter here
 ) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
+
+    // Configure thread pool if specified (non-zero)
+    if threads > 0 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .context("Failed to initialize thread pool")?;
+    }
 
     let mut input_mode = String::new();
     let mut options = Vec::<String>::new();
@@ -208,6 +217,9 @@ pub fn run<P: AsRef<Path>>(
     }
     if rename {
         options.push("rename".to_string());
+    }
+    if threads > 0 {
+        options.push(format!("threads={}", threads));
     }
 
     eprintln!(
@@ -291,7 +303,8 @@ pub fn run<P: AsRef<Path>>(
             start_time,
         )?;
     } else {
-        process_single_seqs_parallel(
+        // Use our unified function for both stdin and file input
+        process_single_seqs(
             &minimizer_hashes,
             input_path,
             &mut writer,
@@ -312,7 +325,7 @@ pub fn run<P: AsRef<Path>>(
         )?;
     }
 
-    // Remainder of the function unchanged
+    // The remainder of the function is unchanged
     // Ensure everything is flushed
     writer.flush_all()?;
 
@@ -416,197 +429,28 @@ fn process_single_seqs(
     spinner: &ProgressBar,
     start_time: Instant,
 ) -> Result<()> {
-    // Opt: pre-allocate buffers for reuse
-    let mut minimizer_buffer = Vec::with_capacity(64);
-    let mut output_record_buffer = Vec::with_capacity(1024);
-    let mut seen_hits = FxHashSet::default();
-
-    // Parse FASTX from input (file or stdin)
+    // Create a reader based on the input source
     let mut reader = if input_path == "-" {
         parse_fastx_stdin()?
     } else {
         parse_fastx_file(input_path)?
     };
 
-    while let Some(record) = reader.next() {
-        let record = record?;
-
-        let seq = record.seq();
-        *total_seqs += 1;
-        *total_bp += seq.len() as u64;
-
-        // Check for minimizer hits
-        let mut hit_count = 0;
-
-        if seq.len() >= kmer_length {
-            // Reuse pre-allocated buffers
-            minimizer_buffer.clear();
-            seen_hits.clear();
-
-            // Apply prefix length limit if specified (if > 0)
-            let effective_seq = if prefix_length > 0 && seq.len() > prefix_length {
-                &seq.as_ref()[..prefix_length]
-            } else {
-                seq.as_ref()
-            };
-
-            // Get minimizer hash values using parameters from header
-            fill_minimizer_hashes(
-                effective_seq,
-                kmer_length,
-                window_length,
-                &mut minimizer_buffer,
-            );
-
-            // Count distinct minimizer hits
-            for &hash in &minimizer_buffer {
-                if minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
-                    hit_count += 1;
-                    if hit_count >= min_matches {
-                        break;
-                    }
-                }
-            }
-        }
-
-        // Determine if we should output this sequence based on hit count and invert flag
-        let should_output = if !invert {
-            // When not inverted, keep sequences with fewer than min_matches
-            hit_count < min_matches
-        } else {
-            // When inverted, keep sequences with greater than or equal to min_matches
-            hit_count >= min_matches
-        };
-
-        if should_output {
-            // Track output base pairs
-            *output_bp += seq.len() as u64;
-
-            // Format as FASTX directly to a byte buffer
-            output_record_buffer.clear();
-
-            // Increment output sequence counter
-            *output_seq_counter += 1;
-
-            // Write the record based on format, with optional renaming
-            output_fastx_record(
-                &record,
-                &mut output_record_buffer,
-                rename,
-                *output_seq_counter,
-            );
-
-            // Write the whole record at once
-            writer.write_all(&output_record_buffer)?;
-        } else {
-            *filtered_seqs += 1;
-            *filtered_bp += seq.len() as u64; // Track filtered base pairs
-        }
-
-        // Periodically flush and update spinner message with detailed stats
-        if *total_seqs % (100_000) == 0 {
-            writer.flush()?;
-
-            let elapsed = start_time.elapsed();
-            let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
-            let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
-            let mbp_per_sec = bp_per_sec / 1_000_000.0;
-
-            // Calculate filtered proportion directly
-            let filtered_proportion = if *total_seqs > 0 {
-                *filtered_seqs as f64 / *total_seqs as f64
-            } else {
-                0.0
-            };
-
-            // Calculate filtered base pair proportion
-            let filtered_bp_proportion = if *total_bp > 0 {
-                *filtered_bp as f64 / *total_bp as f64
-            } else {
-                0.0
-            };
-
-            // Update spinner message with detailed stats
-            spinner.set_message(format!(
-                "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-                filtered_seqs,
-                total_seqs,
-                filtered_proportion * 100.0, // Convert to percentage for display
-                filtered_bp,
-                total_bp,
-                filtered_bp_proportion * 100.0,
-                seqs_per_sec,
-                mbp_per_sec
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn process_single_seqs_parallel(
-    minimizer_hashes: &FxHashSet<u64>,
-    input_path: &str,
-    writer: &mut Box<dyn FastxWriter>,
-    min_matches: usize,
-    prefix_length: usize,
-    kmer_length: usize,
-    window_length: usize,
-    invert: bool,
-    rename: bool,
-    total_seqs: &mut u64,
-    filtered_seqs: &mut u64,
-    total_bp: &mut u64,
-    output_bp: &mut u64,
-    filtered_bp: &mut u64,
-    output_seq_counter: &mut u64,
-    spinner: &ProgressBar,
-    start_time: Instant,
-) -> Result<()> {
-    // Fall back to sequential processing for stdin
-    if input_path == "-" {
-        return process_single_seqs(
-            minimizer_hashes,
-            input_path,
-            writer,
-            min_matches,
-            prefix_length,
-            kmer_length,
-            window_length,
-            invert,
-            rename,
-            total_seqs,
-            filtered_seqs,
-            total_bp,
-            output_bp,
-            filtered_bp,
-            output_seq_counter,
-            spinner,
-            start_time,
-        );
-    }
-
-    // Parse FASTX from input file
-    let mut reader = parse_fastx_file(input_path)?;
-
     // Process in batches
     let batch_size = 1000;
-
-    // Pre-allocate a buffer for output records
     let mut output_record_buffer = Vec::with_capacity(1024);
 
     // Process batches
     loop {
-        // Collect a batch of records with owned data to avoid borrow issues
+        // Collect a batch of records with owned data
         let mut batch: Vec<RecordData> = Vec::with_capacity(batch_size);
         let mut reached_end = false;
 
-        // Fill the batch
+        // Fill the batch (sequential read from either stdin or file)
         for _ in 0..batch_size {
             if let Some(record_result) = reader.next() {
                 match record_result {
                     Ok(record) => {
-                        // Create owned copies of all record data
                         let record_data = RecordData {
                             id: record.id().to_vec(),
                             seq: record.seq().to_vec(),
@@ -748,7 +592,7 @@ fn process_single_seqs_parallel(
         // Flush writer periodically
         writer.flush()?;
 
-        // Check if we've reached the end of the file
+        // Check if we've reached the end of the file/stdin
         if reached_end {
             break;
         }
