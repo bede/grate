@@ -189,7 +189,6 @@ pub fn run<P: AsRef<Path>>(
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
 
-    // Build preamble message
     let mut input_mode = String::new();
     let mut options = Vec::<String>::new();
     let paired_stdin = input_path == "-" && input2_path.is_some() && input2_path.unwrap() == "-";
@@ -589,19 +588,19 @@ fn process_single_seqs_parallel(
 
     // Parse FASTX from input file
     let mut reader = parse_fastx_file(input_path)?;
-    
+
     // Process in batches
-    let batch_size = 1000; // Can be tuned based on testing
-    
+    let batch_size = 1000;
+
     // Pre-allocate a buffer for output records
     let mut output_record_buffer = Vec::with_capacity(1024);
-    
+
     // Process batches
     loop {
         // Collect a batch of records with owned data to avoid borrow issues
         let mut batch: Vec<RecordData> = Vec::with_capacity(batch_size);
         let mut reached_end = false;
-        
+
         // Fill the batch
         for _ in 0..batch_size {
             if let Some(record_result) = reader.next() {
@@ -615,7 +614,7 @@ fn process_single_seqs_parallel(
                             format: record.format(),
                         };
                         batch.push(record_data);
-                    },
+                    }
                     Err(e) => return Err(e.into()),
                 }
             } else {
@@ -623,75 +622,78 @@ fn process_single_seqs_parallel(
                 break;
             }
         }
-        
+
         if batch.is_empty() {
             break;
         }
-        
+
         // Process batch in parallel
-        let batch_results: Vec<_> = batch.par_iter().map(|record_data| {
-            let seq_len = record_data.seq.len();
-            
-            // Pre-allocate buffers for reuse
-            let mut minimizer_buffer = Vec::with_capacity(64);
-            let mut seen_hits = FxHashSet::default();
-            
-            // Check for minimizer hits
-            let mut hit_count = 0;
-            
-            if seq_len >= kmer_length {
-                // Apply prefix length limit if specified
-                let effective_seq = if prefix_length > 0 && seq_len > prefix_length {
-                    &record_data.seq[..prefix_length]
-                } else {
-                    &record_data.seq
-                };
-                
-                // Get minimizer hash values using parameters from header
-                fill_minimizer_hashes(
-                    effective_seq,
-                    kmer_length,
-                    window_length,
-                    &mut minimizer_buffer,
-                );
-                
-                // Count distinct minimizer hits
-                for &hash in &minimizer_buffer {
-                    if minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
-                        hit_count += 1;
-                        if hit_count >= min_matches {
-                            break;
+        let batch_results: Vec<_> = batch
+            .par_iter()
+            .map(|record_data| {
+                let seq_len = record_data.seq.len();
+
+                // Pre-allocate buffers for reuse
+                let mut minimizer_buffer = Vec::with_capacity(64);
+                let mut seen_hits = FxHashSet::default();
+
+                // Check for minimizer hits
+                let mut hit_count = 0;
+
+                if seq_len >= kmer_length {
+                    // Apply prefix length limit if specified
+                    let effective_seq = if prefix_length > 0 && seq_len > prefix_length {
+                        &record_data.seq[..prefix_length]
+                    } else {
+                        &record_data.seq
+                    };
+
+                    // Get minimizer hash values using parameters from header
+                    fill_minimizer_hashes(
+                        effective_seq,
+                        kmer_length,
+                        window_length,
+                        &mut minimizer_buffer,
+                    );
+
+                    // Count distinct minimizer hits
+                    for &hash in &minimizer_buffer {
+                        if minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
+                            hit_count += 1;
+                            if hit_count >= min_matches {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-            
-            // Determine if we should output this sequence
-            let should_output = if !invert {
-                // When not inverted, keep sequences with fewer than min_matches
-                hit_count < min_matches
-            } else {
-                // When inverted, keep sequences with greater than or equal to min_matches
-                hit_count >= min_matches
-            };
-            
-            (should_output, seq_len)
-        }).collect();
-        
+
+                // Determine if we should output this sequence
+                let should_output = if !invert {
+                    // When not inverted, keep sequences with fewer than min_matches
+                    hit_count < min_matches
+                } else {
+                    // When inverted, keep sequences with greater than or equal to min_matches
+                    hit_count >= min_matches
+                };
+
+                (should_output, seq_len)
+            })
+            .collect();
+
         // Process results sequentially to maintain order
         for (i, (should_output, seq_len)) in batch_results.iter().enumerate() {
             let record_data = &batch[i];
-            
+
             *total_seqs += 1;
             *total_bp += *seq_len as u64;
-            
+
             if *should_output {
                 // Track output base pairs
                 *output_bp += *seq_len as u64;
-                
+
                 // Increment output sequence counter
                 *output_seq_counter += 1;
-                
+
                 // Format as FASTX and write
                 output_record_buffer.clear();
                 output_fastx_record_from_parts(
@@ -709,27 +711,27 @@ fn process_single_seqs_parallel(
                 *filtered_bp += *seq_len as u64;
             }
         }
-        
+
         // Update spinner and flush periodically
         let elapsed = start_time.elapsed();
         let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
-        
+
         // Calculate filtered proportion
         let filtered_proportion = if *total_seqs > 0 {
             *filtered_seqs as f64 / *total_seqs as f64
         } else {
             0.0
         };
-        
+
         // Calculate filtered base pair proportion
         let filtered_bp_proportion = if *total_bp > 0 {
             *filtered_bp as f64 / *total_bp as f64
         } else {
             0.0
         };
-        
+
         // Update spinner message
         spinner.set_message(format!(
             "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
@@ -742,16 +744,16 @@ fn process_single_seqs_parallel(
             seqs_per_sec,
             mbp_per_sec
         ));
-        
+
         // Flush writer periodically
         writer.flush()?;
-        
+
         // Check if we've reached the end of the file
         if reached_end {
             break;
         }
     }
-    
+
     Ok(())
 }
 
