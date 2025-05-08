@@ -6,7 +6,7 @@ use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressStyle};
 use needletail::parse_fastx_file;
 use needletail::parse_fastx_stdin;
-use needletail::parser::{Format, SequenceRecord};
+use needletail::parser::Format;
 use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -437,7 +437,7 @@ fn process_single_seqs(
     };
 
     // Process in batches
-    let batch_size = 1000;
+    let batch_size = 10000;
     let mut output_record_buffer = Vec::with_capacity(1024);
 
     // Process batches
@@ -621,13 +621,6 @@ fn process_paired_seqs(
     spinner: &ProgressBar,
     start_time: Instant,
 ) -> Result<()> {
-    // Opt: pre-allocate buffers for reuse
-    let mut minimizer_buffer1 = Vec::with_capacity(64);
-    let mut minimizer_buffer2 = Vec::with_capacity(64);
-    let mut output_record_buffer = Vec::with_capacity(1024);
-    let mut seen_hits1 = FxHashSet::default();
-    let mut seen_hits2 = FxHashSet::default();
-
     // Open both input files
     let mut reader1 = if input1_path == "-" {
         parse_fastx_stdin()?
@@ -637,155 +630,223 @@ fn process_paired_seqs(
 
     let mut reader2 = parse_fastx_file(input2_path)?;
 
-    // Process read pairs
-    while let (Some(record1_res), Some(record2_res)) = (reader1.next(), reader2.next()) {
-        let record1 = record1_res?;
-        let record2 = record2_res?;
+    // Process in batches
+    let batch_size = 10000;
+    let mut output_record_buffer = Vec::with_capacity(1024);
 
-        let seq1 = record1.seq();
-        let seq2 = record2.seq();
+    // Process batches
+    loop {
+        // Collect a batch of read pairs with owned data
+        let mut batch1: Vec<RecordData> = Vec::with_capacity(batch_size);
+        let mut batch2: Vec<RecordData> = Vec::with_capacity(batch_size);
+        let mut reached_end = false;
 
-        // Count as two sequences
-        *total_seqs += 2;
-        *total_bp += (seq1.len() + seq2.len()) as u64;
-
-        // Check for minimizer hits in read 1
-        let mut hit_count1 = 0;
-        if seq1.len() >= kmer_length {
-            minimizer_buffer1.clear();
-            seen_hits1.clear();
-
-            // Apply prefix length limit if specified (if > 0)
-            let effective_seq = if prefix_length > 0 && seq1.len() > prefix_length {
-                &seq1.as_ref()[..prefix_length]
-            } else {
-                seq1.as_ref()
-            };
-
-            // Get minimizer hash values using parameters from header
-            fill_minimizer_hashes(
-                effective_seq,
-                kmer_length,
-                window_length,
-                &mut minimizer_buffer1,
-            );
-
-            // Count distinct minimizer hits
-            for &hash in &minimizer_buffer1 {
-                if minimizer_hashes.contains(&hash) && seen_hits1.insert(hash) {
-                    hit_count1 += 1;
+        // Fill the batch (sequential read from files)
+        for _ in 0..batch_size {
+            if let (Some(record1_res), Some(record2_res)) = (reader1.next(), reader2.next()) {
+                match (record1_res, record2_res) {
+                    (Ok(record1), Ok(record2)) => {
+                        let record_data1 = RecordData {
+                            id: record1.id().to_vec(),
+                            seq: record1.seq().to_vec(),
+                            qual: record1.qual().map(|q| q.to_vec()),
+                            format: record1.format(),
+                        };
+                        let record_data2 = RecordData {
+                            id: record2.id().to_vec(),
+                            seq: record2.seq().to_vec(),
+                            qual: record2.qual().map(|q| q.to_vec()),
+                            format: record2.format(),
+                        };
+                        batch1.push(record_data1);
+                        batch2.push(record_data2);
+                    }
+                    (Err(e), _) => return Err(e.into()),
+                    (_, Err(e)) => return Err(e.into()),
                 }
+            } else {
+                reached_end = true;
+                break;
             }
         }
 
-        // Check for minimizer hits in read 2
-        let mut hit_count2 = 0;
-        if seq2.len() >= kmer_length {
-            minimizer_buffer2.clear();
-            seen_hits2.clear();
+        if batch1.is_empty() {
+            break;
+        }
 
-            // Apply prefix length limit if specified (if > 0)
-            let effective_seq = if prefix_length > 0 && seq2.len() > prefix_length {
-                &seq2.as_ref()[..prefix_length]
-            } else {
-                seq2.as_ref()
-            };
+        // Process batch in parallel
+        let batch_results: Vec<_> = batch1
+            .par_iter()
+            .zip(batch2.par_iter())
+            .map(|(record_data1, record_data2)| {
+                let seq1_len = record_data1.seq.len();
+                let seq2_len = record_data2.seq.len();
 
-            // Get minimizer hash values using parameters from header
-            fill_minimizer_hashes(
-                effective_seq,
-                kmer_length,
-                window_length,
-                &mut minimizer_buffer2,
-            );
+                // Pre-allocate buffers for reuse
+                let mut minimizer_buffer1 = Vec::with_capacity(64);
+                let mut minimizer_buffer2 = Vec::with_capacity(64);
+                let mut seen_hits1 = FxHashSet::default();
+                let mut seen_hits2 = FxHashSet::default();
 
-            // Count distinct minimizer hits
-            for &hash in &minimizer_buffer2 {
-                if minimizer_hashes.contains(&hash) && seen_hits2.insert(hash) {
-                    hit_count2 += 1;
+                // Check for minimizer hits in read 1
+                let mut hit_count1 = 0;
+                if seq1_len >= kmer_length {
+                    minimizer_buffer1.clear();
+                    seen_hits1.clear();
+
+                    // Apply prefix length limit if specified
+                    let effective_seq = if prefix_length > 0 && seq1_len > prefix_length {
+                        &record_data1.seq[..prefix_length]
+                    } else {
+                        &record_data1.seq
+                    };
+
+                    // Get minimizer hash values
+                    fill_minimizer_hashes(
+                        effective_seq,
+                        kmer_length,
+                        window_length,
+                        &mut minimizer_buffer1,
+                    );
+
+                    // Count distinct minimizer hits
+                    for &hash in &minimizer_buffer1 {
+                        if minimizer_hashes.contains(&hash) && seen_hits1.insert(hash) {
+                            hit_count1 += 1;
+                        }
+                    }
                 }
+
+                // Check for minimizer hits in read 2
+                let mut hit_count2 = 0;
+                if seq2_len >= kmer_length {
+                    minimizer_buffer2.clear();
+                    seen_hits2.clear();
+
+                    // Apply prefix length limit if specified
+                    let effective_seq = if prefix_length > 0 && seq2_len > prefix_length {
+                        &record_data2.seq[..prefix_length]
+                    } else {
+                        &record_data2.seq
+                    };
+
+                    // Get minimizer hash values
+                    fill_minimizer_hashes(
+                        effective_seq,
+                        kmer_length,
+                        window_length,
+                        &mut minimizer_buffer2,
+                    );
+
+                    // Count distinct minimizer hits
+                    for &hash in &minimizer_buffer2 {
+                        if minimizer_hashes.contains(&hash) && seen_hits2.insert(hash) {
+                            hit_count2 += 1;
+                        }
+                    }
+                }
+
+                // Total hit count for the read pair
+                let total_hit_count = hit_count1 + hit_count2;
+
+                // Determine if we should output this pair
+                let should_output = if !invert {
+                    // When not inverted, keep pairs with fewer than min_matches combined hits
+                    total_hit_count < min_matches
+                } else {
+                    // When inverted, keep pairs with greater than or equal to min_matches combined hits
+                    total_hit_count >= min_matches
+                };
+
+                (should_output, seq1_len, seq2_len)
+            })
+            .collect();
+
+        // Process results sequentially to maintain order
+        for (i, (should_output, seq1_len, seq2_len)) in batch_results.iter().enumerate() {
+            let record_data1 = &batch1[i];
+            let record_data2 = &batch2[i];
+
+            *total_seqs += 2;
+            *total_bp += (*seq1_len + *seq2_len) as u64;
+
+            if *should_output {
+                // Track output base pairs
+                *output_bp += (*seq1_len + *seq2_len) as u64;
+
+                // Increment output sequence counter (twice, once for each read)
+                *output_seq_counter += 2;
+
+                // Format s1 as FASTX to byte buffer
+                output_record_buffer.clear();
+                output_fastx_record_from_parts(
+                    &record_data1.id,
+                    &record_data1.seq,
+                    record_data1.qual.as_deref(),
+                    record_data1.format,
+                    &mut output_record_buffer,
+                    rename,
+                    *output_seq_counter - 1,
+                );
+                writer.write_all(&output_record_buffer)?;
+
+                // Format s2 as FASTX to byte buffer
+                output_record_buffer.clear();
+                output_fastx_record_from_parts(
+                    &record_data2.id,
+                    &record_data2.seq,
+                    record_data2.qual.as_deref(),
+                    record_data2.format,
+                    &mut output_record_buffer,
+                    rename,
+                    *output_seq_counter,
+                );
+                writer.write_all(&output_record_buffer)?;
+            } else {
+                *filtered_seqs += 2; // Both seqs filtered out
+                *filtered_bp += (*seq1_len + *seq2_len) as u64; // Track filtered base pairs
             }
         }
 
-        // Total hit count for the read pair
-        let total_hit_count = hit_count1 + hit_count2;
+        // Update spinner and flush periodically
+        let elapsed = start_time.elapsed();
+        let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
+        let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
+        let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
-        // Determine if we should output this read pair based on combined hit count and invert flag
-        let should_output = if !invert {
-            // When not inverted, keep pairs with fewer than min_matches combined hits
-            total_hit_count < min_matches
+        // Calculate filtered proportion directly
+        let filtered_proportion = if *total_seqs > 0 {
+            *filtered_seqs as f64 / *total_seqs as f64
         } else {
-            // When inverted, keep pairs with greater than or equal to min_matches combined hits
-            total_hit_count >= min_matches
+            0.0
         };
 
-        if should_output {
-            // Track output base pairs
-            *output_bp += (seq1.len() + seq2.len()) as u64;
-
-            // Increment output sequence counter (twice, once for each read)
-            *output_seq_counter += 2;
-
-            // Write interleaved seqs
-            // Format s1 as FASTX to byte buffer
-            output_record_buffer.clear();
-            output_fastx_record(
-                &record1,
-                &mut output_record_buffer,
-                rename,
-                *output_seq_counter - 1, // Use the correct counter for s1
-            );
-            writer.write_all(&output_record_buffer)?;
-
-            // Format s2 as FASTX to byte buffer
-            output_record_buffer.clear();
-            output_fastx_record(
-                &record2,
-                &mut output_record_buffer,
-                rename,
-                *output_seq_counter, // Use the correct counter for s2
-            );
-            writer.write_all(&output_record_buffer)?;
+        // Calculate filtered base pair proportion
+        let filtered_bp_proportion = if *total_bp > 0 {
+            *filtered_bp as f64 / *total_bp as f64
         } else {
-            *filtered_seqs += 2; // Both seqs filtered out
-            *filtered_bp += (seq1.len() + seq2.len()) as u64; // Track filtered base pairs
-        }
+            0.0
+        };
 
-        // Periodically flush and update spinner message with detailed stats
-        if *total_seqs % (100_000) == 0 {
-            writer.flush()?;
+        // Update spinner message with detailed stats
+        spinner.set_message(format!(
+            "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            filtered_seqs,
+            total_seqs,
+            filtered_proportion * 100.0,
+            filtered_bp,
+            total_bp,
+            filtered_bp_proportion * 100.0,
+            seqs_per_sec,
+            mbp_per_sec
+        ));
 
-            let elapsed = start_time.elapsed();
-            let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
-            let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
-            let mbp_per_sec = bp_per_sec / 1_000_000.0;
+        // Flush writer periodically
+        writer.flush()?;
 
-            // Calculate filtered proportion directly
-            let filtered_proportion = if *total_seqs > 0 {
-                *filtered_seqs as f64 / *total_seqs as f64
-            } else {
-                0.0
-            };
-
-            // Calculate filtered base pair proportion
-            let filtered_bp_proportion = if *total_bp > 0 {
-                *filtered_bp as f64 / *total_bp as f64
-            } else {
-                0.0
-            };
-
-            // Update spinner message with detailed stats
-            spinner.set_message(format!(
-                "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-                filtered_seqs,
-                total_seqs,
-                filtered_proportion * 100.0, // Convert to percentage
-                filtered_bp,
-                total_bp,
-                filtered_bp_proportion * 100.0,
-                seqs_per_sec,
-                mbp_per_sec
-            ));
+        // Check if we've reached the end of the files
+        if reached_end {
+            break;
         }
     }
 
@@ -810,245 +871,246 @@ fn process_interleaved_paired_seqs(
     spinner: &ProgressBar,
     start_time: Instant,
 ) -> Result<()> {
-    // Pre-allocate buffers for reuse
-    let mut minimizer_buffer1 = Vec::with_capacity(64);
-    let mut minimizer_buffer2 = Vec::with_capacity(64);
-    let mut output_record_buffer = Vec::with_capacity(1024);
-    let mut seen_hits1 = FxHashSet::default();
-    let mut seen_hits2 = FxHashSet::default();
-
     // Parse FASTX from stdin
     let mut reader = parse_fastx_stdin()?;
+    let mut output_record_buffer = Vec::with_capacity(1024);
     let mut record_counter = 0;
 
-    // Process records in pairs
+    // Process in batches
+    let batch_size = 10000;
+
     loop {
-        // Read the first record and extract all needed data
-        let (record1_id, record1_seq, record1_qual, record1_format) = match reader.next() {
-            Some(result) => {
-                record_counter += 1;
-                let record = result?;
-                // Extract all data we need from the record
-                let id = record.id().to_vec();
-                let seq = record.seq().to_vec();
-                let qual = record.qual().map(|q| q.to_vec());
-                let format = record.format();
-                (id, seq, qual, format)
-            }
-            None => break, // End of input
-        };
+        // Collect a batch of read pairs with owned data
+        let mut batch_pairs = Vec::with_capacity(batch_size);
+        let mut reached_end = false;
 
-        // Read the second record and extract all needed data
-        let (record2_id, record2_seq, record2_qual, record2_format) = match reader.next() {
-            Some(result) => {
-                record_counter += 1;
-                let record = result?;
-                let id = record.id().to_vec();
-                let seq = record.seq().to_vec();
-                let qual = record.qual().map(|q| q.to_vec());
-                let format = record.format();
-                (id, seq, qual, format)
-            }
-            None => {
-                // Check if we have record1 but no record2 (mispaired)
-                return Err(anyhow::anyhow!(
-                    "Uneven number of interleaved sequence pairs. Found {} records.",
-                    record_counter
-                ));
-            }
-        };
-
-        // Count as two sequences
-        *total_seqs += 2;
-        *total_bp += (record1_seq.len() + record2_seq.len()) as u64;
-
-        // Check for minimizer hits in seq 1
-        let mut hit_count1 = 0;
-        if record1_seq.len() >= kmer_length {
-            minimizer_buffer1.clear();
-            seen_hits1.clear();
-
-            // Apply prefix length limit if specified
-            let effective_seq = if prefix_length > 0 && record1_seq.len() > prefix_length {
-                &record1_seq[..prefix_length]
-            } else {
-                &record1_seq
-            };
-
-            // Get minimizer hash values
-            fill_minimizer_hashes(
-                effective_seq,
-                kmer_length,
-                window_length,
-                &mut minimizer_buffer1,
-            );
-
-            // Count distinct minimizer hits
-            for &hash in &minimizer_buffer1 {
-                if minimizer_hashes.contains(&hash) && seen_hits1.insert(hash) {
-                    hit_count1 += 1;
+        // Fill the batch with interleaved pairs
+        for _ in 0..batch_size {
+            // Read the first record of the pair
+            let (record1_id, record1_seq, record1_qual, record1_format) = match reader.next() {
+                Some(result) => {
+                    record_counter += 1;
+                    let record = result?;
+                    // Extract all data we need from the record
+                    let id = record.id().to_vec();
+                    let seq = record.seq().to_vec();
+                    let qual = record.qual().map(|q| q.to_vec());
+                    let format = record.format();
+                    (id, seq, qual, format)
                 }
-            }
-        }
-
-        // Check for minimizer hits in seq 2
-        let mut hit_count2 = 0;
-        if record2_seq.len() >= kmer_length {
-            minimizer_buffer2.clear();
-            seen_hits2.clear();
-
-            // Apply prefix length limit if specified
-            let effective_seq = if prefix_length > 0 && record2_seq.len() > prefix_length {
-                &record2_seq[..prefix_length]
-            } else {
-                &record2_seq
-            };
-
-            // Get minimizer hash values
-            fill_minimizer_hashes(
-                effective_seq,
-                kmer_length,
-                window_length,
-                &mut minimizer_buffer2,
-            );
-
-            // Count distinct minimizer hits
-            for &hash in &minimizer_buffer2 {
-                if minimizer_hashes.contains(&hash) && seen_hits2.insert(hash) {
-                    hit_count2 += 1;
+                None => {
+                    reached_end = true;
+                    break; // End of input
                 }
-            }
-        }
-
-        // Total hit count for the seq pair
-        let total_hit_count = hit_count1 + hit_count2;
-
-        // Determine if we should output this sequence pair based on combined hit count and invert flag
-        let should_output = if !invert {
-            // When not inverted, keep pairs with fewer than min_matches combined hits
-            total_hit_count < min_matches
-        } else {
-            // When inverted, keep pairs with greater than or equal to min_matches combined hits
-            total_hit_count >= min_matches
-        };
-
-        if should_output {
-            // Track output base pairs
-            *output_bp += (record1_seq.len() + record2_seq.len()) as u64;
-
-            // Increment output sequence counter (twice, once for each sequence)
-            *output_seq_counter += 2;
-
-            // Format and write record 1
-            output_record_buffer.clear();
-            output_fastx_record_from_parts(
-                &record1_id,
-                &record1_seq,
-                record1_qual.as_deref(),
-                record1_format,
-                &mut output_record_buffer,
-                rename,
-                *output_seq_counter - 1,
-            );
-            writer.write_all(&output_record_buffer)?;
-
-            // Format and write record 2
-            output_record_buffer.clear();
-            output_fastx_record_from_parts(
-                &record2_id,
-                &record2_seq,
-                record2_qual.as_deref(),
-                record2_format,
-                &mut output_record_buffer,
-                rename,
-                *output_seq_counter,
-            );
-            writer.write_all(&output_record_buffer)?;
-        } else {
-            *filtered_seqs += 2; // Both seqs filtered out
-            *filtered_bp += (record1_seq.len() + record2_seq.len()) as u64; // Track filtered base pairs
-        }
-
-        // Periodically flush and update spinner message with detailed stats
-        if *total_seqs % (100_000) == 0 {
-            writer.flush()?;
-
-            let elapsed = start_time.elapsed();
-            let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
-            let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
-            let mbp_per_sec = bp_per_sec / 1_000_000.0;
-
-            // Calculate filtered proportion directly
-            let filtered_proportion = if *total_seqs > 0 {
-                *filtered_seqs as f64 / *total_seqs as f64
-            } else {
-                0.0
             };
 
-            // Calculate filtered base pair proportion
-            let filtered_bp_proportion = if *total_bp > 0 {
-                *filtered_bp as f64 / *total_bp as f64
-            } else {
-                0.0
+            // Read the second record of the pair
+            let (record2_id, record2_seq, record2_qual, record2_format) = match reader.next() {
+                Some(result) => {
+                    record_counter += 1;
+                    let record = result?;
+                    let id = record.id().to_vec();
+                    let seq = record.seq().to_vec();
+                    let qual = record.qual().map(|q| q.to_vec());
+                    let format = record.format();
+                    (id, seq, qual, format)
+                }
+                None => {
+                    // Check if we have record1 but no record2 (mispaired)
+                    return Err(anyhow::anyhow!(
+                        "Uneven number of interleaved sequence pairs. Found {} records.",
+                        record_counter
+                    ));
+                }
             };
 
-            // Update spinner message with detailed stats
-            spinner.set_message(format!(
-                "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-                filtered_seqs,
-                total_seqs,
-                filtered_proportion * 100.0, // Convert to percentage for display
-                filtered_bp,
-                total_bp,
-                filtered_bp_proportion * 100.0,
-                seqs_per_sec,
-                mbp_per_sec
+            // Store the pair in the batch
+            batch_pairs.push((
+                (record1_id, record1_seq, record1_qual, record1_format),
+                (record2_id, record2_seq, record2_qual, record2_format),
             ));
+        }
+
+        if batch_pairs.is_empty() {
+            break;
+        }
+
+        // Process batch in parallel
+        let batch_results: Vec<_> = batch_pairs
+            .par_iter()
+            .map(
+                |(
+                    (_record1_id, record1_seq, _record1_qual, _record1_format),
+                    (_record2_id, record2_seq, _record2_qual, _record2_format),
+                )| {
+                    // Pre-allocate buffers for reuse
+                    let mut minimizer_buffer1 = Vec::with_capacity(64);
+                    let mut minimizer_buffer2 = Vec::with_capacity(64);
+                    let mut seen_hits1 = FxHashSet::default();
+                    let mut seen_hits2 = FxHashSet::default();
+
+                    // Check for minimizer hits in read 1
+                    let mut hit_count1 = 0;
+                    if record1_seq.len() >= kmer_length {
+                        // Apply prefix length limit if specified
+                        let effective_seq =
+                            if prefix_length > 0 && record1_seq.len() > prefix_length {
+                                &record1_seq[..prefix_length]
+                            } else {
+                                &record1_seq
+                            };
+
+                        // Get minimizer hash values
+                        fill_minimizer_hashes(
+                            effective_seq,
+                            kmer_length,
+                            window_length,
+                            &mut minimizer_buffer1,
+                        );
+
+                        // Count distinct minimizer hits
+                        for &hash in &minimizer_buffer1 {
+                            if minimizer_hashes.contains(&hash) && seen_hits1.insert(hash) {
+                                hit_count1 += 1;
+                            }
+                        }
+                    }
+
+                    // Check for minimizer hits in read 2
+                    let mut hit_count2 = 0;
+                    if record2_seq.len() >= kmer_length {
+                        // Apply prefix length limit if specified
+                        let effective_seq =
+                            if prefix_length > 0 && record2_seq.len() > prefix_length {
+                                &record2_seq[..prefix_length]
+                            } else {
+                                &record2_seq
+                            };
+
+                        // Get minimizer hash values
+                        fill_minimizer_hashes(
+                            effective_seq,
+                            kmer_length,
+                            window_length,
+                            &mut minimizer_buffer2,
+                        );
+
+                        // Count distinct minimizer hits
+                        for &hash in &minimizer_buffer2 {
+                            if minimizer_hashes.contains(&hash) && seen_hits2.insert(hash) {
+                                hit_count2 += 1;
+                            }
+                        }
+                    }
+
+                    // Total hit count for the pair
+                    let total_hit_count = hit_count1 + hit_count2;
+
+                    // Determine if we should output this pair
+                    let should_output = if !invert {
+                        // When not inverted, keep pairs with fewer than min_matches combined hits
+                        total_hit_count < min_matches
+                    } else {
+                        // When inverted, keep pairs with greater than or equal to min_matches combined hits
+                        total_hit_count >= min_matches
+                    };
+
+                    (should_output, record1_seq.len(), record2_seq.len())
+                },
+            )
+            .collect();
+
+        // Process results sequentially to maintain order
+        for (i, (should_output, seq1_len, seq2_len)) in batch_results.iter().enumerate() {
+            let (
+                (record1_id, record1_seq, record1_qual, record1_format),
+                (record2_id, record2_seq, record2_qual, record2_format),
+            ) = &batch_pairs[i];
+
+            *total_seqs += 2;
+            *total_bp += (*seq1_len + *seq2_len) as u64;
+
+            if *should_output {
+                // Track output base pairs
+                *output_bp += (*seq1_len + *seq2_len) as u64;
+
+                // Increment output sequence counter (twice, once for each seq)
+                *output_seq_counter += 2;
+
+                // Format and write record 1
+                output_record_buffer.clear();
+                output_fastx_record_from_parts(
+                    record1_id,
+                    record1_seq,
+                    record1_qual.as_deref(),
+                    *record1_format,
+                    &mut output_record_buffer,
+                    rename,
+                    *output_seq_counter - 1,
+                );
+                writer.write_all(&output_record_buffer)?;
+
+                // Format and write record 2
+                output_record_buffer.clear();
+                output_fastx_record_from_parts(
+                    record2_id,
+                    record2_seq,
+                    record2_qual.as_deref(),
+                    *record2_format,
+                    &mut output_record_buffer,
+                    rename,
+                    *output_seq_counter,
+                );
+                writer.write_all(&output_record_buffer)?;
+            } else {
+                *filtered_seqs += 2; // Both seqs filtered out
+                *filtered_bp += (*seq1_len + *seq2_len) as u64; // Track filtered base pairs
+            }
+        }
+
+        // Update spinner and flush periodically
+        let elapsed = start_time.elapsed();
+        let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
+        let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
+        let mbp_per_sec = bp_per_sec / 1_000_000.0;
+
+        // Calculate filtered proportion directly
+        let filtered_proportion = if *total_seqs > 0 {
+            *filtered_seqs as f64 / *total_seqs as f64
+        } else {
+            0.0
+        };
+
+        // Calculate filtered base pair proportion
+        let filtered_bp_proportion = if *total_bp > 0 {
+            *filtered_bp as f64 / *total_bp as f64
+        } else {
+            0.0
+        };
+
+        // Update spinner message with detailed stats
+        spinner.set_message(format!(
+            "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            filtered_seqs,
+            total_seqs,
+            filtered_proportion * 100.0,
+            filtered_bp,
+            total_bp,
+            filtered_bp_proportion * 100.0,
+            seqs_per_sec,
+            mbp_per_sec
+        ));
+
+        // Flush writer periodically
+        writer.flush()?;
+
+        // Check if we've reached the end of input
+        if reached_end {
+            break;
         }
     }
 
     Ok(())
-}
-
-/// Push FASTA or FASTQ record to output buffer
-fn output_fastx_record(
-    record: &SequenceRecord,
-    buffer: &mut Vec<u8>,
-    rename: bool,
-    seq_number: u64,
-) {
-    match record.format() {
-        Format::Fasta => {
-            buffer.push(b'>');
-            if rename {
-                // Use sequential numbering for sequence ID
-                buffer.extend_from_slice(seq_number.to_string().as_bytes());
-            } else {
-                // Use original sequence ID
-                buffer.extend_from_slice(record.id());
-            }
-            buffer.push(b'\n');
-            buffer.extend_from_slice(record.seq().as_ref());
-            buffer.push(b'\n');
-        }
-        Format::Fastq => {
-            buffer.push(b'@');
-            if rename {
-                // Use sequential numbering for sequence ID
-                buffer.extend_from_slice(seq_number.to_string().as_bytes());
-            } else {
-                // Use original sequence ID
-                buffer.extend_from_slice(record.id());
-            }
-            buffer.push(b'\n');
-            buffer.extend_from_slice(record.seq().as_ref());
-            buffer.extend_from_slice(b"\n+\n");
-            if let Some(qual) = record.qual() {
-                buffer.extend_from_slice(qual);
-            }
-            buffer.push(b'\n');
-        }
-    }
 }
 
 /// Push FASTA or FASTQ record to output buffer from component parts
