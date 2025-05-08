@@ -2,9 +2,9 @@
 
 # Deacon
 
-A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for fast host depletion. Default behaviour removes query sequences with two or more minimizers present in the index. Capable of filtering at >200Mbp/s on Apple M1 and indexing a human genome in under 60s. Peak memory usage is ~4.5GB for the default panhuman index.
+A minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for fast host depletion. Default behaviour removes query sequences with two or more minimizers present in the index. Capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in under 60s. Peak memory usage is ~4.5GB for the default panhuman index.
 
-The sensitivity/specificity/memory tradeoff can be tuned using indexes built with varying *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for accelerated minimizer computation. This project is currently unstable, but validation and benchmarks will be published soon.
+The sensitivity/specificity/memory tradeoff can be tuned using indexes built with varying *k*-mer length (`-k`), minimizer window length (`-w`), and match threshold (`-m`). Filtering speed may be increased by considering only the first `-n` bases per query sequence. Uses [simd-minimizers](https://github.com/rust-seq/simd-minimizers) for accelerated minimizer computation. This project is currently unstable. Validation and benchmarks coming soon.
 
 ## Install
 
@@ -22,7 +22,7 @@ cargo install deacon
 
 ## Usage
 
-The command `deacon filter` accepts a path to an index and a FASTA/FASTQ query from file or stdin. Prebuilt indexes are available for download below, and custom indexes may be created using `deacon index build`.
+The command `deacon filter` accepts an index path and a FASTA/FASTQ query from file or stdin. Prebuilt indexes are available for download below, and custom indexes may be created using `deacon index build`.
 
 ### Prebuilt indexes
 
