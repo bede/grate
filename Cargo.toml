@@ -8,7 +8,7 @@ repository = "https://github.com/bede/deacon"
 homepage = "https://github.com/bede/deacon"
 keywords = ["bioinformatics", "genomics", "filtering", "decontamination"]
 categories = ["science", "command-line-utilities"]
-license-file = "MIT"
+license  = "MIT"
 exclude = ["bench/*", "data/*"]
 
 [lib]
