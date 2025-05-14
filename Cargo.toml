@@ -8,7 +8,7 @@ repository = "https://github.com/bede/deacon"
 homepage = "https://github.com/bede/deacon"
 keywords = ["bioinformatics", "genomics", "filtering", "decontamination"]
 categories = ["science", "command-line-utilities"]
-license  = "MIT"
+license = "MIT"
 exclude = ["bench/*", "data/*"]
 
 [lib]
@@ -20,8 +20,8 @@ clap = { version = "4.5", features = ["derive"] }
 flate2 = "1.1"
 anyhow = "1.0"
 thiserror = "2.0"
-simd-minimizers = "1.0.0"
-packed-seq = "1.0.2"
+simd-minimizers = "1.1"
+packed-seq = "2.0"
 rayon = "1"
 rustc-hash = "2.1.1"
 serde = { version = "1.0", features = ["derive"] }
@@ -35,7 +35,7 @@ indicatif = "0.17"
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
-tempfile = "3.8"
+tempfile = "3.20"
 rstest = "0.25"
 
 [[test]]
