@@ -32,7 +32,7 @@ enum Commands {
         /// Optional path to second paired fastx file (or - for interleaved stdin)
         input2: Option<String>,
 
-        /// Optional path to output fastx file (or - for stdout; detects .gz and .zst)
+        /// Path to output fastx file (or - for stdout; detects .gz and .zst)
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
 
@@ -57,7 +57,7 @@ enum Commands {
         report: Option<PathBuf>,
 
         /// Number of execution threads (0 = auto)
-        #[arg(short = 't', long = "threads", default_value_t = 0)]
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
     },
 }
@@ -82,7 +82,7 @@ enum IndexCommands {
         output: String,
 
         /// Number of execution threads (0 = auto)
-        #[arg(short = 't', long = "threads", default_value_t = 0)]
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
     },
     /// Show index information
