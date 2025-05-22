@@ -3,7 +3,7 @@ use crate::minimizers::fill_minimizer_hashes;
 use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use indicatif::{ProgressBar, ProgressStyle};
+use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
 use needletail::parse_fastx_file;
 use needletail::parse_fastx_stdin;
 use needletail::parser::Format;
@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 const OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // Opt: 8MB output buffer
@@ -185,12 +185,13 @@ pub fn run<P: AsRef<Path>>(
     log_path: Option<&PathBuf>,
     invert: bool,
     rename: bool,
-    threads: usize, // Add threads parameter here
+    threads: usize,
 ) -> Result<()> {
     let start_time = Instant::now();
-    let version = env!("CARGO_PKG_VERSION").to_string();
+    let version: String = env!("CARGO_PKG_VERSION").to_string();
+    let tool_version = format!("deacon {}", version);
 
-    // Configure thread pool if specified (non-zero)
+    // Configure thread pool if nonzero
     if threads > 0 {
         rayon::ThreadPoolBuilder::new()
             .num_threads(threads)
@@ -245,14 +246,13 @@ pub fn run<P: AsRef<Path>>(
     let mut writer = get_writer(output_path)?;
 
     // A progress bar would require a denominator, so let's spin
-    let spinner = ProgressBar::new_spinner();
+    let spinner = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
     spinner.set_style(
         ProgressStyle::default_spinner()
             .tick_strings(&[".  ", ".. ", "...", " ..", "  .", "   "])
             .template("{msg}{spinner} ")?,
     );
     spinner.set_message("Filtering");
-    spinner.enable_steady_tick(Duration::from_millis(250));
 
     // Init counters
     let mut total_seqs = 0;
@@ -346,8 +346,9 @@ pub fn run<P: AsRef<Path>>(
         0.0
     };
 
-    // Finish spinner with final message
-    spinner.finish_with_message(format!(
+    // Finish and clear spinner, print final message
+    spinner.finish_and_clear();
+    eprintln!(
         "Removed {}/{} sequences ({:.3}%) , {}/{} bp ({:.3}%)",
         filtered_seqs,
         total_seqs,
@@ -355,9 +356,9 @@ pub fn run<P: AsRef<Path>>(
         filtered_bp,
         total_bp,
         filtered_bp_proportion * 100.0
-    ));
+    );
 
-    // Print completion message without spinner
+    // Print completion message with speed
     eprintln!(
         "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
         total_time, seqs_per_sec, mbp_per_sec
@@ -369,7 +370,7 @@ pub fn run<P: AsRef<Path>>(
         let seqs_out = total_seqs - filtered_seqs;
 
         let log = FilterLog {
-            version: version,
+            version: tool_version,
             index: minimizers_path.as_ref().to_string_lossy().to_string(),
             input1: input_path.to_string(),
             input2: input2_path.map(|s| s.to_string()),
@@ -401,7 +402,7 @@ pub fn run<P: AsRef<Path>>(
         // Serialize and write the log as JSON
         serde_json::to_writer_pretty(writer, &log).context("Failed to write JSON log")?;
 
-        eprintln!("JSON log saved to: {:?}", log_file);
+        eprintln!("JSON log saved to {:?}", log_file);
     }
 
     Ok(())
@@ -575,7 +576,7 @@ fn process_single_seqs(
 
         // Update spinner message
         spinner.set_message(format!(
-            "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            "Removed {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
             filtered_seqs,
             total_seqs,
             filtered_proportion * 100.0,
@@ -827,7 +828,7 @@ fn process_paired_seqs(
 
         // Update spinner message with detailed stats
         spinner.set_message(format!(
-            "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            "Removed {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
             filtered_seqs,
             total_seqs,
             filtered_proportion * 100.0,
@@ -1183,10 +1184,10 @@ mod tests {
     fn test_filter_log() {
         // Create a sample log
         let log = FilterLog {
-            version: "0.1.0".to_string(),
+            version: "deacon 0.1.0".to_string(),
             index: "test.idx".to_string(),
             input1: "test.fastq".to_string(),
-            input2: Some("test2.fastq".to_string()), // Added for paired-end support
+            input2: Some("test2.fastq".to_string()),
             output: "output.fastq".to_string(),
             k: 31,
             w: 21,

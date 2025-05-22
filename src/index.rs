@@ -126,6 +126,12 @@ pub fn build<P: AsRef<Path>>(
     let start_time = Instant::now();
     let path = input.as_ref();
 
+    let version: String = env!("CARGO_PKG_VERSION").to_string();
+    eprintln!(
+        "Deacon v{}",
+        version,
+    );
+
     // Configure thread pool if specified (non-zero)
     if threads > 0 {
         rayon::ThreadPoolBuilder::new()
