@@ -110,6 +110,9 @@ pub struct IndexConfig {
 
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
+
+    /// Number of threads to use for parallel processing (0 = all available)
+    pub threads: usize,
 }
 
 impl IndexConfig {
@@ -120,34 +123,42 @@ impl IndexConfig {
             kmer_length: DEFAULT_KMER_LENGTH,
             window_length: DEFAULT_WINDOW_SIZE,
             output_path: None,
+            threads: 0, // Use all available threads by default
         }
     }
 
-    /// Set the k-mer length
+    /// Set k-mer length
     pub fn with_kmer_length(mut self, kmer_length: usize) -> Self {
         self.kmer_length = kmer_length;
         self
     }
 
-    /// Set the window length
+    /// Set window length
     pub fn with_window_length(mut self, window_length: usize) -> Self {
         self.window_length = window_length;
         self
     }
 
-    /// Set the output path
+    /// Set output path
     pub fn with_output<P: AsRef<Path>>(mut self, output_path: P) -> Self {
         self.output_path = Some(output_path.as_ref().to_path_buf());
         self
     }
 
-    /// Execute the index building operation with this configuration
+    /// Set threads
+    pub fn with_threads(mut self, threads: usize) -> Self {
+        self.threads = threads;
+        self
+    }
+
+    /// Execute index build with this configuration
     pub fn execute(&self) -> Result<()> {
         build_index(
             &self.input_path,
             self.kmer_length,
             self.window_length,
             self.output_path.clone(),
+            self.threads,
         )
     }
 }

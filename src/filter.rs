@@ -252,7 +252,7 @@ pub fn run<P: AsRef<Path>>(
             .template("{msg}{spinner} ")?,
     );
     spinner.set_message("Filtering");
-    spinner.enable_steady_tick(Duration::from_millis(1000));
+    spinner.enable_steady_tick(Duration::from_millis(250));
 
     // Init counters
     let mut total_seqs = 0;
@@ -325,14 +325,11 @@ pub fn run<P: AsRef<Path>>(
         )?;
     }
 
-    // The remainder of the function is unchanged
-    // Ensure everything is flushed
     writer.flush_all()?;
 
     let total_time = start_time.elapsed();
     let seqs_per_sec = total_seqs as f64 / total_time.as_secs_f64();
     let bp_per_sec = total_bp as f64 / total_time.as_secs_f64();
-    // Convert to Mbp/s for display only
     let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
     // Calculate filtered proportion directly

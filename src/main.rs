@@ -80,6 +80,10 @@ enum IndexCommands {
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
+
+        /// Number of threads to use (0 = all)
+        #[arg(short = 't', long = "threads", default_value_t = 0)]
+        threads: usize,
     },
     /// Show index information
     Info {
@@ -130,6 +134,7 @@ fn main() -> Result<()> {
                 kmer_length,
                 window_length,
                 output,
+                threads,
             } => {
                 // Convert output string to Option<PathBuf>
                 let output_path = if output == "-" {
@@ -138,7 +143,7 @@ fn main() -> Result<()> {
                     Some(PathBuf::from(output))
                 };
 
-                build_index(input, *kmer_length, *window_length, output_path)
+                build_index(input, *kmer_length, *window_length, output_path, *threads)
                     .context("Failed to run index build command")?;
             }
             IndexCommands::Info { index } => {

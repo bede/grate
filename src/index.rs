@@ -1,6 +1,6 @@
-// src/index.rs
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
+use rayon::prelude::*;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
@@ -8,7 +8,6 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use crate::minimizers::compute_minimizer_hashes;
 use needletail::parse_fastx_file;
 
 /// Serializable header for the index file
@@ -122,9 +121,18 @@ pub fn build<P: AsRef<Path>>(
     kmer_length: usize,
     window_length: usize,
     output: Option<PathBuf>,
+    threads: usize,
 ) -> Result<()> {
     let start_time = Instant::now();
     let path = input.as_ref();
+
+    // Configure thread pool if specified (non-zero)
+    if threads > 0 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .context("Failed to initialize thread pool")?;
+    }
 
     // Create a fastx reader using needletail (handles gzip automatically)
     let mut reader = parse_fastx_file(path).context("Failed to open input file")?;
@@ -133,33 +141,76 @@ pub fn build<P: AsRef<Path>>(
     let mut all_minimizers: FxHashSet<u64> =
         FxHashSet::with_capacity_and_hasher(250_000_000, Default::default());
 
-    eprintln!("Indexing (k={}, w={})…", kmer_length, window_length);
+    eprintln!(
+        "Indexing (k={}, w={})…",
+        kmer_length, window_length
+    );
+
     let mut seq_count = 0;
     let mut total_bp = 0;
 
-    while let Some(record_result) = reader.next() {
-        let record = record_result.context("Error reading fastx record")?;
-        let seq = record.seq();
+    // Process sequences in batches for parallelization
+    let batch_size = 100; // Adjust based on memory constraints
 
-        // Compute and insert hashes
-        all_minimizers.extend(compute_minimizer_hashes(
-            seq.as_ref(),
-            kmer_length,
-            window_length,
-        ));
+    loop {
+        // Collect a batch of sequences
+        let mut batch = Vec::with_capacity(batch_size);
+        let mut reached_end = false;
 
-        // Update counters
-        seq_count += 1;
-        total_bp += seq.len();
+        for _ in 0..batch_size {
+            if let Some(record_result) = reader.next() {
+                match record_result {
+                    Ok(record) => {
+                        let seq_data = record.seq().to_vec();
+                        let id = record.id().to_vec();
+                        batch.push((seq_data, id));
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            } else {
+                reached_end = true;
+                break;
+            }
+        }
 
-        // Report progress
-        let id = std::str::from_utf8(record.id()).unwrap_or("unknown");
-        eprintln!(
-            "  {} ({}bp), total minimizers: {}",
-            id,
-            seq.len(),
-            all_minimizers.len()
-        );
+        if batch.is_empty() {
+            break;
+        }
+
+        // Process batch in parallel
+        let batch_results: Vec<_> = batch
+            .par_iter()
+            .map(|(seq_data, _id)| {
+                // Compute minimizer hashes for this sequence
+                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_length)
+            })
+            .collect();
+
+        // Merge results sequentially (to avoid concurrent modification of hash set)
+        for (i, hashes) in batch_results.iter().enumerate() {
+            let (seq_data, id) = &batch[i];
+
+            // Insert all hashes from this sequence
+            all_minimizers.extend(hashes.iter());
+
+            // Update counters
+            seq_count += 1;
+            total_bp += seq_data.len();
+
+            // Report progress
+            let id_str = std::str::from_utf8(id).unwrap_or("unknown");
+            eprintln!(
+                "  {} ({}bp), total minimizers: {}",
+                id_str,
+                seq_data.len(),
+                all_minimizers.len()
+            );
+        }
+
+        // Check if we've reached the end of the file
+        if reached_end {
+            break;
+        }
     }
 
     eprintln!(
