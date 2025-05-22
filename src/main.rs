@@ -36,6 +36,10 @@ enum Commands {
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
 
+        /// Optional path to second paired output fastx file (detects .gz and .zst)
+        #[arg(long = "output2")]
+        output2: Option<String>,
+
         /// Number of minimizer matches required per query sequence (pair)
         #[arg(short = 'm', long = "matches", default_value_t = 2)]
         min_matches: usize,
@@ -167,6 +171,7 @@ fn main() -> Result<()> {
             input1,
             input2,
             output,
+            output2,
             min_matches,
             prefix_length,
             report,
@@ -174,11 +179,19 @@ fn main() -> Result<()> {
             rename,
             threads,
         } => {
+            // Validate output2 usage
+            if output2.is_some() && input2.is_none() {
+                eprintln!(
+                    "Warning: --output2 specified but no second input file provided. --output2 will be ignored."
+                );
+            }
+
             run_filter(
                 minimizers,
                 input1,
                 input2.as_deref(),
                 output,
+                output2.as_deref(),
                 *min_matches,
                 *prefix_length,
                 report.as_ref(),

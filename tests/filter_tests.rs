@@ -605,3 +605,172 @@ fn test_filter_paired_filtration_rev() {
     let output_content = fs::read_to_string(&output_path).unwrap();
     assert!(output_content.is_empty(), "Output file is not empty");
 }
+
+#[cfg(test)]
+mod output2_tests {
+    use assert_cmd::Command;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command as StdCommand;
+    use tempfile::tempdir;
+
+    fn create_test_fasta(path: &Path) {
+        let fasta_content = ">seq1\nACGTACGTACGT\n>seq2\nGTACGTACGTAC\n";
+        fs::write(path, fasta_content).unwrap();
+    }
+
+    fn create_test_paired_fastq(path1: &Path, path2: &Path) {
+        let fastq_content1 =
+            "@read1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@read2\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n";
+        let fastq_content2 =
+            "@read1\nTGCATGCATGCA\n+\n~~~~~~~~~~~~\n@read2\nCATGCATGCATG\n+\n~~~~~~~~~~~~\n";
+
+        fs::write(path1, fastq_content1).unwrap();
+        fs::write(path2, fastq_content2).unwrap();
+    }
+
+    fn build_index(fasta_path: &Path, bin_path: &Path) {
+        let output = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"))
+            .arg("index")
+            .arg("build")
+            .arg(fasta_path)
+            .output()
+            .expect("Failed to execute command");
+
+        fs::write(bin_path, output.stdout).expect("Failed to write index file");
+        assert!(output.status.success(), "Index build command failed");
+    }
+
+    #[test]
+    fn test_filter_paired_with_output2() {
+        let temp_dir = tempdir().unwrap();
+        let fasta_path = temp_dir.path().join("ref.fasta");
+        let fastq_path1 = temp_dir.path().join("reads_1.fastq");
+        let fastq_path2 = temp_dir.path().join("reads_2.fastq");
+        let bin_path = temp_dir.path().join("ref.bin");
+        let output_path1 = temp_dir.path().join("filtered_1.fastq");
+        let output_path2 = temp_dir.path().join("filtered_2.fastq");
+        let report_path = temp_dir.path().join("report.json");
+
+        create_test_fasta(&fasta_path);
+        create_test_paired_fastq(&fastq_path1, &fastq_path2);
+
+        build_index(&fasta_path, &bin_path);
+        assert!(bin_path.exists(), "Index file wasn't created");
+
+        // Run filtering command with separate output files
+        let mut cmd = Command::cargo_bin("deacon").unwrap();
+        cmd.arg("filter")
+            .arg(&bin_path)
+            .arg(&fastq_path1)
+            .arg(&fastq_path2)
+            .arg("--output")
+            .arg(&output_path1)
+            .arg("--output2")
+            .arg(&output_path2)
+            .arg("--report")
+            .arg(&report_path)
+            .assert()
+            .success();
+
+        // Check both output files were created
+        assert!(output_path1.exists(), "First output file wasn't created");
+        assert!(output_path2.exists(), "Second output file wasn't created");
+        assert!(report_path.exists(), "Report file wasn't created");
+
+        // Validate output content
+        let output1_content = fs::read_to_string(&output_path1).unwrap();
+        let output2_content = fs::read_to_string(&output_path2).unwrap();
+
+        assert!(!output1_content.is_empty(), "First output file is empty");
+        assert!(!output2_content.is_empty(), "Second output file is empty");
+
+        // Check that the report includes output2 path
+        let report_content = fs::read_to_string(&report_path).unwrap();
+        assert!(
+            report_content.contains("output2"),
+            "Report doesn't mention output2"
+        );
+    }
+
+    #[test]
+    fn test_filter_paired_with_output2_gzip() {
+        let temp_dir = tempdir().unwrap();
+        let fasta_path = temp_dir.path().join("ref.fasta");
+        let fastq_path1 = temp_dir.path().join("reads_1.fastq");
+        let fastq_path2 = temp_dir.path().join("reads_2.fastq");
+        let bin_path = temp_dir.path().join("ref.bin");
+        let output_path1 = temp_dir.path().join("filtered_1.fastq.gz");
+        let output_path2 = temp_dir.path().join("filtered_2.fastq.gz");
+
+        create_test_fasta(&fasta_path);
+        create_test_paired_fastq(&fastq_path1, &fastq_path2);
+        build_index(&fasta_path, &bin_path);
+
+        let mut cmd = Command::cargo_bin("deacon").unwrap();
+        cmd.arg("filter")
+            .arg(&bin_path)
+            .arg(&fastq_path1)
+            .arg(&fastq_path2)
+            .arg("--output")
+            .arg(&output_path1)
+            .arg("--output2")
+            .arg(&output_path2)
+            .assert()
+            .success();
+
+        // Check both gzipped output files were created
+        assert!(
+            output_path1.exists(),
+            "First gzipped output file wasn't created"
+        );
+        assert!(
+            output_path2.exists(),
+            "Second gzipped output file wasn't created"
+        );
+
+        assert!(
+            fs::metadata(&output_path1).unwrap().len() > 0,
+            "First gzipped output file is empty"
+        );
+        assert!(
+            fs::metadata(&output_path2).unwrap().len() > 0,
+            "Second gzipped output file is empty"
+        );
+    }
+
+    #[test]
+    fn test_filter_single_input_with_output2_warning() {
+        let temp_dir = tempdir().unwrap();
+        let fasta_path = temp_dir.path().join("ref.fasta");
+        let fastq_path = temp_dir.path().join("reads.fastq");
+        let bin_path = temp_dir.path().join("ref.bin");
+        let output_path = temp_dir.path().join("filtered.fastq");
+        let output_path2 = temp_dir.path().join("filtered_2.fastq");
+
+        create_test_fasta(&fasta_path);
+        let fastq_content = "@seq1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n";
+        fs::write(&fastq_path, fastq_content).unwrap();
+        build_index(&fasta_path, &bin_path);
+
+        // Run filtering command with output2 but no second input (should warn)
+        let mut cmd = Command::cargo_bin("deacon").unwrap();
+        cmd.arg("filter")
+            .arg(&bin_path)
+            .arg(&fastq_path)
+            .arg("--output")
+            .arg(&output_path)
+            .arg("--output2")
+            .arg(&output_path2)
+            .assert()
+            .success()
+            .stderr(predicates::str::contains("Warning"));
+
+        // Check only the first output file was created
+        assert!(output_path.exists(), "First output file wasn't created");
+        assert!(
+            !output_path2.exists(),
+            "Second output file shouldn't be created for single input"
+        );
+    }
+}

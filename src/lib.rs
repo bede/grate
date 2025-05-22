@@ -39,6 +39,9 @@ pub struct FilterConfig {
     /// Path to output fastx file (or - for stdout; detects .gz and .zst)
     pub output_path: String,
 
+    /// Path to optional second output fastx file for paired reads (detects .gz and .zst)
+    pub output2_path: Option<String>,
+
     /// Minimum number of minimizer matches per query sequence (pair)
     pub min_matches: usize,
 
@@ -66,6 +69,7 @@ impl FilterConfig {
             input_path: "-".to_string(),
             input2_path: None,
             output_path: "-".to_string(),
+            output2_path: None,
             min_matches: 2,
             prefix_length: 0,
             report_path: None,
@@ -73,6 +77,60 @@ impl FilterConfig {
             rename: false,
             threads: 0, // Use all available threads by default
         }
+    }
+
+    /// Set the input path
+    pub fn with_input<S: Into<String>>(mut self, input_path: S) -> Self {
+        self.input_path = input_path.into();
+        self
+    }
+
+    /// Set the second input path for paired reads
+    pub fn with_input2<S: Into<String>>(mut self, input2_path: S) -> Self {
+        self.input2_path = Some(input2_path.into());
+        self
+    }
+
+    /// Set the output path
+    pub fn with_output<S: Into<String>>(mut self, output_path: S) -> Self {
+        self.output_path = output_path.into();
+        self
+    }
+
+    /// Set the second output path for paired reads
+    pub fn with_output2<S: Into<String>>(mut self, output2_path: S) -> Self {
+        self.output2_path = Some(output2_path.into());
+        self
+    }
+
+    /// Set the minimum matches
+    pub fn with_min_matches(mut self, min_matches: usize) -> Self {
+        self.min_matches = min_matches;
+        self
+    }
+
+    /// Set the prefix length
+    pub fn with_prefix_length(mut self, prefix_length: usize) -> Self {
+        self.prefix_length = prefix_length;
+        self
+    }
+
+    /// Set the report path
+    pub fn with_report<P: AsRef<Path>>(mut self, report_path: P) -> Self {
+        self.report_path = Some(report_path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set invert filtering
+    pub fn with_invert(mut self, invert: bool) -> Self {
+        self.invert = invert;
+        self
+    }
+
+    /// Set rename option
+    pub fn with_rename(mut self, rename: bool) -> Self {
+        self.rename = rename;
+        self
     }
 
     /// Set the num threads
@@ -88,6 +146,7 @@ impl FilterConfig {
             &self.input_path,
             self.input2_path.as_deref(),
             &self.output_path,
+            self.output2_path.as_deref(),
             self.min_matches,
             self.prefix_length,
             self.report_path.as_ref(),

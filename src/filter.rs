@@ -3,7 +3,7 @@ use crate::minimizers::fill_minimizer_hashes;
 use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::write::GzEncoder;
-use indicatif::{ProgressBar, ProgressStyle, ProgressDrawTarget};
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use needletail::parse_fastx_file;
 use needletail::parse_fastx_stdin;
 use needletail::parser::Format;
@@ -156,6 +156,7 @@ pub struct FilterReport {
     input1: String,
     input2: Option<String>,
     output: String,
+    output2: Option<String>,
     k: usize,
     w: usize,
     m: usize,
@@ -180,6 +181,7 @@ pub fn run<P: AsRef<Path>>(
     input_path: &str,
     input2_path: Option<&str>,
     output_path: &str,
+    output2_path: Option<&str>,
     min_matches: usize,
     prefix_length: usize,
     report_path: Option<&PathBuf>,
@@ -242,8 +244,14 @@ pub fn run<P: AsRef<Path>>(
         kmer_length, window_length, load_time
     );
 
-    // Create the appropriate writer based on the output path
+    // Create the appropriate writer(s) based on the output path(s)
     let mut writer = get_writer(output_path)?;
+    let mut writer2 = if let (Some(output2), Some(_)) = (output2_path, input2_path) {
+        // Only create second writer if both output2 and input2 are specified
+        Some(get_writer(output2)?)
+    } else {
+        None
+    };
 
     // A progress bar would require a denominator, so let's spin
     let spinner = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
@@ -266,6 +274,7 @@ pub fn run<P: AsRef<Path>>(
         process_interleaved_paired_seqs(
             &minimizer_hashes,
             &mut writer,
+            writer2.as_mut(),
             min_matches,
             prefix_length,
             kmer_length,
@@ -287,6 +296,7 @@ pub fn run<P: AsRef<Path>>(
             input_path,
             input2_path,
             &mut writer,
+            writer2.as_mut(),
             min_matches,
             prefix_length,
             kmer_length,
@@ -326,6 +336,9 @@ pub fn run<P: AsRef<Path>>(
     }
 
     writer.flush_all()?;
+    if let Some(ref mut w2) = writer2 {
+        w2.flush_all()?;
+    }
 
     let total_time = start_time.elapsed();
     let seqs_per_sec = total_seqs as f64 / total_time.as_secs_f64();
@@ -375,6 +388,7 @@ pub fn run<P: AsRef<Path>>(
             input1: input_path.to_string(),
             input2: input2_path.map(|s| s.to_string()),
             output: output_path.to_string(),
+            output2: output2_path.map(|s| s.to_string()),
             k: kmer_length,
             w: window_length,
             m: min_matches,
@@ -395,8 +409,8 @@ pub fn run<P: AsRef<Path>>(
         };
 
         // Write report file
-        let file =
-            File::create(report_file).context(format!("Failed to create report: {:?}", report_file))?;
+        let file = File::create(report_file)
+            .context(format!("Failed to create report: {:?}", report_file))?;
         let writer = BufWriter::new(file);
 
         // Serialize and write the report JSON
@@ -604,6 +618,7 @@ fn process_paired_seqs(
     input1_path: &str,
     input2_path: &str,
     writer: &mut Box<dyn FastxWriter>,
+    mut writer2: Option<&mut Box<dyn FastxWriter>>,
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
@@ -775,7 +790,7 @@ fn process_paired_seqs(
                 // Increment output sequence counter (twice, once for each read)
                 *output_seq_counter += 2;
 
-                // Format s1 as FASTX to byte buffer
+                // Format s1 as FASTX to byte buffer and write to appropriate writer
                 output_record_buffer.clear();
                 output_fastx_record_from_parts(
                     &record_data1.id,
@@ -786,20 +801,40 @@ fn process_paired_seqs(
                     rename,
                     *output_seq_counter - 1,
                 );
-                writer.write_all(&output_record_buffer)?;
 
-                // Format s2 as FASTX to byte buffer
-                output_record_buffer.clear();
-                output_fastx_record_from_parts(
-                    &record_data2.id,
-                    &record_data2.seq,
-                    record_data2.qual.as_deref(),
-                    record_data2.format,
-                    &mut output_record_buffer,
-                    rename,
-                    *output_seq_counter,
-                );
-                writer.write_all(&output_record_buffer)?;
+                if let Some(ref mut w2) = writer2 {
+                    // Write read 1 to primary writer
+                    writer.write_all(&output_record_buffer)?;
+
+                    // Format s2 as FASTX to byte buffer and write to second writer
+                    output_record_buffer.clear();
+                    output_fastx_record_from_parts(
+                        &record_data2.id,
+                        &record_data2.seq,
+                        record_data2.qual.as_deref(),
+                        record_data2.format,
+                        &mut output_record_buffer,
+                        rename,
+                        *output_seq_counter,
+                    );
+                    w2.write_all(&output_record_buffer)?;
+                } else {
+                    // Interleaved output (existing behavior)
+                    writer.write_all(&output_record_buffer)?;
+
+                    // Format s2 as FASTX to byte buffer
+                    output_record_buffer.clear();
+                    output_fastx_record_from_parts(
+                        &record_data2.id,
+                        &record_data2.seq,
+                        record_data2.qual.as_deref(),
+                        record_data2.format,
+                        &mut output_record_buffer,
+                        rename,
+                        *output_seq_counter,
+                    );
+                    writer.write_all(&output_record_buffer)?;
+                }
             } else {
                 *filtered_seqs += 2; // Both seqs filtered out
                 *filtered_bp += (*seq1_len + *seq2_len) as u64; // Track filtered base pairs
@@ -841,6 +876,9 @@ fn process_paired_seqs(
 
         // Flush writer periodically
         writer.flush()?;
+        if let Some(ref mut w2) = writer2 {
+            w2.flush()?;
+        }
 
         // Check if we've reached the end of the files
         if reached_end {
@@ -854,6 +892,7 @@ fn process_paired_seqs(
 fn process_interleaved_paired_seqs(
     minimizer_hashes: &FxHashSet<u64>,
     writer: &mut Box<dyn FastxWriter>,
+    mut writer2: Option<&mut Box<dyn FastxWriter>>,
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
@@ -1046,20 +1085,40 @@ fn process_interleaved_paired_seqs(
                     rename,
                     *output_seq_counter - 1,
                 );
-                writer.write_all(&output_record_buffer)?;
 
-                // Format and write record 2
-                output_record_buffer.clear();
-                output_fastx_record_from_parts(
-                    record2_id,
-                    record2_seq,
-                    record2_qual.as_deref(),
-                    *record2_format,
-                    &mut output_record_buffer,
-                    rename,
-                    *output_seq_counter,
-                );
-                writer.write_all(&output_record_buffer)?;
+                if let Some(ref mut w2) = writer2 {
+                    // Write read 1 to primary writer
+                    writer.write_all(&output_record_buffer)?;
+
+                    // Format and write record 2 to second writer
+                    output_record_buffer.clear();
+                    output_fastx_record_from_parts(
+                        record2_id,
+                        record2_seq,
+                        record2_qual.as_deref(),
+                        *record2_format,
+                        &mut output_record_buffer,
+                        rename,
+                        *output_seq_counter,
+                    );
+                    w2.write_all(&output_record_buffer)?;
+                } else {
+                    // Interleaved output (existing behavior)
+                    writer.write_all(&output_record_buffer)?;
+
+                    // Format and write record 2
+                    output_record_buffer.clear();
+                    output_fastx_record_from_parts(
+                        record2_id,
+                        record2_seq,
+                        record2_qual.as_deref(),
+                        *record2_format,
+                        &mut output_record_buffer,
+                        rename,
+                        *output_seq_counter,
+                    );
+                    writer.write_all(&output_record_buffer)?;
+                }
             } else {
                 *filtered_seqs += 2; // Both seqs filtered out
                 *filtered_bp += (*seq1_len + *seq2_len) as u64; // Track filtered base pairs
@@ -1101,6 +1160,9 @@ fn process_interleaved_paired_seqs(
 
         // Flush writer periodically
         writer.flush()?;
+        if let Some(ref mut w2) = writer2 {
+            w2.flush()?;
+        }
 
         // Check if we've reached the end of input
         if reached_end {
@@ -1189,6 +1251,7 @@ mod tests {
             input1: "test.fastq".to_string(),
             input2: Some("test2.fastq".to_string()),
             output: "output.fastq".to_string(),
+            output2: Some("output2.fastq".to_string()),
             k: 31,
             w: 21,
             m: 1,
@@ -1219,5 +1282,6 @@ mod tests {
         assert_eq!(parsed.input1, "test.fastq");
         assert_eq!(parsed.input2, Some("test2.fastq".to_string()));
         assert_eq!(parsed.output, "output.fastq");
+        assert_eq!(parsed.output2, Some("output2.fastq".to_string()));
     }
 }

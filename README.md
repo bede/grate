@@ -48,6 +48,7 @@ deacon -n 1000 filter panhuman-1.k31w15.idx reads.fq.zst | zstd > filt.fq.zst  #
 deacon filter -m 3 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More precise
 deacon filter -m 1 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More sensitive
 deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fastq  # Paired file input
+deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz --output filt.r1.fq.gz --output2 filt.r2.fq.gz  # Paired file input/output
 zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - > filt12.fastq  # Interleaved stdin
 deacon filter panhuman-1.k31w15.idx reads.fq.gz --report report.json > filt.fq  # Save report JSON
 ```

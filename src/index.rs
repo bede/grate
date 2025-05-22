@@ -127,10 +127,7 @@ pub fn build<P: AsRef<Path>>(
     let path = input.as_ref();
 
     let version: String = env!("CARGO_PKG_VERSION").to_string();
-    eprintln!(
-        "Deacon v{}",
-        version,
-    );
+    eprintln!("Deacon v{}", version,);
 
     // Configure thread pool if specified (non-zero)
     if threads > 0 {
@@ -147,10 +144,7 @@ pub fn build<P: AsRef<Path>>(
     let mut all_minimizers: FxHashSet<u64> =
         FxHashSet::with_capacity_and_hasher(250_000_000, Default::default());
 
-    eprintln!(
-        "Indexing (k={}, w={})…",
-        kmer_length, window_length
-    );
+    eprintln!("Indexing (k={}, w={})…", kmer_length, window_length);
 
     let mut seq_count = 0;
     let mut total_bp = 0;
