@@ -13,7 +13,7 @@ pub mod index;
 pub mod minimizers;
 
 // Re-export the important structures and functions for library users
-pub use filter::{FilterLog, run as run_filter};
+pub use filter::{FilterReport, run as run_filter};
 pub use index::{
     IndexHeader, build as build_index, diff as diff_index, info as index_info, union as union_index,
 };
@@ -45,8 +45,8 @@ pub struct FilterConfig {
     /// Consider only the first N nucleotides per sequence (0 = entire sequence)
     pub prefix_length: usize,
 
-    /// Path to JSON output log file
-    pub log_path: Option<PathBuf>,
+    /// Path to JSON report file
+    pub report_path: Option<PathBuf>,
 
     /// Invert filtering (keep sequences WITH matches rather than those WITHOUT)
     pub invert: bool,
@@ -54,7 +54,7 @@ pub struct FilterConfig {
     /// Replace sequence headers with sequential numbers (1, 2, 3...)
     pub rename: bool,
 
-    /// Number of threads to use for parallel processing (0 = all available)
+    /// Number of execution threads (0 = auto)
     pub threads: usize,
 }
 
@@ -68,7 +68,7 @@ impl FilterConfig {
             output_path: "-".to_string(),
             min_matches: 2,
             prefix_length: 0,
-            log_path: None,
+            report_path: None,
             invert: false,
             rename: false,
             threads: 0, // Use all available threads by default
@@ -90,7 +90,7 @@ impl FilterConfig {
             &self.output_path,
             self.min_matches,
             self.prefix_length,
-            self.log_path.as_ref(),
+            self.report_path.as_ref(),
             self.invert,
             self.rename,
             self.threads,
@@ -111,7 +111,7 @@ pub struct IndexConfig {
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
 
-    /// Number of threads to use for parallel processing (0 = all available)
+    /// Number of execution threads (0 = auto)
     pub threads: usize,
 }
 

@@ -148,9 +148,9 @@ fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
     }
 }
 
-// JSON log structure
+// JSON report structure
 #[derive(Serialize, Deserialize)]
-pub struct FilterLog {
+pub struct FilterReport {
     version: String,
     index: String,
     input1: String,
@@ -182,7 +182,7 @@ pub fn run<P: AsRef<Path>>(
     output_path: &str,
     min_matches: usize,
     prefix_length: usize,
-    log_path: Option<&PathBuf>,
+    report_path: Option<&PathBuf>,
     invert: bool,
     rename: bool,
     threads: usize,
@@ -205,7 +205,7 @@ pub fn run<P: AsRef<Path>>(
     if paired_stdin {
         input_mode.push_str("interleaved pairs from stdin");
     } else if let Some(_) = input2_path {
-        input_mode.push_str("pairs from separate files");
+        input_mode.push_str("pairs from files");
     } else {
         input_mode.push_str("single");
     }
@@ -364,12 +364,12 @@ pub fn run<P: AsRef<Path>>(
         total_time, seqs_per_sec, mbp_per_sec
     );
 
-    // Build and write a JSON log if path provided
-    if let Some(log_file) = log_path {
+    // Build and write a JSON report if path provided
+    if let Some(report_file) = report_path {
         // Get number of sequences passing filter
         let seqs_out = total_seqs - filtered_seqs;
 
-        let log = FilterLog {
+        let report = FilterReport {
             version: tool_version,
             index: minimizers_path.as_ref().to_string_lossy().to_string(),
             input1: input_path.to_string(),
@@ -394,15 +394,15 @@ pub fn run<P: AsRef<Path>>(
             bp_per_second: bp_per_sec as u64,
         };
 
-        // Write log file
+        // Write report file
         let file =
-            File::create(log_file).context(format!("Failed to create log file: {:?}", log_file))?;
+            File::create(report_file).context(format!("Failed to create report: {:?}", report_file))?;
         let writer = BufWriter::new(file);
 
-        // Serialize and write the log as JSON
-        serde_json::to_writer_pretty(writer, &log).context("Failed to write JSON log")?;
+        // Serialize and write the report JSON
+        serde_json::to_writer_pretty(writer, &report).context("Failed to write JSON report")?;
 
-        eprintln!("JSON log saved to {:?}", log_file);
+        eprintln!("JSON report saved to {:?}", report_file);
     }
 
     Ok(())
@@ -1181,9 +1181,9 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_log() {
-        // Create a sample log
-        let log = FilterLog {
+    fn test_filter_report() {
+        // Create a sample report
+        let report = FilterReport {
             version: "deacon 0.1.0".to_string(),
             index: "test.idx".to_string(),
             input1: "test.fastq".to_string(),
@@ -1209,11 +1209,11 @@ mod tests {
         };
 
         // Test JSON ser+de
-        let json = serde_json::to_string(&log).unwrap();
-        let parsed: FilterLog = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&report).unwrap();
+        let parsed: FilterReport = serde_json::from_str(&json).unwrap();
 
         // Check values
-        assert_eq!(parsed.version, "0.1.0");
+        assert_eq!(parsed.version, "deacon 0.1.0");
         assert_eq!(parsed.seqs_in, 100);
         assert_eq!(parsed.seqs_removed_proportion, 0.1);
         assert_eq!(parsed.input1, "test.fastq");

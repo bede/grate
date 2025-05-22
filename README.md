@@ -49,12 +49,12 @@ deacon filter -m 3 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More
 deacon filter -m 1 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More sensitive
 deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fastq  # Paired file input
 zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - > filt12.fastq  # Interleaved stdin
-deacon filter panhuman-1.k31w15.idx reads.fq.gz --log log.json > filt.fq  # Log results JSON
+deacon filter panhuman-1.k31w15.idx reads.fq.gz --report report.json > filt.fq  # Save report JSON
 ```
 
 ## Reports
 
-Use `--log results.json` to save a filtering summary to a JSON file:
+Use `--report results.json` to save a filtering report to JSON file:
 ```json
 {
   "version": "0.3.0",

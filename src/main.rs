@@ -23,7 +23,7 @@ enum Commands {
     /// Filter fastx sequences based on presence/absence of minimizer matches
     Filter {
         /// Path to minimizer index file
-        minimizers: PathBuf,
+        index: PathBuf,
 
         /// Path to fastx file (or - for stdin)
         #[arg(default_value = "-")]
@@ -52,11 +52,11 @@ enum Commands {
         #[arg(short = 'r', long = "rename", default_value_t = false)]
         rename: bool,
 
-        /// Path to JSON output log file
-        #[arg(short = 'l', long = "log")]
-        log: Option<PathBuf>,
+        /// Path to JSON report file
+        #[arg(long = "report")]
+        report: Option<PathBuf>,
 
-        /// Number of threads to use (0 = all)
+        /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 0)]
         threads: usize,
     },
@@ -81,7 +81,7 @@ enum IndexCommands {
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
 
-        /// Number of threads to use (0 = all)
+        /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 0)]
         threads: usize,
     },
@@ -163,13 +163,13 @@ fn main() -> Result<()> {
             }
         },
         Commands::Filter {
-            minimizers,
+            index: minimizers,
             input1,
             input2,
             output,
             min_matches,
             prefix_length,
-            log,
+            report,
             invert,
             rename,
             threads,
@@ -181,7 +181,7 @@ fn main() -> Result<()> {
                 output,
                 *min_matches,
                 *prefix_length,
-                log.as_ref(),
+                report.as_ref(),
                 *invert,
                 *rename,
                 *threads,
