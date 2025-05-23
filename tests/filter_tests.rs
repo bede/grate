@@ -774,3 +774,75 @@ mod output2_tests {
         );
     }
 }
+
+#[test]
+fn test_shared_minimizer_counted_once() {
+    // Catch bug where the same minimizer in different paired mates is counted twice
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fasta_path1 = temp_dir.path().join("reads_1.fasta");
+    let fasta_path2 = temp_dir.path().join("reads_2.fasta");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fasta");
+    let report_path = temp_dir.path().join("report.json");
+
+    let ref_content = ">reference\nACGTACGTACGTACGTTGCATGCATGCATGCATAAGGTTAAGGTTAAGGTTAAGGTTCCCGGGCCCGGGCCCGGGCCCGGGATATATATATATATATATGCGCGCGCGCGCGCGCGC\n";
+    fs::write(&fasta_path, ref_content).unwrap();
+
+    // Create 120bp ref
+    let ref_content = ">reference\nACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n";
+    fs::write(&fasta_path, ref_content).unwrap();
+
+    // Create paired reads (80bp each) where both contain the same 60bp region from the reference
+    // Shared region: first 60bp of reference (ACGT repeated 15 times)
+    let fasta_content1 = ">read1/1\n\
+        AAAAAAAAAACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTAAAAAAAAAA\n";
+
+    let fasta_content2 = ">read1/2\n\
+        TTTTTTTTTTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTTTTTTTTTTT\n";
+
+    fs::write(&fasta_path1, fasta_content1).unwrap();
+    fs::write(&fasta_path2, fasta_content2).unwrap();
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    // If shared minimizers are counted once (correct): total hits = 1, pair kept (1 < 2)
+    // If shared minimizers are counted twice (bug): total hits = 2+, pair filtered (2+ >= 2)
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&fasta_path1)
+        .arg(&fasta_path2)
+        .arg("--output")
+        .arg(&output_path)
+        .arg("--report")
+        .arg(&report_path)
+        .arg("--matches")
+        .arg("2") // Critical parameter: any pair with 2+ hits gets filtered
+        .assert()
+        .success();
+
+    assert!(output_path.exists(), "Output file wasn't created");
+    assert!(report_path.exists(), "Report file wasn't created");
+
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    let report_content = fs::read_to_string(&report_path).unwrap();
+    let report: serde_json::Value = serde_json::from_str(&report_content).unwrap();
+
+    // The reads should be kept because shared minimizers should only count once
+    assert!(
+        !output_content.is_empty(),
+        "Read pair should be kept in output because shared minimizers should only count once. \
+         Current implementation incorrectly counts them multiple times and filters the pair."
+    );
+
+    // Additional verification using the JSON report
+    let seqs_out = report["seqs_out"].as_u64().unwrap();
+    assert_eq!(
+        seqs_out, 2,
+        "Expected 2 sequences in output (both reads of the pair should be kept) \
+         but got {}. This indicates shared minimizers were double-counted.",
+        seqs_out
+    );
+}

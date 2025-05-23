@@ -38,7 +38,9 @@ deacon index build chm13v2.fa > human.k31w15.idx
 
 ### Filtering
 
-The command `deacon filter` accepts an index path followed by up to two query FASTA/FASTQ file paths, depending on whether query sequences originate from stdin, a single file, or paired input files. Paired queries are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file. For paired reads, hits in either mate count towards the threshold for filtering that pair. By default, query sequences with fewer than two index hits are sent to stdout. Filtering can be inverted using the `--invert` flag. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically by file extension. Since (de)compression can be rate limiting, consider using Zstandard rather than Gzip for best performance.
+The command `deacon filter` accepts an index path followed by up to two query FASTA/FASTQ file paths, depending on whether query sequences originate from stdin, a single file, or paired input files. Paired queries are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file, or else to paired output files. For paired reads, distinct minimizer hits originating from either mate are counted. By default, query sequences with fewer than two minimizer hits to the index (`-m 2`) pass the filter. Filtering can be inverted using the `--invert` flag. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically by file extension. Since (de)compression can be rate limiting, consider using Zstandard rather than Gzip for best performance.
+
+**Examples**
 
 ```bash
 deacon filter panhuman-1.k31w15.idx reads.fq.gz -o filt.fq  # File input & output
@@ -55,7 +57,7 @@ deacon filter panhuman-1.k31w15.idx reads.fq.gz --report report.json > filt.fq  
 
 ## Reports
 
-Use `--report results.json` to save a filtering report to JSON file:
+Use `--report results.json` to save a filtering report:
 ```json
 {
   "version": "0.3.0",
