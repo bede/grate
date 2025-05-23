@@ -4,7 +4,7 @@
 
 A fast general purpose minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for rapid and accurate host depletion. Default parameters have been selected to maximise balanced accuracy for short and long reads. Sensitivity, specificity and memory use may nevertheless be tuned by varying *k*-mer length (`-k`), minimizer window length (`-w`), and the number of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the number of required matches `m` can be specified at filter time.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in under 60s. Peak memory usage is ~4.5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks coming soon. This project is currently unstable.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in under 60s. Peak memory usage is ~4.5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks. This project is currently unstable.
 
 ## Install
 
@@ -24,7 +24,7 @@ cargo install deacon
 
 ### Indexing
 
-Custom indexes can be built using `deacon index build genome.fa`. For human host depletion however, the prebuilt validated panhuman index is recommended, available for download below. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
+Custom indexes can be built using `deacon index build`. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
 
 ```shell
 deacon index build chm13v2.fa > human.k31w15.idx

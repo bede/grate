@@ -313,7 +313,6 @@ pub fn run<P: AsRef<Path>>(
             start_time,
         )?;
     } else {
-        // Use our unified function for both stdin and file input
         process_single_seqs(
             &minimizer_hashes,
             input_path,
@@ -698,14 +697,12 @@ fn process_paired_seqs(
                 // Pre-allocate buffers for reuse
                 let mut minimizer_buffer1 = Vec::with_capacity(64);
                 let mut minimizer_buffer2 = Vec::with_capacity(64);
-                let mut seen_hits1 = FxHashSet::default();
-                let mut seen_hits2 = FxHashSet::default();
+                let mut seen_hits_pair = FxHashSet::default();
+                let mut pair_hit_count = 0;
 
                 // Check for minimizer hits in read 1
-                let mut hit_count1 = 0;
                 if seq1_len >= kmer_length {
                     minimizer_buffer1.clear();
-                    seen_hits1.clear();
 
                     // Apply prefix length limit if specified
                     let effective_seq = if prefix_length > 0 && seq1_len > prefix_length {
@@ -722,19 +719,17 @@ fn process_paired_seqs(
                         &mut minimizer_buffer1,
                     );
 
-                    // Count distinct minimizer hits
+                    // Count distinct minimizer hits for the pair
                     for &hash in &minimizer_buffer1 {
-                        if minimizer_hashes.contains(&hash) && seen_hits1.insert(hash) {
-                            hit_count1 += 1;
+                        if minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
+                            pair_hit_count += 1;
                         }
                     }
                 }
 
                 // Check for minimizer hits in read 2
-                let mut hit_count2 = 0;
                 if seq2_len >= kmer_length {
                     minimizer_buffer2.clear();
-                    seen_hits2.clear();
 
                     // Apply prefix length limit if specified
                     let effective_seq = if prefix_length > 0 && seq2_len > prefix_length {
@@ -751,24 +746,21 @@ fn process_paired_seqs(
                         &mut minimizer_buffer2,
                     );
 
-                    // Count distinct minimizer hits
+                    // Count distinct minimizer hits for the pair (continuing from read 1)
                     for &hash in &minimizer_buffer2 {
-                        if minimizer_hashes.contains(&hash) && seen_hits2.insert(hash) {
-                            hit_count2 += 1;
+                        if minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
+                            pair_hit_count += 1;
                         }
                     }
                 }
 
-                // Total hit count for the read pair
-                let total_hit_count = hit_count1 + hit_count2;
-
-                // Determine if we should output this pair
+                // Determine if we should output this pair based on distinct hits across both reads
                 let should_output = if !invert {
-                    // When not inverted, keep pairs with fewer than min_matches combined hits
-                    total_hit_count < min_matches
+                    // When not inverted, keep pairs with fewer than min_matches distinct hits
+                    pair_hit_count < min_matches
                 } else {
-                    // When inverted, keep pairs with greater than or equal to min_matches combined hits
-                    total_hit_count >= min_matches
+                    // When inverted, keep pairs with greater than or equal to min_matches distinct hits
+                    pair_hit_count >= min_matches
                 };
 
                 (should_output, seq1_len, seq2_len)
@@ -983,11 +975,10 @@ fn process_interleaved_paired_seqs(
                     // Pre-allocate buffers for reuse
                     let mut minimizer_buffer1 = Vec::with_capacity(64);
                     let mut minimizer_buffer2 = Vec::with_capacity(64);
-                    let mut seen_hits1 = FxHashSet::default();
-                    let mut seen_hits2 = FxHashSet::default();
+                    let mut seen_hits_pair = FxHashSet::default();
+                    let mut pair_hit_count = 0;
 
                     // Check for minimizer hits in read 1
-                    let mut hit_count1 = 0;
                     if record1_seq.len() >= kmer_length {
                         // Apply prefix length limit if specified
                         let effective_seq =
@@ -1005,16 +996,15 @@ fn process_interleaved_paired_seqs(
                             &mut minimizer_buffer1,
                         );
 
-                        // Count distinct minimizer hits
+                        // Count distinct minimizer hits for the pair
                         for &hash in &minimizer_buffer1 {
-                            if minimizer_hashes.contains(&hash) && seen_hits1.insert(hash) {
-                                hit_count1 += 1;
+                            if minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
+                                pair_hit_count += 1;
                             }
                         }
                     }
 
                     // Check for minimizer hits in read 2
-                    let mut hit_count2 = 0;
                     if record2_seq.len() >= kmer_length {
                         // Apply prefix length limit if specified
                         let effective_seq =
@@ -1032,24 +1022,21 @@ fn process_interleaved_paired_seqs(
                             &mut minimizer_buffer2,
                         );
 
-                        // Count distinct minimizer hits
+                        // Count distinct minimizer hits for the pair (continuing from read 1)
                         for &hash in &minimizer_buffer2 {
-                            if minimizer_hashes.contains(&hash) && seen_hits2.insert(hash) {
-                                hit_count2 += 1;
+                            if minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
+                                pair_hit_count += 1;
                             }
                         }
                     }
 
-                    // Total hit count for the pair
-                    let total_hit_count = hit_count1 + hit_count2;
-
-                    // Determine if we should output this pair
+                    // Determine if we should output this pair based on distinct hits across both reads
                     let should_output = if !invert {
-                        // When not inverted, keep pairs with fewer than min_matches combined hits
-                        total_hit_count < min_matches
+                        // When not inverted, keep pairs with fewer than min_matches distinct hits
+                        pair_hit_count < min_matches
                     } else {
-                        // When inverted, keep pairs with greater than or equal to min_matches combined hits
-                        total_hit_count >= min_matches
+                        // When inverted, keep pairs with greater than or equal to min_matches distinct hits
+                        pair_hit_count >= min_matches
                     };
 
                     (should_output, record1_seq.len(), record2_seq.len())
