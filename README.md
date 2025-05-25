@@ -2,13 +2,13 @@
 
 # Deacon
 
-A fast general purpose minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for rapid and accurate host depletion. Default parameters have been selected to maximise balanced accuracy for short and long reads. Sensitivity, specificity and memory use may nevertheless be tuned by varying *k*-mer length (`-k`), minimizer window length (`-w`), and the number of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the number of required matches `m` can be specified at filter time.
+A general purpose minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for rapid and accurate host depletion. Default parameters have been selected to maximise accuracy for short and long read host sequence classification and depletion. Sensitivity, specificity and memory use may be tuned by varying *k*-mer length (`-k`), minimizer window length (`-w`), and the number of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the number of required matches `m` can be specified at filter time.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in under 60s. Peak memory usage is ~4.5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks. This project is currently unstable.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in <30s. Peak memory usage is ~4.5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks. This project is currently unstable.
 
 ## Install
 
-### conda/mamba/pixi (recommended)  [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
+### conda/mamba/pixi  [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
 
 ```bash
 conda install -c bioconda deacon
@@ -32,9 +32,9 @@ deacon index build chm13v2.fa > human.k31w15.idx
 
 #### Prebuilt indexes
 
-|                           Name/URL                           |                         Composition                          | Minimizers                   | Masked minimizers    | Size  | Date    |
-| :----------------------------------------------------------: | :----------------------------------------------------------: | ---------------------------- | -------------------- | ----- | ------- |
-| [**panhuman-1**](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/panhuman-1.k31w15.idx) | ([HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [CHM13v2.0](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [GRCh38.p14](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40)) - bacteria (FDA-ARGOS)  - viruses (RefSeq) | 409,914,298 (*k*=31, *w*=15) | 20,741 (**0.0051%**) | 3.7GB | 2025-04 |
+|                           Name/URL                           |                         Composition                          | Minimizers                   | Subtracted minimizers | Size  | Date    |
+| :----------------------------------------------------------: | :----------------------------------------------------------: | ---------------------------- | --------------------- | ----- | ------- |
+| [**panhuman-1**](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/panhuman-1.k31w15.idx) | ([HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [CHM13v2.0](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [GRCh38.p14](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40)) - bacteria (FDA-ARGOS)  - viruses (RefSeq) | 409,914,298 (*k*=31, *w*=15) | 20,741 (**0.0051%**)  | 3.7GB | 2025-04 |
 
 ### Filtering
 

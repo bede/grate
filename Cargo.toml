@@ -1,7 +1,7 @@
 [package]
 name = "deacon"
 version = "0.4.0"
-description = "Fast alignment-free sequence filter"
+description = "Fast (host) DNA sequence filtering with minimizers"
 authors = ["Bede Constantinides <b@bede.im>"]
 edition = "2024"
 repository = "https://github.com/bede/deacon"
