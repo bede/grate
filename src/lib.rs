@@ -186,7 +186,7 @@ impl IndexConfig {
             window_size: DEFAULT_WINDOW_SIZE,
             output_path: None,
             capacity_millions: 500, // Default 500M capacity
-            threads: 0, // Use all available threads by default
+            threads: 0,             // Use all available threads by default
         }
     }
 

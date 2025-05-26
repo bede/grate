@@ -152,8 +152,15 @@ fn main() -> Result<()> {
                     Some(PathBuf::from(output))
                 };
 
-                build_index(input, *kmer_length, *window_size, output_path, *capacity_millions, *threads)
-                    .context("Failed to run index build command")?;
+                build_index(
+                    input,
+                    *kmer_length,
+                    *window_size,
+                    output_path,
+                    *capacity_millions,
+                    *threads,
+                )
+                .context("Failed to run index build command")?;
             }
             IndexCommands::Info { index } => {
                 index_info(index).context("Failed to run index info command")?;

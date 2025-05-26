@@ -1,10 +1,10 @@
-[![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
+[![Tests](https://github.com/bede/deacon/actions/workflows/test.yml/badge.svg)](https://github.com/bede/deacon/actions/workflows/test.yml) [![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) [![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon)
 
 # Deacon
 
 A general purpose minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for rapid and accurate host depletion. Default parameters have been selected to maximise accuracy for short and long read host sequence classification and depletion. Sensitivity, specificity and memory use may be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the number of required matches `m` can be specified at filter time.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in <30s. Peak memory usage is ~4.5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks. This project is currently unstable.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks. This project is currently unstable.
 
 ## Install
 
