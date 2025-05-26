@@ -56,7 +56,7 @@ fn test_index_build_with_custom_kmer_window() {
 
     create_test_fasta(&fasta_path, 1);
 
-    // Build index with custom k-mer length and window length using -o
+    // Build index with custom k-mer length and window size using -o
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("index")
         .arg("build")

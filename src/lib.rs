@@ -164,11 +164,14 @@ pub struct IndexConfig {
     /// K-mer length used for indexing
     pub kmer_length: usize,
 
-    /// Minimizer window length used for indexing
-    pub window_length: usize,
+    /// Minimizer window size used for indexing
+    pub window_size: usize,
 
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
+
+    /// Hash table pre-allocation capacity in millions
+    pub capacity_millions: usize,
 
     /// Number of execution threads (0 = auto)
     pub threads: usize,
@@ -180,8 +183,9 @@ impl IndexConfig {
         Self {
             input_path: input_path.as_ref().to_path_buf(),
             kmer_length: DEFAULT_KMER_LENGTH,
-            window_length: DEFAULT_WINDOW_SIZE,
+            window_size: DEFAULT_WINDOW_SIZE,
             output_path: None,
+            capacity_millions: 500, // Default 500M capacity
             threads: 0, // Use all available threads by default
         }
     }
@@ -192,15 +196,21 @@ impl IndexConfig {
         self
     }
 
-    /// Set window length
-    pub fn with_window_length(mut self, window_length: usize) -> Self {
-        self.window_length = window_length;
+    /// Set window size
+    pub fn with_window_size(mut self, window_size: usize) -> Self {
+        self.window_size = window_size;
         self
     }
 
     /// Set output path
     pub fn with_output<P: AsRef<Path>>(mut self, output_path: P) -> Self {
         self.output_path = Some(output_path.as_ref().to_path_buf());
+        self
+    }
+
+    /// Set hash table capacity in millions
+    pub fn with_capacity_millions(mut self, capacity_millions: usize) -> Self {
+        self.capacity_millions = capacity_millions;
         self
     }
 
@@ -215,8 +225,9 @@ impl IndexConfig {
         build_index(
             &self.input_path,
             self.kmer_length,
-            self.window_length,
+            self.window_size,
             self.output_path.clone(),
+            self.capacity_millions,
             self.threads,
         )
     }

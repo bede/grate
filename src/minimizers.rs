@@ -93,18 +93,18 @@ fn canonicalize_sequence(seq: &[u8]) -> Vec<u8> {
 }
 
 /// Returns vector of all minimizer hashes for a sequence
-pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_length: usize) -> Vec<u64> {
+pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_size: usize) -> Vec<u64> {
     // Skip if sequence is short
     if seq.len() < kmer_length {
         return Vec::new();
     }
     let canonical_seq = canonicalize_sequence(seq);
     // Get minimizer positions using simd-minimizers
-    let mut positions = Vec::with_capacity(seq.len() / window_length + 1);
+    let mut positions = Vec::with_capacity(seq.len() / window_size + 1);
     simd_minimizers::canonical_minimizer_positions(
         AsciiSeq(&canonical_seq),
         kmer_length,
-        window_length,
+        window_size,
         &mut positions,
     );
     // Convert positions to hash values with xxh3_64
@@ -125,7 +125,7 @@ pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_length: u
 pub fn fill_minimizer_hashes(
     seq: &[u8],
     kmer_length: usize,
-    window_length: usize,
+    window_size: usize,
     hashes: &mut Vec<u64>,
 ) {
     hashes.clear();
@@ -142,7 +142,7 @@ pub fn fill_minimizer_hashes(
     simd_minimizers::canonical_minimizer_positions(
         AsciiSeq(&canonical_seq),
         kmer_length,
-        window_length,
+        window_size,
         &mut positions,
     );
 

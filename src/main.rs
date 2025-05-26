@@ -77,13 +77,17 @@ enum IndexCommands {
         #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH)]
         kmer_length: usize,
 
-        /// Minimizer window length used for indexing
+        /// Minimizer window size used for indexing
         #[arg(short = 'w', default_value_t = DEFAULT_WINDOW_SIZE)]
-        window_length: usize,
+        window_size: usize,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
         output: String,
+
+        /// Preallocated index capacity in millions of minimizers
+        #[arg(short = 'c', long = "capacity", default_value_t = 500)]
+        capacity_millions: usize,
 
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
@@ -136,8 +140,9 @@ fn main() -> Result<()> {
             IndexCommands::Build {
                 input,
                 kmer_length,
-                window_length,
+                window_size,
                 output,
+                capacity_millions,
                 threads,
             } => {
                 // Convert output string to Option<PathBuf>
@@ -147,7 +152,7 @@ fn main() -> Result<()> {
                     Some(PathBuf::from(output))
                 };
 
-                build_index(input, *kmer_length, *window_length, output_path, *threads)
+                build_index(input, *kmer_length, *window_size, output_path, *capacity_millions, *threads)
                     .context("Failed to run index build command")?;
             }
             IndexCommands::Info { index } => {

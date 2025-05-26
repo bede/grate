@@ -236,12 +236,12 @@ pub fn run<P: AsRef<Path>>(
     let (minimizer_hashes, header) = load_minimizer_hashes(&minimizers_path)?;
 
     let kmer_length = header.kmer_length();
-    let window_length = header.window_length();
+    let window_size = header.window_size();
 
     let load_time = start_time.elapsed();
     eprintln!(
         "Loaded index (k={}, w={}) in {:.2?}",
-        kmer_length, window_length, load_time
+        kmer_length, window_size, load_time
     );
 
     // Create the appropriate writer(s) based on the output path(s)
@@ -278,7 +278,7 @@ pub fn run<P: AsRef<Path>>(
             min_matches,
             prefix_length,
             kmer_length,
-            window_length,
+            window_size,
             invert,
             rename,
             &mut total_seqs,
@@ -300,7 +300,7 @@ pub fn run<P: AsRef<Path>>(
             min_matches,
             prefix_length,
             kmer_length,
-            window_length,
+            window_size,
             invert,
             rename,
             &mut total_seqs,
@@ -320,7 +320,7 @@ pub fn run<P: AsRef<Path>>(
             min_matches,
             prefix_length,
             kmer_length,
-            window_length,
+            window_size,
             invert,
             rename,
             &mut total_seqs,
@@ -389,7 +389,7 @@ pub fn run<P: AsRef<Path>>(
             output: output_path.to_string(),
             output2: output2_path.map(|s| s.to_string()),
             k: kmer_length,
-            w: window_length,
+            w: window_size,
             m: min_matches,
             n: prefix_length,
             invert,
@@ -428,7 +428,7 @@ fn process_single_seqs(
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
-    window_length: usize,
+    window_size: usize,
     invert: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -507,7 +507,7 @@ fn process_single_seqs(
                     fill_minimizer_hashes(
                         effective_seq,
                         kmer_length,
-                        window_length,
+                        window_size,
                         &mut minimizer_buffer,
                     );
 
@@ -621,7 +621,7 @@ fn process_paired_seqs(
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
-    window_length: usize,
+    window_size: usize,
     invert: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -715,7 +715,7 @@ fn process_paired_seqs(
                     fill_minimizer_hashes(
                         effective_seq,
                         kmer_length,
-                        window_length,
+                        window_size,
                         &mut minimizer_buffer1,
                     );
 
@@ -742,7 +742,7 @@ fn process_paired_seqs(
                     fill_minimizer_hashes(
                         effective_seq,
                         kmer_length,
-                        window_length,
+                        window_size,
                         &mut minimizer_buffer2,
                     );
 
@@ -888,7 +888,7 @@ fn process_interleaved_paired_seqs(
     min_matches: usize,
     prefix_length: usize,
     kmer_length: usize,
-    window_length: usize,
+    window_size: usize,
     invert: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -992,7 +992,7 @@ fn process_interleaved_paired_seqs(
                         fill_minimizer_hashes(
                             effective_seq,
                             kmer_length,
-                            window_length,
+                            window_size,
                             &mut minimizer_buffer1,
                         );
 
@@ -1018,7 +1018,7 @@ fn process_interleaved_paired_seqs(
                         fill_minimizer_hashes(
                             effective_seq,
                             kmer_length,
-                            window_length,
+                            window_size,
                             &mut minimizer_buffer2,
                         );
 

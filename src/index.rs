@@ -15,15 +15,15 @@ use needletail::parse_fastx_file;
 pub struct IndexHeader {
     pub format_version: u8,
     pub kmer_length: u8,
-    pub window_length: u8,
+    pub window_size: u8,
 }
 
 impl IndexHeader {
-    pub fn new(kmer_length: usize, window_length: usize) -> Self {
+    pub fn new(kmer_length: usize, window_size: usize) -> Self {
         IndexHeader {
             format_version: 1,
             kmer_length: kmer_length as u8,
-            window_length: window_length as u8,
+            window_size: window_size as u8,
         }
     }
 
@@ -45,8 +45,8 @@ impl IndexHeader {
     }
 
     /// Get w
-    pub fn window_length(&self) -> usize {
-        self.window_length as usize
+    pub fn window_size(&self) -> usize {
+        self.window_size as usize
     }
 }
 
@@ -119,8 +119,9 @@ pub fn write_minimizers(
 pub fn build<P: AsRef<Path>>(
     input: P,
     kmer_length: usize,
-    window_length: usize,
+    window_size: usize,
     output: Option<PathBuf>,
+    capacity_millions: usize,
     threads: usize,
 ) -> Result<()> {
     let start_time = Instant::now();
@@ -140,11 +141,12 @@ pub fn build<P: AsRef<Path>>(
     // Create a fastx reader using needletail (handles gzip automatically)
     let mut reader = parse_fastx_file(path).context("Failed to open input file")?;
 
-    // Init FxHashSet with 0.5B capacity
+    // Init FxHashSet with user-specified capacity
+    let capacity = capacity_millions * 1_000_000;
     let mut all_minimizers: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(250_000_000, Default::default());
+        FxHashSet::with_capacity_and_hasher(capacity, Default::default());
 
-    eprintln!("Indexing (k={}, w={})…", kmer_length, window_length);
+    eprintln!("Indexing (k={}, w={})…", kmer_length, window_size);
 
     let mut seq_count = 0;
     let mut total_bp = 0;
@@ -182,7 +184,7 @@ pub fn build<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_length)
+                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size)
             })
             .collect();
 
@@ -221,7 +223,7 @@ pub fn build<P: AsRef<Path>>(
     );
 
     // Create header
-    let header = IndexHeader::new(kmer_length, window_length);
+    let header = IndexHeader::new(kmer_length, window_size);
 
     // Write to output path or stdout
     write_minimizers(&all_minimizers, &header, output.as_ref())?;
@@ -252,14 +254,14 @@ pub fn diff<P: AsRef<Path>>(first: P, second: P, output: Option<&PathBuf>) -> Re
 
     // Validate compatible headers
     if second_header.kmer_length() != header.kmer_length()
-        || second_header.window_length() != header.window_length()
+        || second_header.window_size() != header.window_size()
     {
         return Err(anyhow::anyhow!(
             "Incompatible headers: second index has k={}, w={}, but first index has k={}, w={}",
             second_header.kmer_length(),
-            second_header.window_length(),
+            second_header.window_size(),
             header.kmer_length(),
-            header.window_length()
+            header.window_size()
         ));
     }
 
@@ -298,7 +300,7 @@ pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
     eprintln!("Index information:");
     eprintln!("  Format version: {}", header.format_version);
     eprintln!("  K-mer length (k): {}", header.kmer_length());
-    eprintln!("  Window size (w): {}", header.window_length());
+    eprintln!("  Window size (w): {}", header.window_size());
     eprintln!("  Distinct minimizer count: {}", minimizers.len());
 
     let total_time = start_time.elapsed();
@@ -321,7 +323,7 @@ pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<(
     eprintln!(
         "Performing union of indexes (k={}, w={})",
         header.kmer_length(),
-        header.window_length()
+        header.window_size()
     );
     eprintln!(
         "Loaded {} minimizers from first index",
@@ -332,15 +334,15 @@ pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<(
         let (minimizers, file_header) = load_minimizer_hashes(path)?;
         // Verify header compat
         if file_header.kmer_length() != header.kmer_length()
-            || file_header.window_length() != header.window_length()
+            || file_header.window_size() != header.window_size()
         {
             return Err(anyhow::anyhow!(
                 "Incompatible headers: index at {:?} has k={}, w={}, but first index has k={}, w={}",
                 path.as_ref(),
                 file_header.kmer_length(),
-                file_header.window_length(),
+                file_header.window_size(),
                 header.kmer_length(),
-                header.window_length()
+                header.window_size()
             ));
         }
         // Count minimizers before union
@@ -378,7 +380,7 @@ mod tests {
 
         assert_eq!(header.format_version, 1);
         assert_eq!(header.kmer_length(), 31);
-        assert_eq!(header.window_length(), 21);
+        assert_eq!(header.window_size(), 21);
     }
 
     #[test]
@@ -387,7 +389,7 @@ mod tests {
         let valid_header = IndexHeader {
             format_version: 1,
             kmer_length: 31,
-            window_length: 21,
+            window_size: 21,
         };
         assert!(valid_header.validate().is_ok());
 
@@ -395,7 +397,7 @@ mod tests {
         let invalid_header = IndexHeader {
             format_version: 2, // Unsupported version
             kmer_length: 31,
-            window_length: 21,
+            window_size: 21,
         };
         assert!(invalid_header.validate().is_err());
     }
