@@ -20,7 +20,7 @@ enum Commands {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Filter fastx sequences based on presence/absence of minimizer matches
+    /// Filter out (or in) fastx sequences based on the presence of minimizer matches to the index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
@@ -48,7 +48,7 @@ enum Commands {
         #[arg(short = 'n', long = "nucleotides", default_value_t = 0)]
         prefix_length: usize,
 
-        /// Invert filtering (keep sequences WITH matches rather than those WITHOUT)
+        /// retain only sequences WITH matches rather than those WITHOUT
         #[arg(short = 'i', long = "invert", default_value_t = false)]
         invert: bool,
 
