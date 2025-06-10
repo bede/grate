@@ -1,0 +1,61 @@
+index,params,platform,dataset,tool,measure,value,measure_label,dataset_label,platform_label,tool2,1_minus_value
+panhuman-1,k31w15m2,ill,argos988,deacon,TPR,0.9999888941483961,Sensitivity,FDA-ARGOS bacteria,Illumina,deacon,1.1105851603909755e-05
+panhuman-1,k31w15m2,ill,rsviruses17900,deacon,TPR,0.9999888941483961,Sensitivity,RefSeq viruses,Illumina,deacon,1.1105851603909755e-05
+panhuman-1,k31w15m2,ont,argos988,deacon,TPR,0.9999581021005604,Sensitivity,FDA-ARGOS bacteria,ONT,deacon,4.1897899439646835e-05
+panhuman-1,k31w15m2,ont,rsviruses17900,deacon,TPR,0.9999581021005604,Sensitivity,RefSeq viruses,ONT,deacon,4.1897899439646835e-05
+default,default,ill,rsviruses17900,detaxizer,TPR,0.9957820957234714,Sensitivity,RefSeq viruses,Illumina,detaxizer,0.004217904276528572
+default,default,ill,argos988,detaxizer,TPR,0.9957820957234714,Sensitivity,FDA-ARGOS bacteria,Illumina,detaxizer,0.004217904276528572
+default,default,ont,rsviruses17900,detaxizer,TPR,0.9999374220875997,Sensitivity,RefSeq viruses,ONT,detaxizer,6.257791240027455e-05
+default,default,ont,argos988,detaxizer,TPR,0.9999374220875997,Sensitivity,FDA-ARGOS bacteria,ONT,detaxizer,6.257791240027455e-05
+standard,default,ill,rsviruses17900,detaxizer,TPR,0.999911605505215,Sensitivity,RefSeq viruses,Illumina,detaxizer-std,8.839449478503791e-05
+standard,default,ill,argos988,detaxizer,TPR,0.999911605505215,Sensitivity,FDA-ARGOS bacteria,Illumina,detaxizer-std,8.839449478503791e-05
+standard,default,ont,argos988,detaxizer,TPR,0.9999986686451503,Sensitivity,FDA-ARGOS bacteria,ONT,detaxizer-std,1.331354849698485e-06
+standard,default,ont,rsviruses17900,detaxizer,TPR,0.9999986686451503,Sensitivity,RefSeq viruses,ONT,detaxizer-std,1.331354849698485e-06
+human-t2t-hla,default,ill,rsviruses17900,hostile,TPR,0.9999017892412323,Sensitivity,RefSeq viruses,Illumina,hostile,9.82107587677028e-05
+human-t2t-hla,default,ill,argos988,hostile,TPR,0.9999017892412323,Sensitivity,FDA-ARGOS bacteria,Illumina,hostile,9.82107587677028e-05
+human-t2t-hla,default,ont,rsviruses17900,hostile,TPR,0.9999777382533019,Sensitivity,RefSeq viruses,ONT,hostile,2.2261746698060136e-05
+human-t2t-hla,default,ont,argos988,hostile,TPR,0.9999777382533019,Sensitivity,FDA-ARGOS bacteria,ONT,hostile,2.2261746698060136e-05
+hprc,default,ill,rsviruses17900,nohuman,TPR,0.9971937129793318,Sensitivity,RefSeq viruses,Illumina,nohuman,0.002806287020668208
+hprc,default,ill,argos988,nohuman,TPR,0.9971937129793318,Sensitivity,FDA-ARGOS bacteria,Illumina,nohuman,0.002806287020668208
+hprc,default,ont,rsviruses17900,nohuman,TPR,0.9999401609535424,Sensitivity,RefSeq viruses,ONT,nohuman,5.983904645756599e-05
+hprc,default,ont,argos988,nohuman,TPR,0.9999401609535424,Sensitivity,FDA-ARGOS bacteria,ONT,nohuman,5.983904645756599e-05
+panhuman-1,k31w15m2,ill,argos988,deacon,TNR,0.9999949330108728,Specificity,FDA-ARGOS bacteria,Illumina,deacon,5.066989127167076e-06
+panhuman-1,k31w15m2,ill,rsviruses17900,deacon,TNR,0.9999300655192392,Specificity,RefSeq viruses,Illumina,deacon,6.993448076075826e-05
+panhuman-1,k31w15m2,ont,argos988,deacon,TNR,0.9998611058405337,Specificity,FDA-ARGOS bacteria,ONT,deacon,0.00013889415946632955
+panhuman-1,k31w15m2,ont,rsviruses17900,deacon,TNR,0.99881457157837,Specificity,RefSeq viruses,ONT,deacon,0.0011854284216300526
+default,default,ill,rsviruses17900,detaxizer,TNR,0.9986468179894907,Specificity,RefSeq viruses,Illumina,detaxizer,0.0013531820105092685
+default,default,ill,argos988,detaxizer,TNR,0.9997017392563942,Specificity,FDA-ARGOS bacteria,Illumina,detaxizer,0.0002982607436058382
+default,default,ont,rsviruses17900,detaxizer,TNR,0.9767440533787604,Specificity,RefSeq viruses,ONT,detaxizer,0.023255946621239643
+default,default,ont,argos988,detaxizer,TNR,0.9800683592967842,Specificity,FDA-ARGOS bacteria,ONT,detaxizer,0.019931640703215847
+standard,default,ill,rsviruses17900,detaxizer,TNR,0.9917106448031626,Specificity,RefSeq viruses,Illumina,detaxizer-std,0.008289355196837378
+standard,default,ill,argos988,detaxizer,TNR,0.9976926999079548,Specificity,FDA-ARGOS bacteria,Illumina,detaxizer-std,0.0023073000920451614
+standard,default,ont,argos988,detaxizer,TNR,0.8860611409695386,Specificity,FDA-ARGOS bacteria,ONT,detaxizer-std,0.11393885903046141
+standard,default,ont,rsviruses17900,detaxizer,TNR,0.8953406511737985,Specificity,RefSeq viruses,ONT,detaxizer-std,0.10465934882620154
+human-t2t-hla,default,ill,rsviruses17900,hostile,TNR,0.9999496962506809,Specificity,RefSeq viruses,Illumina,hostile,5.030374931913606e-05
+human-t2t-hla,default,ill,argos988,hostile,TNR,0.9999994248676134,Specificity,FDA-ARGOS bacteria,Illumina,hostile,5.751323866043379e-07
+human-t2t-hla,default,ont,rsviruses17900,hostile,TNR,0.9970741450295443,Specificity,RefSeq viruses,ONT,hostile,0.0029258549704557213
+human-t2t-hla,default,ont,argos988,hostile,TNR,0.9983104957606964,Specificity,FDA-ARGOS bacteria,ONT,hostile,0.0016895042393035853
+hprc,default,ill,rsviruses17900,nohuman,TNR,0.9988701175596391,Specificity,RefSeq viruses,Illumina,nohuman,0.0011298824403609409
+hprc,default,ill,argos988,nohuman,TNR,0.999919059216788,Specificity,FDA-ARGOS bacteria,Illumina,nohuman,8.094078321196907e-05
+hprc,default,ont,rsviruses17900,nohuman,TNR,0.9806217868044108,Specificity,RefSeq viruses,ONT,nohuman,0.01937821319558919
+hprc,default,ont,argos988,nohuman,TNR,0.9627173005893321,Specificity,FDA-ARGOS bacteria,ONT,nohuman,0.03728269941066786
+panhuman-1,k31w15m2,ill,argos988,deacon,bal_acc,0.9999919135796345,Balanced accuracy,FDA-ARGOS bacteria,Illumina,deacon,8.086420365538416e-06
+panhuman-1,k31w15m2,ill,rsviruses17900,deacon,bal_acc,0.9999594798338176,Balanced accuracy,RefSeq viruses,Illumina,deacon,4.0520166182389517e-05
+panhuman-1,k31w15m2,ont,argos988,deacon,bal_acc,0.9999096039705471,Balanced accuracy,FDA-ARGOS bacteria,ONT,deacon,9.039602945293268e-05
+panhuman-1,k31w15m2,ont,rsviruses17900,deacon,bal_acc,0.9993863368394651,Balanced accuracy,RefSeq viruses,ONT,deacon,0.0006136631605349052
+default,default,ill,rsviruses17900,detaxizer,bal_acc,0.9972144568564811,Balanced accuracy,RefSeq viruses,Illumina,detaxizer,0.002785543143518865
+default,default,ill,argos988,detaxizer,bal_acc,0.9977419174899328,Balanced accuracy,FDA-ARGOS bacteria,Illumina,detaxizer,0.0022580825100672053
+default,default,ont,rsviruses17900,detaxizer,bal_acc,0.9883407377331801,Balanced accuracy,RefSeq viruses,ONT,detaxizer,0.011659262266819903
+default,default,ont,argos988,detaxizer,bal_acc,0.9900028906921919,Balanced accuracy,FDA-ARGOS bacteria,ONT,detaxizer,0.00999710930780806
+standard,default,ill,rsviruses17900,detaxizer,bal_acc,0.9958111251541888,Balanced accuracy,RefSeq viruses,Illumina,detaxizer-std,0.004188874845811208
+standard,default,ill,argos988,detaxizer,bal_acc,0.9988021527065849,Balanced accuracy,FDA-ARGOS bacteria,Illumina,detaxizer-std,0.0011978472934150997
+standard,default,ont,argos988,detaxizer,bal_acc,0.9430299048073445,Balanced accuracy,FDA-ARGOS bacteria,ONT,detaxizer-std,0.0569700951926555
+standard,default,ont,rsviruses17900,detaxizer,bal_acc,0.9476696599094744,Balanced accuracy,RefSeq viruses,ONT,detaxizer-std,0.05233034009052562
+human-t2t-hla,default,ill,rsviruses17900,hostile,bal_acc,0.9999257427459566,Balanced accuracy,RefSeq viruses,Illumina,hostile,7.425725404341943e-05
+human-t2t-hla,default,ill,argos988,hostile,bal_acc,0.9999506070544228,Balanced accuracy,FDA-ARGOS bacteria,Illumina,hostile,4.939294557715357e-05
+human-t2t-hla,default,ont,rsviruses17900,hostile,bal_acc,0.9985259416414232,Balanced accuracy,RefSeq viruses,ONT,hostile,0.0014740583585768352
+human-t2t-hla,default,ont,argos988,hostile,bal_acc,0.9991441170069992,Balanced accuracy,FDA-ARGOS bacteria,ONT,hostile,0.0008558829930007672
+hprc,default,ill,rsviruses17900,nohuman,bal_acc,0.9980319152694854,Balanced accuracy,RefSeq viruses,Illumina,nohuman,0.0019680847305145743
+hprc,default,ill,argos988,nohuman,bal_acc,0.99855638609806,Balanced accuracy,FDA-ARGOS bacteria,Illumina,nohuman,0.001443613901940033
+hprc,default,ont,rsviruses17900,nohuman,bal_acc,0.9902809738789766,Balanced accuracy,RefSeq viruses,ONT,nohuman,0.009719026121023377
+hprc,default,ont,argos988,nohuman,bal_acc,0.9813287307714373,Balanced accuracy,FDA-ARGOS bacteria,ONT,nohuman,0.01867126922856266
