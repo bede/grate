@@ -202,22 +202,21 @@ pub fn run<P: AsRef<Path>>(
             .context("Failed to initialize thread pool")?;
     }
 
-    let mut input_mode = String::new();
+    let mode = if deplete { "deplete" } else { "search" };
+
+    let mut input_type = String::new();
     let mut options = Vec::<String>::new();
     let paired_stdin = input_path == "-" && input2_path.is_some() && input2_path.unwrap() == "-";
     if paired_stdin {
-        input_mode.push_str("interleaved pairs from stdin");
+        input_type.push_str("interleaved");
     } else if let Some(_) = input2_path {
-        input_mode.push_str("pairs from files");
+        input_type.push_str("paired");
     } else {
-        input_mode.push_str("single");
+        input_type.push_str("single");
     }
     options.push(format!("match_threshold={}", match_threshold));
     if prefix_length > 0 {
         options.push(format!("prefix_length={}", prefix_length));
-    }
-    if deplete {
-        options.push("deplete".to_string());
     }
     if rename {
         options.push("rename".to_string());
@@ -227,9 +226,10 @@ pub fn run<P: AsRef<Path>>(
     }
 
     eprintln!(
-        "Deacon v{}; mode: {}; options: {}",
+        "Deacon v{}; mode: {}; input: {}; options: {}",
         version,
-        input_mode,
+        mode,
+        input_type,
         options.join(", ")
     );
 
