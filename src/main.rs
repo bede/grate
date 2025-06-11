@@ -44,11 +44,11 @@ enum Commands {
         #[arg(short = 'm', long = "matches", default_value_t = 2)]
         min_matches: usize,
 
-        /// Consider only the first N nucleotides per sequence (0 = entire sequence)
-        #[arg(short = 'n', long = "nucleotides", default_value_t = 0)]
+        /// Search only the first N nucleotides per sequence (0 = entire sequence)
+        #[arg(short = 'p', long = "prefix-length", default_value_t = 0)]
         prefix_length: usize,
 
-        /// retain only sequences WITH matches rather than those WITHOUT
+        /// Retain only sequences WITH matches rather than those WITHOUT
         #[arg(short = 'i', long = "invert", default_value_t = false)]
         invert: bool,
 

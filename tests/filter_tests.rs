@@ -285,7 +285,7 @@ fn test_filter_prefix_length() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--nucleotides")
+        .arg("--prefix-length")
         .arg("6")
         .arg(&bin_path)
         .arg(&fastq_path)
