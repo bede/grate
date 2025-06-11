@@ -760,7 +760,7 @@ mod output2_tests {
             .arg(&fastq_path)
             .arg("--output")
             .arg(&output_path)
-            .arg("--output2")
+            .arg("-O")
             .arg(&output_path2)
             .assert()
             .success()

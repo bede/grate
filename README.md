@@ -2,9 +2,11 @@
 
 # Deacon
 
-A general purpose minimizer-based filter for nucleotide sequences in FASTA or FASTQ format, built for rapid and accurate host depletion. Default parameters have been selected to maximise accuracy for short and long read host sequence classification and depletion. Sensitivity, specificity and memory use may be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the number of required matches `m` can be specified at filter time.
+<div align="center"><img src="deacon.png" width="200" alt="Logo"></div>
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >200Mbp/s (Apple M1) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for comprehensive validation and benchmarks. This project is working but currently unstable, and CLI arguments may change prior to version 1.0.
+Deacon performs fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for either search or depletion. Default parameters have been chosen for accurately depleting human host sequences from microbial (meta)genomes, for which a validated prebuilt index is available. Sensitivity, specificity and required memory may be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the number of required matches `m` can be specified at filter time.
+
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for a preprint evaluating performance. Command line arguments may change prior to v1.
 
 ## Install
 
@@ -50,8 +52,9 @@ deacon -n 1000 filter panhuman-1.k31w15.idx reads.fq.zst | zstd > filt.fq.zst  #
 deacon filter -m 3 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More precise
 deacon filter -m 1 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More sensitive
 deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fastq  # Paired file input
-deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz --output filt.r1.fq.gz --output2 filt.r2.fq.gz  # Paired file input/output
-zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - > filt12.fastq  # Interleaved stdin
+deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz -o filt.r1.fq.gz -O filt.r2.fq.gz  # Paired file input/output
+zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - > filt12.fq  # Interleaved stdin and stdout
+zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - -o filt12.fq.gz  # Interleaved stdin and file output
 deacon filter panhuman-1.k31w15.idx reads.fq.gz --report report.json > filt.fq  # Save report JSON
 ```
 

@@ -37,7 +37,7 @@ enum Commands {
         output: String,
 
         /// Optional path to second paired output fastx file (detects .gz and .zst)
-        #[arg(long = "output2")]
+        #[arg(short = 'O', long = "output2")]
         output2: Option<String>,
 
         /// Number of minimizer matches required per query sequence (pair)
