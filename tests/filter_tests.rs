@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use deacon::MatchThreshold;
 use std::fs;
 use std::fs::File;
 use std::path::Path;
@@ -844,5 +845,173 @@ fn test_shared_minimizer_counted_once() {
         "Expected 2 sequences in output (both reads of the pair should be kept) \
          but got {}. This indicates shared minimizers were double-counted.",
         seqs_out
+    );
+}
+
+#[test]
+fn test_match_threshold_parsing() {
+    // Test MatchThreshold parsing functionality
+    assert_eq!(
+        "2".parse::<MatchThreshold>().unwrap(),
+        MatchThreshold::Absolute(2)
+    );
+    assert_eq!(
+        "0.5".parse::<MatchThreshold>().unwrap(),
+        MatchThreshold::Relative(0.5)
+    );
+    assert_eq!(
+        "0.0".parse::<MatchThreshold>().unwrap(),
+        MatchThreshold::Relative(0.0)
+    );
+    assert_eq!(
+        "1.0".parse::<MatchThreshold>().unwrap(),
+        MatchThreshold::Relative(1.0)
+    );
+
+    // Test invalid inputs
+    assert!("1.5".parse::<MatchThreshold>().is_err()); // > 1.0
+    assert!("-0.1".parse::<MatchThreshold>().is_err()); // < 0.0
+    assert!("abc".parse::<MatchThreshold>().is_err()); // not a number
+}
+
+#[test]
+fn test_match_threshold_logic() {
+    let abs_threshold = MatchThreshold::Absolute(3);
+    let prop_threshold = MatchThreshold::Relative(0.5);
+
+    // Test absolute threshold
+    let required_abs = match abs_threshold {
+        MatchThreshold::Absolute(n) => n,
+        _ => panic!(),
+    };
+    assert!(3 >= required_abs);
+    assert!(5 >= required_abs);
+    assert!(2 < required_abs);
+
+    // Test relative threshold (50% of 10 minimizers = 5 hits required)
+    let required_rel = match prop_threshold {
+        MatchThreshold::Relative(f) => ((f * 10.0).ceil() as usize).max(1),
+        _ => panic!(),
+    };
+    assert!(5 >= required_rel);
+    assert!(6 >= required_rel);
+    assert!(4 < required_rel);
+
+    // Test edge case: minimum 1 hit required even for small proportions
+    let small_prop = MatchThreshold::Relative(0.1);
+    let required_small = match small_prop {
+        MatchThreshold::Relative(f) => ((f * 5.0).ceil() as usize).max(1),
+        _ => panic!(),
+    };
+    assert!(1 >= required_small); // 0.1 * 5 = 0.5, ceil to 1
+    assert!(0 < required_small);
+
+    // Test edge case: zero minimizers case would be handled at runtime
+}
+
+#[test]
+fn test_filter_proportional_threshold() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path = temp_dir.path().join("reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered_proportional.fastq");
+
+    create_test_fasta(&fasta_path);
+    create_test_fastq(&fastq_path);
+    build_index(&fasta_path, &bin_path);
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("--matches")
+        .arg("0.5") // 50% proportional threshold
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    assert!(
+        output_path.exists(),
+        "Output file with proportional threshold wasn't created"
+    );
+}
+
+#[test]
+fn test_filter_proportional_paired() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path1 = temp_dir.path().join("reads_1.fastq");
+    let fastq_path2 = temp_dir.path().join("reads_2.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered_proportional_paired.fastq");
+
+    create_test_fasta(&fasta_path);
+    create_test_paired_fastq(&fastq_path1, &fastq_path2);
+    build_index(&fasta_path, &bin_path);
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("--matches")
+        .arg("0.3") // 30% proportional threshold
+        .arg(&bin_path)
+        .arg(&fastq_path1)
+        .arg(&fastq_path2)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    assert!(
+        output_path.exists(),
+        "Output file with proportional threshold for paired reads wasn't created"
+    );
+}
+
+#[test]
+fn test_filter_edge_case_proportional_values() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path = temp_dir.path().join("reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered_edge.fastq");
+
+    create_test_fasta(&fasta_path);
+    create_test_fastq(&fastq_path);
+    build_index(&fasta_path, &bin_path);
+
+    // Test with 0.0 (should pass everything)
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("--matches")
+        .arg("0.0")
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    // Test with 1.0 (very strict)
+    let output_path_strict = temp_dir.path().join("filtered_strict.fastq");
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("--matches")
+        .arg("1.0")
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("--output")
+        .arg(&output_path_strict)
+        .assert()
+        .success();
+
+    assert!(
+        output_path.exists(),
+        "Output with 0.0 threshold wasn't created"
+    );
+    assert!(
+        output_path_strict.exists(),
+        "Output with 1.0 threshold wasn't created"
     );
 }

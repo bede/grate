@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use deacon::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, build_index, diff_index, index_info, run_filter,
-    union_index,
+    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, MatchThreshold, build_index, diff_index, index_info,
+    run_filter, union_index,
 };
 use std::path::PathBuf;
 
@@ -40,9 +40,9 @@ enum Commands {
         #[arg(short = 'O', long = "output2")]
         output2: Option<String>,
 
-        /// Number of minimizer matches required per query sequence (pair)
-        #[arg(short = 'm', long = "matches", default_value_t = 2)]
-        min_matches: usize,
+        /// Mininum number (integer) or proportion (float) of minimizer hits for a match
+        #[arg(short = 'm', long = "matches", default_value_t = MatchThreshold::Absolute(2))]
+        match_threshold: MatchThreshold,
 
         /// Search only the first N nucleotides per sequence (0 = entire sequence)
         #[arg(short = 'p', long = "prefix-length", default_value_t = 0)]
@@ -56,7 +56,7 @@ enum Commands {
         #[arg(short = 'r', long = "rename", default_value_t = false)]
         rename: bool,
 
-        /// Path to JSON summary file
+        /// Path to JSON summary output file
         #[arg(long = "summary")]
         summary: Option<PathBuf>,
 
@@ -184,7 +184,7 @@ fn main() -> Result<()> {
             input2,
             output,
             output2,
-            min_matches,
+            match_threshold,
             prefix_length,
             summary,
             invert,
@@ -204,7 +204,7 @@ fn main() -> Result<()> {
                 input2.as_deref(),
                 output,
                 output2.as_deref(),
-                *min_matches,
+                match_threshold,
                 *prefix_length,
                 summary.as_ref(),
                 *invert,

@@ -1,3 +1,4 @@
+use crate::MatchThreshold;
 use crate::index::load_minimizer_hashes;
 use crate::minimizers::fill_minimizer_hashes;
 use anyhow::{Context, Result};
@@ -159,7 +160,7 @@ pub struct FilterSummary {
     output2: Option<String>,
     k: usize,
     w: usize,
-    m: usize,
+    m: String,
     n: usize,
     invert: bool,
     rename: bool,
@@ -182,7 +183,7 @@ pub fn run<P: AsRef<Path>>(
     input2_path: Option<&str>,
     output_path: &str,
     output2_path: Option<&str>,
-    min_matches: usize,
+    match_threshold: &MatchThreshold,
     prefix_length: usize,
     summary_path: Option<&PathBuf>,
     invert: bool,
@@ -211,7 +212,7 @@ pub fn run<P: AsRef<Path>>(
     } else {
         input_mode.push_str("single");
     }
-    options.push(format!("min_matches={}", min_matches));
+    options.push(format!("match_threshold={}", match_threshold));
     if prefix_length > 0 {
         options.push(format!("prefix_length={}", prefix_length));
     }
@@ -275,7 +276,7 @@ pub fn run<P: AsRef<Path>>(
             &minimizer_hashes,
             &mut writer,
             writer2.as_mut(),
-            min_matches,
+            match_threshold,
             prefix_length,
             kmer_length,
             window_size,
@@ -297,7 +298,7 @@ pub fn run<P: AsRef<Path>>(
             input2_path,
             &mut writer,
             writer2.as_mut(),
-            min_matches,
+            match_threshold,
             prefix_length,
             kmer_length,
             window_size,
@@ -317,7 +318,7 @@ pub fn run<P: AsRef<Path>>(
             &minimizer_hashes,
             input_path,
             &mut writer,
-            min_matches,
+            match_threshold,
             prefix_length,
             kmer_length,
             window_size,
@@ -390,7 +391,7 @@ pub fn run<P: AsRef<Path>>(
             output2: output2_path.map(|s| s.to_string()),
             k: kmer_length,
             w: window_size,
-            m: min_matches,
+            m: match_threshold.to_string(),
             n: prefix_length,
             invert,
             rename,
@@ -425,7 +426,7 @@ fn process_single_seqs(
     minimizer_hashes: &FxHashSet<u64>,
     input_path: &str,
     writer: &mut Box<dyn FastxWriter>,
-    min_matches: usize,
+    match_threshold: &MatchThreshold,
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
@@ -511,11 +512,23 @@ fn process_single_seqs(
                         &mut minimizer_buffer,
                     );
 
+                    // Convert threshold to absolute count
+                    let required_hits = match match_threshold {
+                        MatchThreshold::Absolute(n) => *n,
+                        MatchThreshold::Relative(f) => {
+                            if minimizer_buffer.is_empty() {
+                                0
+                            } else {
+                                ((*f * minimizer_buffer.len() as f64).ceil() as usize).max(1)
+                            }
+                        }
+                    };
+
                     // Count distinct minimizer hits
                     for &hash in &minimizer_buffer {
                         if minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
                             hit_count += 1;
-                            if hit_count >= min_matches {
+                            if hit_count >= required_hits {
                                 break;
                             }
                         }
@@ -523,12 +536,21 @@ fn process_single_seqs(
                 }
 
                 // Determine if we should output this sequence
+                let required_hits = match match_threshold {
+                    MatchThreshold::Absolute(n) => *n,
+                    MatchThreshold::Relative(f) => {
+                        if minimizer_buffer.is_empty() {
+                            0
+                        } else {
+                            ((*f * minimizer_buffer.len() as f64).ceil() as usize).max(1)
+                        }
+                    }
+                };
+
                 let should_output = if !invert {
-                    // When not inverted, keep sequences with fewer than min_matches
-                    hit_count < min_matches
+                    hit_count < required_hits
                 } else {
-                    // When inverted, keep sequences with greater than or equal to min_matches
-                    hit_count >= min_matches
+                    hit_count >= required_hits
                 };
 
                 (should_output, seq_len)
@@ -618,7 +640,7 @@ fn process_paired_seqs(
     input2_path: &str,
     writer: &mut Box<dyn FastxWriter>,
     mut writer2: Option<&mut Box<dyn FastxWriter>>,
-    min_matches: usize,
+    match_threshold: &MatchThreshold,
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
@@ -754,13 +776,23 @@ fn process_paired_seqs(
                     }
                 }
 
-                // Determine if we should output this pair based on distinct hits across both reads
+                // Convert threshold to absolute count based on total minimizers in both reads
+                let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
+                let required_hits = match match_threshold {
+                    MatchThreshold::Absolute(n) => *n,
+                    MatchThreshold::Relative(f) => {
+                        if total_minimizers == 0 {
+                            0
+                        } else {
+                            ((*f * total_minimizers as f64).ceil() as usize).max(1)
+                        }
+                    }
+                };
+
                 let should_output = if !invert {
-                    // When not inverted, keep pairs with fewer than min_matches distinct hits
-                    pair_hit_count < min_matches
+                    pair_hit_count < required_hits
                 } else {
-                    // When inverted, keep pairs with greater than or equal to min_matches distinct hits
-                    pair_hit_count >= min_matches
+                    pair_hit_count >= required_hits
                 };
 
                 (should_output, seq1_len, seq2_len)
@@ -885,7 +917,7 @@ fn process_interleaved_paired_seqs(
     minimizer_hashes: &FxHashSet<u64>,
     writer: &mut Box<dyn FastxWriter>,
     mut writer2: Option<&mut Box<dyn FastxWriter>>,
-    min_matches: usize,
+    match_threshold: &MatchThreshold,
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
@@ -1030,13 +1062,23 @@ fn process_interleaved_paired_seqs(
                         }
                     }
 
-                    // Determine if we should output this pair based on distinct hits across both reads
+                    // Convert threshold to absolute count based on total minimizers in both reads
+                    let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
+                    let required_hits = match match_threshold {
+                        MatchThreshold::Absolute(n) => *n,
+                        MatchThreshold::Relative(f) => {
+                            if total_minimizers == 0 {
+                                0
+                            } else {
+                                ((*f * total_minimizers as f64).ceil() as usize).max(1)
+                            }
+                        }
+                    };
+
                     let should_output = if !invert {
-                        // When not inverted, keep pairs with fewer than min_matches distinct hits
-                        pair_hit_count < min_matches
+                        pair_hit_count < required_hits
                     } else {
-                        // When inverted, keep pairs with greater than or equal to min_matches distinct hits
-                        pair_hit_count >= min_matches
+                        pair_hit_count >= required_hits
                     };
 
                     (should_output, record1_seq.len(), record2_seq.len())
@@ -1241,7 +1283,7 @@ mod tests {
             output2: Some("output2.fastq".to_string()),
             k: 31,
             w: 21,
-            m: 1,
+            m: "1".to_string(),
             n: 0,
             invert: false,
             rename: false,

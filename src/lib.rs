@@ -24,8 +24,47 @@ pub use minimizers::{
 use anyhow::Result;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
-/// Configuration for filtering operations
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MatchThreshold {
+    Absolute(usize),
+    Relative(f64),
+}
+
+impl FromStr for MatchThreshold {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if let Ok(val) = s.parse::<usize>() {
+            Ok(MatchThreshold::Absolute(val))
+        } else if let Ok(val) = s.parse::<f64>() {
+            if val.is_nan() || val.is_sign_negative() || val > 1.0 {
+                Err(format!(
+                    "Relative threshold must be in [0, 1], got: {}",
+                    val
+                ))
+            } else {
+                Ok(MatchThreshold::Relative(val))
+            }
+        } else {
+            Err(format!(
+                "Invalid threshold format: '{}'. Expected an integer or a float between [0, 1]",
+                s
+            ))
+        }
+    }
+}
+
+impl std::fmt::Display for MatchThreshold {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MatchThreshold::Absolute(n) => write!(f, "{}", n),
+            MatchThreshold::Relative(p) => write!(f, "{}", p),
+        }
+    }
+}
+
 pub struct FilterConfig {
     /// Minimizer index file path
     pub minimizers_path: PathBuf,
@@ -42,8 +81,8 @@ pub struct FilterConfig {
     /// Path to optional second output fastx file for paired reads (detects .gz and .zst)
     pub output2_path: Option<String>,
 
-    /// Minimum number of minimizer matches per query sequence (pair)
-    pub min_matches: usize,
+    /// Match threshold for filtering sequences
+    pub match_threshold: MatchThreshold,
 
     /// Consider only the first N nucleotides per sequence (0 = entire sequence)
     pub prefix_length: usize,
@@ -62,7 +101,6 @@ pub struct FilterConfig {
 }
 
 impl FilterConfig {
-    /// Create a new filtering configuration with the specified minimizers path
     pub fn new<P: AsRef<Path>>(minimizers_path: P) -> Self {
         Self {
             minimizers_path: minimizers_path.as_ref().to_path_buf(),
@@ -70,7 +108,7 @@ impl FilterConfig {
             input2_path: None,
             output_path: "-".to_string(),
             output2_path: None,
-            min_matches: 2,
+            match_threshold: MatchThreshold::Absolute(2),
             prefix_length: 0,
             summary_path: None,
             invert: false,
@@ -79,67 +117,57 @@ impl FilterConfig {
         }
     }
 
-    /// Set the input path
     pub fn with_input<S: Into<String>>(mut self, input_path: S) -> Self {
         self.input_path = input_path.into();
         self
     }
 
-    /// Set the second input path for paired reads
     pub fn with_input2<S: Into<String>>(mut self, input2_path: S) -> Self {
         self.input2_path = Some(input2_path.into());
         self
     }
 
-    /// Set the output path
     pub fn with_output<S: Into<String>>(mut self, output_path: S) -> Self {
         self.output_path = output_path.into();
         self
     }
 
-    /// Set the second output path for paired reads
     pub fn with_output2<S: Into<String>>(mut self, output2_path: S) -> Self {
         self.output2_path = Some(output2_path.into());
         self
     }
 
-    /// Set the minimum matches
-    pub fn with_min_matches(mut self, min_matches: usize) -> Self {
-        self.min_matches = min_matches;
+    pub fn with_match_threshold(mut self, match_threshold: MatchThreshold) -> Self {
+        self.match_threshold = match_threshold;
         self
     }
 
-    /// Set the prefix length
     pub fn with_prefix_length(mut self, prefix_length: usize) -> Self {
         self.prefix_length = prefix_length;
         self
     }
 
-    /// Set the summary path
     pub fn with_summary<P: AsRef<Path>>(mut self, summary_path: P) -> Self {
         self.summary_path = Some(summary_path.as_ref().to_path_buf());
         self
     }
 
-    /// Set invert filtering
     pub fn with_invert(mut self, invert: bool) -> Self {
         self.invert = invert;
         self
     }
 
-    /// Set rename option
     pub fn with_rename(mut self, rename: bool) -> Self {
         self.rename = rename;
         self
     }
 
-    /// Set the num threads
     pub fn with_threads(mut self, threads: usize) -> Self {
         self.threads = threads;
         self
     }
 
-    /// Execute the filtering operation with this configuration
+    /// Filter with this configuration
     pub fn execute(&self) -> Result<()> {
         filter::run(
             &self.minimizers_path,
@@ -147,7 +175,7 @@ impl FilterConfig {
             self.input2_path.as_deref(),
             &self.output_path,
             self.output2_path.as_deref(),
-            self.min_matches,
+            &self.match_threshold,
             self.prefix_length,
             self.summary_path.as_ref(),
             self.invert,
