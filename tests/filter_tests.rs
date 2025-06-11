@@ -102,7 +102,7 @@ fn test_filter_to_file() {
     build_index(&fasta_path, &bin_path);
     assert!(bin_path.exists(), "Index file wasn't created");
 
-    // Run filtering command with writing raw (dog) fastq file
+    // Run filtering command - sequences too short for k=31, so no matches, will be filtered out
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg(&bin_path)
@@ -118,9 +118,12 @@ fn test_filter_to_file() {
     assert!(output_path.exists(), "Output file wasn't created");
     assert!(summary_path.exists(), "Summary file wasn't created");
 
-    // Validate output content
+    // With new default behavior: sequences without matches are filtered out (sequences too short for k=31)
     let output_content = fs::read_to_string(&output_path).unwrap();
-    assert!(!output_content.is_empty(), "Output file is empty");
+    assert!(
+        output_content.is_empty(),
+        "Output file should be empty - sequences too short for minimizers"
+    );
 }
 
 #[test]
@@ -182,12 +185,12 @@ fn test_filter_to_file_zstd() {
 }
 
 #[test]
-fn test_filter_invert() {
+fn test_filter_deplete_flag() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let fastq_path = temp_dir.path().join("reads.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
-    let output_path = temp_dir.path().join("filtered_inverted.fastq");
+    let output_path = temp_dir.path().join("filtered_depleted.fastq");
 
     create_test_fasta(&fasta_path);
     create_test_fastq(&fastq_path);
@@ -195,7 +198,7 @@ fn test_filter_invert() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--invert")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fastq_path)
         .arg("--output")
@@ -205,7 +208,7 @@ fn test_filter_invert() {
 
     assert!(
         output_path.exists(),
-        "Output file with inverted flag wasn't created"
+        "Output file with deplete flag wasn't created"
     );
 }
 
@@ -224,6 +227,8 @@ fn test_filter_rename() {
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg("--rename")
+        .arg("-m")
+        .arg("0")
         .arg(&bin_path)
         .arg(&fastq_path)
         .arg("--output")
@@ -316,9 +321,11 @@ fn test_filter_paired() {
     build_index(&fasta_path, &bin_path);
     assert!(bin_path.exists(), "Index file wasn't created");
 
-    // Run filtering command with paired-end reads
+    // Run filtering command with paired-end reads (using -m 0 so short sequences pass through)
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
+        .arg("-m")
+        .arg("0")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -336,13 +343,13 @@ fn test_filter_paired() {
 }
 
 #[test]
-fn test_filter_paired_with_invert() {
+fn test_filter_paired_with_deplete() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let fastq_path1 = temp_dir.path().join("reads_1.fastq");
     let fastq_path2 = temp_dir.path().join("reads_2.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
-    let output_path = temp_dir.path().join("filtered_inverted.fastq");
+    let output_path = temp_dir.path().join("filtered_depleted.fastq");
 
     create_test_fasta(&fasta_path);
     create_test_paired_fastq(&fastq_path1, &fastq_path2);
@@ -350,7 +357,7 @@ fn test_filter_paired_with_invert() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--invert")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -361,7 +368,7 @@ fn test_filter_paired_with_invert() {
 
     assert!(
         output_path.exists(),
-        "Output file with inverted flag wasn't created"
+        "Output file with deplete flag wasn't created"
     );
 }
 
@@ -381,6 +388,8 @@ fn test_filter_paired_with_rename() {
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg("--rename")
+        .arg("-m")
+        .arg("0")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -456,6 +465,8 @@ fn test_interleaved_paired_reads() {
     let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"));
     let output = cmd
         .arg("filter")
+        .arg("-m")
+        .arg("0")
         .arg(&bin_path)
         .arg("-") // stdin for input
         .arg("-") // stdin for input2 (signals interleaved mode)
@@ -491,6 +502,7 @@ fn test_filter_filtration_fwd() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fastq_path)
         .arg("--output")
@@ -527,6 +539,7 @@ fn test_filter_filtration_rev() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fastq_path)
         .arg("--output")
@@ -561,6 +574,7 @@ fn test_filter_paired_filtration_fwd() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -593,6 +607,7 @@ fn test_filter_paired_filtration_rev() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -659,9 +674,11 @@ mod output2_tests {
         build_index(&fasta_path, &bin_path);
         assert!(bin_path.exists(), "Index file wasn't created");
 
-        // Run filtering command with separate output files
+        // Run filtering command with separate output files (using -m 0 so short sequences pass through)
         let mut cmd = Command::cargo_bin("deacon").unwrap();
         cmd.arg("filter")
+            .arg("-m")
+            .arg("0")
             .arg(&bin_path)
             .arg(&fastq_path1)
             .arg(&fastq_path2)
@@ -810,8 +827,10 @@ fn test_shared_minimizer_counted_once() {
 
     // If shared minimizers are counted once (correct): total hits = 1, pair kept (1 < 2)
     // If shared minimizers are counted twice (bug): total hits = 2+, pair filtered (2+ >= 2)
+    // Using --deplete to restore original behavior for this bug test
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
+        .arg("--deplete")
         .arg(&bin_path)
         .arg(&fasta_path1)
         .arg(&fasta_path2)

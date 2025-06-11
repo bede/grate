@@ -20,7 +20,7 @@ enum Commands {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Filter out (or in) fastx sequences based on the presence of minimizer matches to the index
+    /// Filter fastx sequences based on minimizer matches to the index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
@@ -48,9 +48,9 @@ enum Commands {
         #[arg(short = 'p', long = "prefix-length", default_value_t = 0)]
         prefix_length: usize,
 
-        /// Retain only sequences WITH matches rather than those WITHOUT
-        #[arg(short = 'i', long = "invert", default_value_t = false)]
-        invert: bool,
+        /// Remove matching sequences (invert filtering behaviour)
+        #[arg(short = 'd', long = "deplete", default_value_t = false)]
+        deplete: bool,
 
         /// Replace sequence headers with incrementing numbers
         #[arg(short = 'r', long = "rename", default_value_t = false)]
@@ -187,7 +187,7 @@ fn main() -> Result<()> {
             match_threshold,
             prefix_length,
             summary,
-            invert,
+            deplete,
             rename,
             threads,
         } => {
@@ -207,7 +207,7 @@ fn main() -> Result<()> {
                 match_threshold,
                 *prefix_length,
                 summary.as_ref(),
-                *invert,
+                *deplete,
                 *rename,
                 *threads,
             )

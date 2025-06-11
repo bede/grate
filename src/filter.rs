@@ -162,7 +162,7 @@ pub struct FilterSummary {
     w: usize,
     m: String,
     n: usize,
-    invert: bool,
+    deplete: bool,
     rename: bool,
     seqs_in: u64,
     seqs_out: u64,
@@ -186,7 +186,7 @@ pub fn run<P: AsRef<Path>>(
     match_threshold: &MatchThreshold,
     prefix_length: usize,
     summary_path: Option<&PathBuf>,
-    invert: bool,
+    deplete: bool,
     rename: bool,
     threads: usize,
 ) -> Result<()> {
@@ -216,8 +216,8 @@ pub fn run<P: AsRef<Path>>(
     if prefix_length > 0 {
         options.push(format!("prefix_length={}", prefix_length));
     }
-    if invert {
-        options.push("invert".to_string());
+    if deplete {
+        options.push("deplete".to_string());
     }
     if rename {
         options.push("rename".to_string());
@@ -280,7 +280,7 @@ pub fn run<P: AsRef<Path>>(
             prefix_length,
             kmer_length,
             window_size,
-            invert,
+            deplete,
             rename,
             &mut total_seqs,
             &mut filtered_seqs,
@@ -302,7 +302,7 @@ pub fn run<P: AsRef<Path>>(
             prefix_length,
             kmer_length,
             window_size,
-            invert,
+            deplete,
             rename,
             &mut total_seqs,
             &mut filtered_seqs,
@@ -322,7 +322,7 @@ pub fn run<P: AsRef<Path>>(
             prefix_length,
             kmer_length,
             window_size,
-            invert,
+            deplete,
             rename,
             &mut total_seqs,
             &mut filtered_seqs,
@@ -393,7 +393,7 @@ pub fn run<P: AsRef<Path>>(
             w: window_size,
             m: match_threshold.to_string(),
             n: prefix_length,
-            invert,
+            deplete,
             rename,
             seqs_in: total_seqs as u64,
             seqs_out: seqs_out as u64,
@@ -430,7 +430,7 @@ fn process_single_seqs(
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
-    invert: bool,
+    deplete: bool,
     rename: bool,
     total_seqs: &mut u64,
     filtered_seqs: &mut u64,
@@ -547,9 +547,11 @@ fn process_single_seqs(
                     }
                 };
 
-                let should_output = if !invert {
+                let should_output = if deplete {
+                    // Deplete mode: remove sequences that meet the threshold
                     hit_count < required_hits
                 } else {
+                    // Default mode: keep sequences that meet the threshold
                     hit_count >= required_hits
                 };
 
@@ -644,7 +646,7 @@ fn process_paired_seqs(
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
-    invert: bool,
+    deplete: bool,
     rename: bool,
     total_seqs: &mut u64,
     filtered_seqs: &mut u64,
@@ -789,9 +791,11 @@ fn process_paired_seqs(
                     }
                 };
 
-                let should_output = if !invert {
+                let should_output = if deplete {
+                    // Deplete mode: remove pairs that meet the threshold
                     pair_hit_count < required_hits
                 } else {
+                    // Default mode: keep pairs that meet the threshold
                     pair_hit_count >= required_hits
                 };
 
@@ -921,7 +925,7 @@ fn process_interleaved_paired_seqs(
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
-    invert: bool,
+    deplete: bool,
     rename: bool,
     total_seqs: &mut u64,
     filtered_seqs: &mut u64,
@@ -1075,9 +1079,11 @@ fn process_interleaved_paired_seqs(
                         }
                     };
 
-                    let should_output = if !invert {
+                    let should_output = if deplete {
+                        // Deplete mode: remove pairs that meet the threshold
                         pair_hit_count < required_hits
                     } else {
+                        // Default mode: keep pairs that meet the threshold
                         pair_hit_count >= required_hits
                     };
 
@@ -1285,7 +1291,7 @@ mod tests {
             w: 21,
             m: "1".to_string(),
             n: 0,
-            invert: false,
+            deplete: false,
             rename: false,
             seqs_in: 100,
             seqs_out: 90,

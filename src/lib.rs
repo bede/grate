@@ -90,8 +90,8 @@ pub struct FilterConfig {
     /// Path to JSON summary file
     pub summary_path: Option<PathBuf>,
 
-    /// Invert filtering (keep sequences WITH matches rather than those WITHOUT)
-    pub invert: bool,
+    /// Deplete mode (remove sequences WITH matches, original deacon behavior)
+    pub deplete: bool,
 
     /// Replace sequence headers with sequential numbers (1, 2, 3...)
     pub rename: bool,
@@ -111,7 +111,7 @@ impl FilterConfig {
             match_threshold: MatchThreshold::Absolute(2),
             prefix_length: 0,
             summary_path: None,
-            invert: false,
+            deplete: false,
             rename: false,
             threads: 0, // Use all available threads by default
         }
@@ -152,8 +152,8 @@ impl FilterConfig {
         self
     }
 
-    pub fn with_invert(mut self, invert: bool) -> Self {
-        self.invert = invert;
+    pub fn with_deplete(mut self, deplete: bool) -> Self {
+        self.deplete = deplete;
         self
     }
 
@@ -178,7 +178,7 @@ impl FilterConfig {
             &self.match_threshold,
             self.prefix_length,
             self.summary_path.as_ref(),
-            self.invert,
+            self.deplete,
             self.rename,
             self.threads,
         )
