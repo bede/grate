@@ -4,7 +4,7 @@
 
 <div align="center"><img src="deacon.png" width="200" alt="Logo"></div>
 
-Fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for search or depletion. Default parameters have been chosen for accurately depleting human host sequences from microbial (meta)genomes, for which a validated prebuilt index is available. Sensitivity, specificity and required memory may be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `-k` and `-w`  are chosen at index time, while the match threshold ()`-m`) can be specified at filter time.
+Fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for search or depletion. Default parameters have been chosen for accurately depleting human host sequences from microbial (meta)genomes, for which a validated prebuilt index is available. Sensitivity, specificity and required memory may be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `-k` and `-w`  are chosen at index time, while the match threshold (`-m`) can be specified at filter time.
 
 Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is currently capable of filtering at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for a preprint evaluating performance and further improvements. Command line arguments may change prior to v1.
 
@@ -60,19 +60,20 @@ deacon filter panhuman-1.k31w15.idx reads.fq.gz --report report.json > filt.fq  
 
 ## Reports
 
-Use `--report results.json` to save a filtering report:
+Use `--summary results.json` to save a filtering report:
 ```json
 {
-  "version": "0.3.0",
-  "index": "data/chm13v2.k31w21.idx",
-  "input1": "data/HG02334.1m.fastq.gz",
+  "version": "deacon 0.5.0",
+  "index": "panhuman-1.k31w15.idx",
+  "input1": "HG02334.1m.fastq.gz",
   "input2": null,
   "output": "-",
+  "output2": null,
   "k": 31,
   "w": 21,
-  "m": 1,
-  "n": 0,
-  "invert": false,
+  "match_threshold": "2",
+  "prefix_length": 0,
+  "deplete": true,
   "rename": false,
   "seqs_in": 1000000,
   "seqs_out": 13452,

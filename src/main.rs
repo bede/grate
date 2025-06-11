@@ -57,7 +57,7 @@ enum Commands {
         rename: bool,
 
         /// Path to JSON summary output file
-        #[arg(long = "summary")]
+        #[arg(short = 's', long = "summary")]
         summary: Option<PathBuf>,
 
         /// Number of execution threads (0 = auto)

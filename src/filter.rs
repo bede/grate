@@ -160,8 +160,8 @@ pub struct FilterSummary {
     output2: Option<String>,
     k: usize,
     w: usize,
-    m: String,
-    n: usize,
+    match_threshold: String,
+    prefix_length: usize,
     deplete: bool,
     rename: bool,
     seqs_in: u64,
@@ -391,8 +391,8 @@ pub fn run<P: AsRef<Path>>(
             output2: output2_path.map(|s| s.to_string()),
             k: kmer_length,
             w: window_size,
-            m: match_threshold.to_string(),
-            n: prefix_length,
+            match_threshold: match_threshold.to_string(),
+            prefix_length,
             deplete,
             rename,
             seqs_in: total_seqs as u64,
@@ -414,9 +414,9 @@ pub fn run<P: AsRef<Path>>(
         let writer = BufWriter::new(file);
 
         // Serialize and write the summary JSON
-        serde_json::to_writer_pretty(writer, &summary).context("Failed to write JSON summary")?;
+        serde_json::to_writer_pretty(writer, &summary).context("Failed to write summary")?;
 
-        eprintln!("JSON summary saved to {:?}", summary_file);
+        eprintln!("Summary saved to {:?}", summary_file);
     }
 
     Ok(())
@@ -1289,8 +1289,8 @@ mod tests {
             output2: Some("output2.fastq".to_string()),
             k: 31,
             w: 21,
-            m: "1".to_string(),
-            n: 0,
+            match_threshold: "1".to_string(),
+            prefix_length: 0,
             deplete: false,
             rename: false,
             seqs_in: 100,
