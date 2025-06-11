@@ -148,9 +148,9 @@ fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
     }
 }
 
-// JSON report structure
+// JSON summary structure
 #[derive(Serialize, Deserialize)]
-pub struct FilterReport {
+pub struct FilterSummary {
     version: String,
     index: String,
     input1: String,
@@ -184,7 +184,7 @@ pub fn run<P: AsRef<Path>>(
     output2_path: Option<&str>,
     min_matches: usize,
     prefix_length: usize,
-    report_path: Option<&PathBuf>,
+    summary_path: Option<&PathBuf>,
     invert: bool,
     rename: bool,
     threads: usize,
@@ -376,12 +376,12 @@ pub fn run<P: AsRef<Path>>(
         total_time, seqs_per_sec, mbp_per_sec
     );
 
-    // Build and write a JSON report if path provided
-    if let Some(report_file) = report_path {
+    // Build and write a JSON summary if path provided
+    if let Some(summary_file) = summary_path {
         // Get number of sequences passing filter
         let seqs_out = total_seqs - filtered_seqs;
 
-        let report = FilterReport {
+        let summary = FilterSummary {
             version: tool_version,
             index: minimizers_path.as_ref().to_string_lossy().to_string(),
             input1: input_path.to_string(),
@@ -407,15 +407,15 @@ pub fn run<P: AsRef<Path>>(
             bp_per_second: bp_per_sec as u64,
         };
 
-        // Write report file
-        let file = File::create(report_file)
-            .context(format!("Failed to create report: {:?}", report_file))?;
+        // Write summary file
+        let file = File::create(summary_file)
+            .context(format!("Failed to create summary: {:?}", summary_file))?;
         let writer = BufWriter::new(file);
 
-        // Serialize and write the report JSON
-        serde_json::to_writer_pretty(writer, &report).context("Failed to write JSON report")?;
+        // Serialize and write the summary JSON
+        serde_json::to_writer_pretty(writer, &summary).context("Failed to write JSON summary")?;
 
-        eprintln!("JSON report saved to {:?}", report_file);
+        eprintln!("JSON summary saved to {:?}", summary_file);
     }
 
     Ok(())
@@ -1230,9 +1230,9 @@ mod tests {
     }
 
     #[test]
-    fn test_filter_report() {
-        // Create a sample report
-        let report = FilterReport {
+    fn test_filter_summary() {
+        // Create a sample summary
+        let summary = FilterSummary {
             version: "deacon 0.1.0".to_string(),
             index: "test.idx".to_string(),
             input1: "test.fastq".to_string(),
@@ -1259,8 +1259,8 @@ mod tests {
         };
 
         // Test JSON ser+de
-        let json = serde_json::to_string(&report).unwrap();
-        let parsed: FilterReport = serde_json::from_str(&json).unwrap();
+        let json = serde_json::to_string(&summary).unwrap();
+        let parsed: FilterSummary = serde_json::from_str(&json).unwrap();
 
         // Check values
         assert_eq!(parsed.version, "deacon 0.1.0");

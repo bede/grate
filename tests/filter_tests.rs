@@ -93,7 +93,7 @@ fn test_filter_to_file() {
     let fastq_path = temp_dir.path().join("reads.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
     let output_path = temp_dir.path().join("filtered.fastq");
-    let report_path = temp_dir.path().join("report.json");
+    let summary_path = temp_dir.path().join("summary.json");
 
     create_test_fasta(&fasta_path);
     create_test_fastq(&fastq_path);
@@ -108,14 +108,14 @@ fn test_filter_to_file() {
         .arg(&fastq_path)
         .arg("--output")
         .arg(&output_path)
-        .arg("--report")
-        .arg(&report_path)
+        .arg("--summary")
+        .arg(&summary_path)
         .assert()
         .success();
 
     // Check output and report creation
     assert!(output_path.exists(), "Output file wasn't created");
-    assert!(report_path.exists(), "Report file wasn't created");
+    assert!(summary_path.exists(), "Summary file wasn't created");
 
     // Validate output content
     let output_content = fs::read_to_string(&output_path).unwrap();
@@ -480,7 +480,7 @@ fn test_filter_filtration_fwd() {
     let fastq_path = temp_dir.path().join("reads.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
     let output_path = temp_dir.path().join("filtered.fastq");
-    let report_path = temp_dir.path().join("report.json");
+    let summary_path = temp_dir.path().join("summary.json");
 
     create_test_fasta_sc2(&fasta_path);
     create_test_fastq_sc2_fwd(&fastq_path);
@@ -494,15 +494,15 @@ fn test_filter_filtration_fwd() {
         .arg(&fastq_path)
         .arg("--output")
         .arg(&output_path)
-        .arg("--report")
-        .arg(&report_path)
+        .arg("--summary")
+        .arg(&summary_path)
         .arg("--matches")
         .arg("1")
         .assert()
         .success();
 
     assert!(output_path.exists(), "Output file wasn't created");
-    assert!(report_path.exists(), "Report file wasn't created");
+    assert!(summary_path.exists(), "Summary file wasn't created");
 
     let output_content = fs::read_to_string(&output_path).unwrap();
     assert!(output_content.is_empty(), "Output file is not empty");
@@ -516,7 +516,7 @@ fn test_filter_filtration_rev() {
     let fastq_path = temp_dir.path().join("reads.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
     let output_path = temp_dir.path().join("filtered.fastq");
-    let report_path = temp_dir.path().join("report.json");
+    let summary_path = temp_dir.path().join("summary.json");
 
     create_test_fasta_sc2(&fasta_path);
     create_test_fastq_sc2_rev(&fastq_path);
@@ -530,13 +530,13 @@ fn test_filter_filtration_rev() {
         .arg(&fastq_path)
         .arg("--output")
         .arg(&output_path)
-        .arg("--report")
-        .arg(&report_path)
+        .arg("--summary")
+        .arg(&summary_path)
         .assert()
         .success();
 
     assert!(output_path.exists(), "Output file wasn't created");
-    assert!(report_path.exists(), "Report file wasn't created");
+    assert!(summary_path.exists(), "Summary file wasn't created");
 
     let output_content = fs::read_to_string(&output_path).unwrap();
     assert!(output_content.is_empty(), "Output file is not empty");
@@ -650,7 +650,7 @@ mod output2_tests {
         let bin_path = temp_dir.path().join("ref.bin");
         let output_path1 = temp_dir.path().join("filtered_1.fastq");
         let output_path2 = temp_dir.path().join("filtered_2.fastq");
-        let report_path = temp_dir.path().join("report.json");
+        let summary_path = temp_dir.path().join("summary.json");
 
         create_test_fasta(&fasta_path);
         create_test_paired_fastq(&fastq_path1, &fastq_path2);
@@ -668,15 +668,15 @@ mod output2_tests {
             .arg(&output_path1)
             .arg("--output2")
             .arg(&output_path2)
-            .arg("--report")
-            .arg(&report_path)
+            .arg("--summary")
+            .arg(&summary_path)
             .assert()
             .success();
 
         // Check both output files were created
         assert!(output_path1.exists(), "First output file wasn't created");
         assert!(output_path2.exists(), "Second output file wasn't created");
-        assert!(report_path.exists(), "Report file wasn't created");
+        assert!(summary_path.exists(), "Summary file wasn't created");
 
         // Validate output content
         let output1_content = fs::read_to_string(&output_path1).unwrap();
@@ -685,11 +685,11 @@ mod output2_tests {
         assert!(!output1_content.is_empty(), "First output file is empty");
         assert!(!output2_content.is_empty(), "Second output file is empty");
 
-        // Check that the report includes output2 path
-        let report_content = fs::read_to_string(&report_path).unwrap();
+        // Check that the summary includes output2 path
+        let summary_content = fs::read_to_string(&summary_path).unwrap();
         assert!(
-            report_content.contains("output2"),
-            "Report doesn't mention output2"
+            summary_content.contains("output2"),
+            "Summary doesn't mention output2"
         );
     }
 
@@ -784,7 +784,7 @@ fn test_shared_minimizer_counted_once() {
     let fasta_path2 = temp_dir.path().join("reads_2.fasta");
     let bin_path = temp_dir.path().join("ref.bin");
     let output_path = temp_dir.path().join("filtered.fasta");
-    let report_path = temp_dir.path().join("report.json");
+    let summary_path = temp_dir.path().join("summary.json");
 
     let ref_content = ">reference\nACGTACGTACGTACGTTGCATGCATGCATGCATAAGGTTAAGGTTAAGGTTAAGGTTCCCGGGCCCGGGCCCGGGCCCGGGATATATATATATATATATGCGCGCGCGCGCGCGCGC\n";
     fs::write(&fasta_path, ref_content).unwrap();
@@ -816,19 +816,19 @@ fn test_shared_minimizer_counted_once() {
         .arg(&fasta_path2)
         .arg("--output")
         .arg(&output_path)
-        .arg("--report")
-        .arg(&report_path)
+        .arg("--summary")
+        .arg(&summary_path)
         .arg("--matches")
         .arg("2") // Critical parameter: any pair with 2+ hits gets filtered
         .assert()
         .success();
 
     assert!(output_path.exists(), "Output file wasn't created");
-    assert!(report_path.exists(), "Report file wasn't created");
+    assert!(summary_path.exists(), "Summary file wasn't created");
 
     let output_content = fs::read_to_string(&output_path).unwrap();
-    let report_content = fs::read_to_string(&report_path).unwrap();
-    let report: serde_json::Value = serde_json::from_str(&report_content).unwrap();
+    let summary_content = fs::read_to_string(&summary_path).unwrap();
+    let summary: serde_json::Value = serde_json::from_str(&summary_content).unwrap();
 
     // The reads should be kept because shared minimizers should only count once
     assert!(
@@ -837,8 +837,8 @@ fn test_shared_minimizer_counted_once() {
          Current implementation incorrectly counts them multiple times and filters the pair."
     );
 
-    // Additional verification using the JSON report
-    let seqs_out = report["seqs_out"].as_u64().unwrap();
+    // Additional verification using the JSON summary
+    let seqs_out = summary["seqs_out"].as_u64().unwrap();
     assert_eq!(
         seqs_out, 2,
         "Expected 2 sequences in output (both reads of the pair should be kept) \

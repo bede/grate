@@ -56,9 +56,9 @@ enum Commands {
         #[arg(short = 'r', long = "rename", default_value_t = false)]
         rename: bool,
 
-        /// Path to JSON report file
-        #[arg(long = "report")]
-        report: Option<PathBuf>,
+        /// Path to JSON summary file
+        #[arg(long = "summary")]
+        summary: Option<PathBuf>,
 
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
@@ -186,7 +186,7 @@ fn main() -> Result<()> {
             output2,
             min_matches,
             prefix_length,
-            report,
+            summary,
             invert,
             rename,
             threads,
@@ -206,7 +206,7 @@ fn main() -> Result<()> {
                 output2.as_deref(),
                 *min_matches,
                 *prefix_length,
-                report.as_ref(),
+                summary.as_ref(),
                 *invert,
                 *rename,
                 *threads,

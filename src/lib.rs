@@ -13,7 +13,7 @@ pub mod index;
 pub mod minimizers;
 
 // Re-export the important structures and functions for library users
-pub use filter::{FilterReport, run as run_filter};
+pub use filter::{FilterSummary, run as run_filter};
 pub use index::{
     IndexHeader, build as build_index, diff as diff_index, info as index_info, union as union_index,
 };
@@ -48,8 +48,8 @@ pub struct FilterConfig {
     /// Consider only the first N nucleotides per sequence (0 = entire sequence)
     pub prefix_length: usize,
 
-    /// Path to JSON report file
-    pub report_path: Option<PathBuf>,
+    /// Path to JSON summary file
+    pub summary_path: Option<PathBuf>,
 
     /// Invert filtering (keep sequences WITH matches rather than those WITHOUT)
     pub invert: bool,
@@ -72,7 +72,7 @@ impl FilterConfig {
             output2_path: None,
             min_matches: 2,
             prefix_length: 0,
-            report_path: None,
+            summary_path: None,
             invert: false,
             rename: false,
             threads: 0, // Use all available threads by default
@@ -115,9 +115,9 @@ impl FilterConfig {
         self
     }
 
-    /// Set the report path
-    pub fn with_report<P: AsRef<Path>>(mut self, report_path: P) -> Self {
-        self.report_path = Some(report_path.as_ref().to_path_buf());
+    /// Set the summary path
+    pub fn with_summary<P: AsRef<Path>>(mut self, summary_path: P) -> Self {
+        self.summary_path = Some(summary_path.as_ref().to_path_buf());
         self
     }
 
@@ -149,7 +149,7 @@ impl FilterConfig {
             self.output2_path.as_deref(),
             self.min_matches,
             self.prefix_length,
-            self.report_path.as_ref(),
+            self.summary_path.as_ref(),
             self.invert,
             self.rename,
             self.threads,
