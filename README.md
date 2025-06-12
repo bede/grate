@@ -1,4 +1,5 @@
-[![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon) [![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) [![Tests](https://github.com/bede/deacon/actions/workflows/test.yml/badge.svg)](https://github.com/bede/deacon/actions/workflows/test.yml)
+[![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon) [![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) ![CI status](https://img.shields.io/github/actions/workflow/status/bede/deacon/test.yml?style=flat-square) [![Downloads](https://img.shields.io/conda/dn/bioconda/deacon.svg?style=flat-square)](https://anaconda.org/bioconda/deacon)
+
 
 # Deacon
 
@@ -24,9 +25,12 @@ cargo install deacon
 
 ## Usage
 
+> [!IMPORTANT]
+> Version 0.5.0 introduced breaking CLI changes. Use `--deplete` (`-d`) to remove sequences matching the index.
+
 ### Indexing
 
-Custom indexes can be built using `deacon index build`. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
+Build indexes with `deacon index build`. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
 
 ```shell
 deacon index build chm13v2.fa > human.k31w15.idx
@@ -72,6 +76,11 @@ zcat r12.fq.gz | deacon filter -d panhuman-1.k31w15.idx - - > filt12.fq
 deacon filter -d -o filt.fq.gz --summary summary.json panhuman-1.k31w15.idx reads.fq.gz
 ```
 
+### Composing indexes with set operations
+
+- Use `deacon index union 1.idx 2.idx > 1+2.idx` to succinctly combine two (or more) deacon minimizer indexes.
+- Use `deacon index diff 1.idx 2.idx > 1-2.idx` to subtract minimizers in 2.idx from 1.idx. Useful for masking.
+
 ## Filtering summary statistics
 
 Use `--summary summary.json` to save detailed filtering statistics:
@@ -102,8 +111,3 @@ Use `--summary summary.json` to save detailed filtering statistics:
   "bp_per_second": 43553881
 }
 ```
-
-### Composing indexes with set operations
-
-- Use `deacon index union 1.idx 2.idx > 1+2.idx` to succinctly combine two (or more) deacon minimizer indexes.
-- Use `deacon index diff 1.idx 2.idx > 1-2.idx` to subtract minimizers in 2.idx from 1.idx. Useful for masking.
