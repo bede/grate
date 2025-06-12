@@ -2,11 +2,11 @@
 
 # Deacon
 
-<div align="center"><img src="deacon.png" width="200" alt="Logo"></div>
+<div align="center"><img src="deacon.png" width="180" alt="Logo"></div>
 
-Fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for search or depletion. Default parameters have been chosen for accurately depleting human host sequences from microbial (meta)genomes, for which a validated prebuilt index is available. Sensitivity, specificity and required memory may be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `-k` and `-w`  are chosen at index time, while the match threshold (`-m`) can be specified at filter time.
+Fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for search or depletion of files or streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Sensitivity, specificity and required memory can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be changed at filter time.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is currently capable of filtering at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-n` bases per query. Stay tuned for a preprint evaluating performance and further improvements. Command line arguments may change prior to v1.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering long reads at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-p` bases per query. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance in real time and optionally writes a JSON summary. Stay tuned for a preprint evaluating performance and further improvements.
 
 ## Install
 
@@ -40,27 +40,41 @@ deacon index build chm13v2.fa > human.k31w15.idx
 
 ### Filtering
 
-The command `deacon filter` accepts an index path followed by up to two query FASTA/FASTQ file paths, depending on whether query sequences originate from stdin, a single file, or paired input files. Paired queries are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file, or else to paired output files. For paired reads, distinct minimizer hits originating from either mate are counted. By default, query sequences with fewer than two minimizer hits to the index (`-m 2`) pass the filter. Filtering can be inverted using the `--invert` flag. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically by file extension. Since (de)compression can be rate limiting, consider using Zstandard rather than Gzip for best performance.
+The command `deacon filter` accepts an index path followed by up to two query FASTA/FASTQ file paths, depending on whether query sequences originate from stdin, a single file, or paired input files. Paired queries are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file, or else to separate paired output files. For paired reads, distinct minimizer hits originating from either mate are counted. By default, query sequences with two or more minimizer hits to the index (`-m 2`) pass the filter. Filtering can be inverted for e.g. host depletion using the `--deplete` (`-d`) flag. Gzip (.gz) and Zstandard (.zst) compression formats are detected automatically by file extension. Consider using Zstandard compression rather than Gzip if possible for best performance.
 
 **Examples**
 
 ```bash
-deacon filter panhuman-1.k31w15.idx reads.fq.gz -o filt.fq  # File input & output
-zcat reads.fq.gz | deacon filter panhuman-1.k31w15.idx > filt.fq  # Stdin and stdout
-deacon filter panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # Parallel gzip
-deacon -n 1000 filter panhuman-1.k31w15.idx reads.fq.zst | zstd > filt.fq.zst  # Fastest
-deacon filter -m 3 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More precise
-deacon filter -m 1 panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz  # More sensitive
-deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fastq  # Paired file input
-deacon filter panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz -o filt.r1.fq.gz -O filt.r2.fq.gz  # Paired file input/output
-zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - > filt12.fq  # Interleaved stdin and stdout
-zcat r12.fq.gz | deacon filter panhuman-1.k31w15.idx - - -o filt12.fq.gz  # Interleaved stdin and file output
-deacon filter panhuman-1.k31w15.idx reads.fq.gz --report report.json > filt.fq  # Save report JSON
+# Keep only SARS-CoV-2 reads
+deacon filter -o sars2.fq.gz MN908947.idx reads.fq.gz 
+
+# Host depletion using the panhuman-1 index
+deacon filter -d -o filt.fq.gz panhuman-1.k31w15.idx reads.fq.gz
+
+# Host depletion using stdin and stdout
+zcat reads.fq.gz | deacon filter -d panhuman-1.k31w15.idx > filt.fq
+
+# Faster Zstandard compression
+deacon filter -d -o filt.fq.zst panhuman-1.k31w15.idx reads.fq.zst 
+
+# More sensitive match threshold of at 1 minimizer hit
+deacon filter -d -m 1 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
+
+# More specific match threshold of 50% minimizer hits (minimum 1)
+deacon filter -d -m 0.5 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
+
+# Deplete paired reads
+deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fastq
+deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz -o filt.r1.fq.gz -O filt.r2.fq.gz
+zcat r12.fq.gz | deacon filter -d panhuman-1.k31w15.idx - - > filt12.fq
+
+# Save summary JSON
+deacon filter -d -o filt.fq.gz --summary summary.json panhuman-1.k31w15.idx reads.fq.gz
 ```
 
-## Reports
+## Filtering summary statistics
 
-Use `--summary results.json` to save a filtering report:
+Use `--summary summary.json` to save detailed filtering statistics:
 ```json
 {
   "version": "deacon 0.5.0",
