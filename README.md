@@ -1,13 +1,16 @@
-[![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon) [![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) ![CI status](https://img.shields.io/github/actions/workflow/status/bede/deacon/test.yml?style=flat-square) [![Downloads](https://img.shields.io/conda/dn/bioconda/deacon.svg?style=flat-square)](https://anaconda.org/bioconda/deacon)
+[![Bioconda version](https://anaconda.org/bioconda/deacon/badges/version.svg)](https://anaconda.org/bioconda/deacon) [![Crates.io Version](https://img.shields.io/crates/v/deacon?style=flat-square)](https://crates.io/crates/deacon) ![CI status](https://img.shields.io/github/actions/workflow/status/bede/deacon/test.yml?style=flat-square) [![Downloads](https://img.shields.io/conda/dn/bioconda/deacon.svg?style=flat-square)](https://anaconda.org/bioconda/deacon) [![biorXiv preprint](https://img.shields.io/badge/biorXiv-10.1101/2025.06.09.658732-red)](https://doi.org/10.1101/2025.06.09.658732)
 
 
 # Deacon
 
 <div align="center"><img src="deacon.png" width="180" alt="Logo"></div>
 
-Fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for search or depletion of files or streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Sensitivity, specificity and required memory can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be changed at filter time.
+Fast minimizer-based filtering of nucleotide sequences in FASTA or FASTQ format for search and depletion of files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Sensitivity, specificity and required memory can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be varied at filter time.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering long reads at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-p` bases per query. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance in real time and optionally writes a JSON summary. Stay tuned for a preprint evaluating performance and further improvements.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering long reads at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Short and/or paired reads are fully supported albeit more slowly. Peak memory usage during filtering is 5GB for the default panhuman index. Partial query matching can be used to further increase speed for long queries by considering only the first `-p` bases per query. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance in real time and optionally writes a JSON summary on completion.
+
+> [!IMPORTANT]
+> Deacon is not yet stable. 0.5.0 for instance introduced major CLI changes. Please carefully review the CHANGELOG when upgrading.
 
 ## Install
 
@@ -24,9 +27,6 @@ cargo install deacon
 ```
 
 ## Usage
-
-> [!IMPORTANT]
-> Version 0.5.0 introduced breaking CLI changes. Use `--deplete` (`-d`) to remove sequences matching the index.
 
 ### Indexing
 
@@ -49,31 +49,31 @@ The command `deacon filter` accepts an index path followed by up to two query FA
 **Examples**
 
 ```bash
-# Keep only SARS-CoV-2 reads
-deacon filter -o sars2.fq.gz MN908947.idx reads.fq.gz 
+# Keep only human sequences
+deacon filter panhuman-1.k31w15.idx reads.fq.gz -o reads.fq.gz 
 
 # Host depletion using the panhuman-1 index
-deacon filter -d -o filt.fq.gz panhuman-1.k31w15.idx reads.fq.gz
+deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 
 # Host depletion using stdin and stdout
 zcat reads.fq.gz | deacon filter -d panhuman-1.k31w15.idx > filt.fq
 
 # Faster Zstandard compression
-deacon filter -d -o filt.fq.zst panhuman-1.k31w15.idx reads.fq.zst 
+deacon filter -d panhuman-1.k31w15.idx reads.fq.zst -o filt.fq.zst
 
-# More sensitive match threshold of at 1 minimizer hit
+# More sensitive match threshold of at least 1 minimizer hit
 deacon filter -d -m 1 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
 # More specific match threshold of 50% minimizer hits (minimum 1)
 deacon filter -d -m 0.5 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
 # Deplete paired reads
-deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fastq
+deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fq
 deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz -o filt.r1.fq.gz -O filt.r2.fq.gz
 zcat r12.fq.gz | deacon filter -d panhuman-1.k31w15.idx - - > filt12.fq
 
 # Save summary JSON
-deacon filter -d -o filt.fq.gz --summary summary.json panhuman-1.k31w15.idx reads.fq.gz
+deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz -s summary.json
 ```
 
 ### Composing indexes with set operations
@@ -111,3 +111,23 @@ Use `--summary summary.json` to save detailed filtering statistics:
   "bp_per_second": 43553881
 }
 ```
+
+## Citation
+
+ [![biorXiv preprint](https://img.shields.io/badge/biorXiv-10.1101/2025.06.09.658732-red)](https://doi.org/10.1101/2025.06.09.658732)
+>  Bede Constantinides, John Lees, Derrick W Crook. "Deacon: fast sequence filtering and contaminant depletion" bioRxiv 2025.06.09.658732; doi: https://doi.org/10.1101/2025.06.09.658732 
+
+```bibtex
+@article {Constantinides2025.06.09.658732,
+	author = {Constantinides, Bede and Lees, John and Crook, Derrick W},
+	title = {Deacon: fast sequence filtering and contaminant depletion},
+	elocation-id = {2025.06.09.658732},
+	year = {2025},
+	doi = {10.1101/2025.06.09.658732},
+	publisher = {Cold Spring Harbor Laboratory},
+	URL = {https://www.biorxiv.org/content/early/2025/06/12/2025.06.09.658732},
+	eprint = {https://www.biorxiv.org/content/early/2025/06/12/2025.06.09.658732.full.pdf},
+	journal = {bioRxiv}
+}
+```
+
