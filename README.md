@@ -50,7 +50,7 @@ The command `deacon filter` accepts an index path followed by up to two query FA
 
 ```bash
 # Keep only human sequences
-deacon filter panhuman-1.k31w15.idx reads.fq.gz -o reads.fq.gz 
+deacon filter panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 
 # Host depletion using the panhuman-1 index
 deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
