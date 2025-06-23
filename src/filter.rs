@@ -135,7 +135,7 @@ fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
 
         if output_path.ends_with(".gz") {
             // Use gzip
-            let encoder = GzEncoder::new(buffered_file, Compression::fast());
+            let encoder = GzEncoder::new(buffered_file, Compression::new(2));
             Ok(Box::new(GzipWriter(encoder)))
         } else if output_path.ends_with(".zst") {
             // Use zstd
