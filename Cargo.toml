@@ -15,12 +15,9 @@ exclude = ["bench/*", "data/*"]
 name = "deacon"
 path = "src/lib.rs"
 
-[features]
-zlibrs = [ "flate2/zlib-rs"]
-
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
-flate2 = { version = "1.1", default-features = false }
+flate2 = { version = "1.1", features = ["zlib-rs"] }
 anyhow = "1.0"
 thiserror = "2.0"
 simd-minimizers = "1.1"
