@@ -65,10 +65,10 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
     let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
         .context("Failed to deserialize minimizer count")?;
 
-    // Pre-allocate the FxHashSet with the right capacity
+    // Pre-allocate FxHashSet with correct capacity
     let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
 
-    // Populate the FxHashSet
+    // Populate FxHashSet
     for _ in 0..count {
         let hash: u64 = decode_from_std_read(&mut reader, bincode::config::standard())
             .context("Failed to deserialize minimizer hash")?;
@@ -152,7 +152,7 @@ pub fn build<P: AsRef<Path>>(
     let mut total_bp = 0;
 
     // Process sequences in batches for parallelization
-    let batch_size = 100; // Adjust based on memory constraints
+    let batch_size = 10000;
 
     loop {
         // Collect a batch of sequences
@@ -192,14 +192,11 @@ pub fn build<P: AsRef<Path>>(
         for (i, hashes) in batch_results.iter().enumerate() {
             let (seq_data, id) = &batch[i];
 
-            // Insert all hashes from this sequence
             all_minimizers.extend(hashes.iter());
 
-            // Update counters
             seq_count += 1;
             total_bp += seq_data.len();
 
-            // Report progress
             let id_str = std::str::from_utf8(id).unwrap_or("unknown");
             eprintln!(
                 "  {} ({}bp), total minimizers: {}",
@@ -222,7 +219,6 @@ pub fn build<P: AsRef<Path>>(
         total_bp
     );
 
-    // Create header
     let header = IndexHeader::new(kmer_length, window_size);
 
     // Write to output path or stdout
@@ -268,7 +264,7 @@ pub fn diff<P: AsRef<Path>>(first: P, second: P, output: Option<&PathBuf>) -> Re
     // Count minimizers before diff
     let before_count = first_minimizers.len();
 
-    // Perform diff operation - remove all hashes in second_minimizers from main_minimizers
+    // Remove all hashes in second_minimizers from main_minimizers
     for hash in &second_minimizers {
         first_minimizers.remove(hash);
     }
@@ -401,6 +397,4 @@ mod tests {
         };
         assert!(invalid_header.validate().is_err());
     }
-
-    // Add more tests as needed
 }

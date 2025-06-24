@@ -512,30 +512,15 @@ fn process_single_seqs(
                         &mut minimizer_buffer,
                     );
 
-                    // Convert threshold to absolute count
-                    let required_hits = match match_threshold {
-                        MatchThreshold::Absolute(n) => *n,
-                        MatchThreshold::Relative(f) => {
-                            if minimizer_buffer.is_empty() {
-                                0
-                            } else {
-                                ((*f * minimizer_buffer.len() as f64).ceil() as usize).max(1)
-                            }
-                        }
-                    };
-
                     // Count distinct minimizer hits
                     for &hash in &minimizer_buffer {
                         if minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
                             hit_count += 1;
-                            if hit_count >= required_hits {
-                                break;
-                            }
                         }
                     }
                 }
 
-                // Determine if we should output this sequence
+                // Convert threshold to absolute count
                 let required_hits = match match_threshold {
                     MatchThreshold::Absolute(n) => *n,
                     MatchThreshold::Relative(f) => {
@@ -847,7 +832,7 @@ fn process_paired_seqs(
                     );
                     w2.write_all(&output_record_buffer)?;
                 } else {
-                    // Interleaved output (existing behavior)
+                    // Interleaved output
                     writer.write_all(&output_record_buffer)?;
 
                     // Format s2 as FASTX to byte buffer
