@@ -98,6 +98,9 @@ pub struct FilterConfig {
 
     /// Number of execution threads (0 = auto)
     pub threads: usize,
+
+    /// Compression level for output files (1-22 for zst, 1-9 for gz)
+    pub compression_level: u8,
 }
 
 impl FilterConfig {
@@ -114,6 +117,7 @@ impl FilterConfig {
             deplete: false,
             rename: false,
             threads: 0, // Use all available threads by default
+            compression_level: 2, // Default compression level
         }
     }
 
@@ -167,6 +171,11 @@ impl FilterConfig {
         self
     }
 
+    pub fn with_compression_level(mut self, compression_level: u8) -> Self {
+        self.compression_level = compression_level;
+        self
+    }
+
     /// Filter with this configuration
     pub fn execute(&self) -> Result<()> {
         filter::run(
@@ -181,6 +190,7 @@ impl FilterConfig {
             self.deplete,
             self.rename,
             self.threads,
+            self.compression_level,
         )
     }
 }

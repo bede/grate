@@ -116,7 +116,7 @@ impl<W: Write> FastxWriter for ZstdWriter<W> {
 }
 
 // Return a file writer appropriate for the output path extension
-fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
+fn get_writer(output_path: &str, compression_level: u8) -> Result<Box<dyn FastxWriter>> {
     if output_path == "-" {
         // Write to stdout
         let stdout = io::stdout();
@@ -134,13 +134,25 @@ fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
         let buffered_file = BufWriter::with_capacity(OUTPUT_BUFFER_SIZE, file);
 
         if output_path.ends_with(".gz") {
-            // Use gzip
-            let encoder = GzEncoder::new(buffered_file, Compression::new(2));
+            // Use gzip (validate level 1-9)
+            if compression_level < 1 || compression_level > 9 {
+                return Err(anyhow::anyhow!(
+                    "Invalid gzip compression level {}. Must be between 1 and 9.",
+                    compression_level
+                ));
+            }
+            let encoder = GzEncoder::new(buffered_file, Compression::new(compression_level as u32));
             Ok(Box::new(GzipWriter(encoder)))
         } else if output_path.ends_with(".zst") {
-            // Use zstd
+            // Use zstd (validate level 1-22)
+            if compression_level < 1 || compression_level > 22 {
+                return Err(anyhow::anyhow!(
+                    "Invalid zstd compression level {}. Must be between 1 and 22.",
+                    compression_level
+                ));
+            }
             let writer =
-                ZstdWriter::new(buffered_file, 1).context("Failed to create zstd encoder")?;
+                ZstdWriter::new(buffered_file, compression_level as i32).context("Failed to create zstd encoder")?;
             Ok(Box::new(writer))
         } else {
             // Vanilla FASTQ
@@ -189,6 +201,7 @@ pub fn run<P: AsRef<Path>>(
     deplete: bool,
     rename: bool,
     threads: usize,
+    compression_level: u8,
 ) -> Result<()> {
     let start_time = Instant::now();
     let version: String = env!("CARGO_PKG_VERSION").to_string();
@@ -246,10 +259,10 @@ pub fn run<P: AsRef<Path>>(
     );
 
     // Create the appropriate writer(s) based on the output path(s)
-    let mut writer = get_writer(output_path)?;
+    let mut writer = get_writer(output_path, compression_level)?;
     let mut writer2 = if let (Some(output2), Some(_)) = (output2_path, input2_path) {
         // Only create second writer if both output2 and input2 are specified
-        Some(get_writer(output2)?)
+        Some(get_writer(output2, compression_level)?)
     } else {
         None
     };
