@@ -27,7 +27,7 @@ enum Commands {
 
         /// Optional path to fastx file (or - for stdin)
         #[arg(default_value = "-")]
-        input1: String,
+        input: String,
 
         /// Optional path to second paired fastx file (or - for interleaved stdin)
         input2: Option<String>,
@@ -180,7 +180,7 @@ fn main() -> Result<()> {
         },
         Commands::Filter {
             index: minimizers,
-            input1,
+            input,
             input2,
             output,
             output2,
@@ -200,7 +200,7 @@ fn main() -> Result<()> {
 
             run_filter(
                 minimizers,
-                input1,
+                &input,
                 input2.as_deref(),
                 output,
                 output2.as_deref(),

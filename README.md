@@ -60,6 +60,9 @@ deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 # Host depletion using stdin and stdout
 zcat reads.fq.gz | deacon filter -d panhuman-1.k31w15.idx > filt.fq
 
+# Use pigz to compress output
+deacon filter -d panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz
+
 # Faster Zstandard compression
 deacon filter -d panhuman-1.k31w15.idx reads.fq.zst -o filt.fq.zst
 
@@ -76,6 +79,12 @@ zcat r12.fq.gz | deacon filter -d panhuman-1.k31w15.idx - - > filt12.fq
 
 # Save summary JSON
 deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz -s summary.json
+
+# Replace read headers with incrementing integers
+deacon filter -d -r panhuman-1.k31w15.idx reads.fq.gz > filt.fq
+
+# Only look for minimizer matches inside the first 1000bp of each record
+deacon filter -d -p 1000 panhuman-1.k31w15.idx reads.fq.gz > filt.fq
 ```
 
 
@@ -96,7 +105,7 @@ Arguments:
   [INPUT2]  Optional path to second paired fastx file (or - for interleaved stdin)
 
 Options:
-  -o, --output1 <OUTPUT>               Path to output fastx file (or - for stdout; detects .gz and .zst) [default: -]
+  -o, --output <OUTPUT>               Path to output fastx file (or - for stdout; detects .gz and .zst) [default: -]
   -O, --output2 <OUTPUT2>              Optional path to second paired output fastx file (detects .gz and .zst)
   -m, --matches <MATCH_THRESHOLD>      Mininum number (integer) or proportion (float) of minimizer hits for a match [default: 2]
   -p, --prefix-length <PREFIX_LENGTH>  Search only the first N nucleotides per sequence (0 = entire sequence) [default: 0]
@@ -162,7 +171,7 @@ Use `-s summary.json` to save detailed filtering statistics:
 {
   "version": "deacon 0.5.0",
   "index": "panhuman-1.k31w15.idx",
-  "input1": "HG02334.1m.fastq.gz",
+  "input": "HG02334.1m.fastq.gz",
   "input2": null,
   "output": "-",
   "output2": null,

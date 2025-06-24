@@ -154,7 +154,7 @@ fn get_writer(output_path: &str) -> Result<Box<dyn FastxWriter>> {
 pub struct FilterSummary {
     version: String,
     index: String,
-    input1: String,
+    input: String,
     input2: Option<String>,
     output: String,
     output2: Option<String>,
@@ -385,7 +385,7 @@ pub fn run<P: AsRef<Path>>(
         let summary = FilterSummary {
             version: tool_version,
             index: minimizers_path.as_ref().to_string_lossy().to_string(),
-            input1: input_path.to_string(),
+            input: input_path.to_string(),
             input2: input2_path.map(|s| s.to_string()),
             output: output_path.to_string(),
             output2: output2_path.map(|s| s.to_string()),
@@ -1283,7 +1283,7 @@ mod tests {
         let summary = FilterSummary {
             version: "deacon 0.1.0".to_string(),
             index: "test.idx".to_string(),
-            input1: "test.fastq".to_string(),
+            input: "test.fastq".to_string(),
             input2: Some("test2.fastq".to_string()),
             output: "output.fastq".to_string(),
             output2: Some("output2.fastq".to_string()),
@@ -1314,7 +1314,7 @@ mod tests {
         assert_eq!(parsed.version, "deacon 0.1.0");
         assert_eq!(parsed.seqs_in, 100);
         assert_eq!(parsed.seqs_removed_proportion, 0.1);
-        assert_eq!(parsed.input1, "test.fastq");
+        assert_eq!(parsed.input, "test.fastq");
         assert_eq!(parsed.input2, Some("test2.fastq".to_string()));
         assert_eq!(parsed.output, "output.fastq");
         assert_eq!(parsed.output2, Some("output2.fastq".to_string()));
