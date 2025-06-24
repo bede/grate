@@ -12,7 +12,7 @@ Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deac
 Benchmarks for panhuman host depletion of complex microbial metagenomes are described in a [preprint](https://www.biorxiv.org/content/10.1101/2025.06.09.658732v1). Among tested approaches, Deacon with the panhuman-1 (*k*=31, w=15) index exhibited the highest balanced accuracy for both long and short simulated reads. Deacon was however less specific than Hostile for short reads.
 
 > [!IMPORTANT]
-> Deacon is not yet stable. 0.5.0 for instance introduced major CLI changes. Please carefully review the CHANGELOG when upgrading. Please report problems by creating an issue or using the email address in my profile
+> Deacon is not yet stable. 0.5.0 for instance introduced major CLI changes. Please carefully review the CHANGELOG when upgrading. Please report problems by creating an issue or using the email address in my profile.
 
 ## Install
 
@@ -77,6 +77,74 @@ zcat r12.fq.gz | deacon filter -d panhuman-1.k31w15.idx - - > filt12.fq
 # Save summary JSON
 deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz -s summary.json
 ```
+
+
+
+## Command line reference
+
+### Filtering
+
+```bash
+$ deacon filter -h
+Keep or discard fastx records with sufficient minimizer hits to the index
+
+Usage: deacon filter [OPTIONS] <INDEX> [INPUT1] [INPUT2]
+
+Arguments:
+  <INDEX>   Path to minimizer index file
+  [INPUT1]  Optional path to fastx file (or - for stdin) [default: -]
+  [INPUT2]  Optional path to second paired fastx file (or - for interleaved stdin)
+
+Options:
+  -o, --output1 <OUTPUT>               Path to output fastx file (or - for stdout; detects .gz and .zst) [default: -]
+  -O, --output2 <OUTPUT2>              Optional path to second paired output fastx file (detects .gz and .zst)
+  -m, --matches <MATCH_THRESHOLD>      Mininum number (integer) or proportion (float) of minimizer hits for a match [default: 2]
+  -p, --prefix-length <PREFIX_LENGTH>  Search only the first N nucleotides per sequence (0 = entire sequence) [default: 0]
+  -d, --deplete                        Discard matching sequences (invert filtering behaviour)
+  -r, --rename                         Replace sequence headers with incrementing numbers
+  -s, --summary <SUMMARY>              Path to JSON summary output file
+  -t, --threads <THREADS>              Number of execution threads (0 = auto) [default: 8]
+  -h, --help                           Print help
+```
+
+### Indexing
+
+```bash
+% deacon index -h
+Create and compose minimizer indexes
+
+Usage: deacon index <COMMAND>
+
+Commands:
+  build  Build index of minimizers contained within a fastx file
+  info   Show index information
+  union  Combine multiple minimizer indexes (A ∪ B…)
+  diff   Subtract minimizers in one index from another (A - B)
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+```
+
+```bash
+% deacon index build -h
+Index minimizers contained within a fastx file
+
+Usage: deacon index build [OPTIONS] <INPUT>
+
+Arguments:
+  <INPUT>  Path to input fastx file (supports .gz compression)
+
+Options:
+  -k <KMER_LENGTH>                    K-mer length used for indexing [default: 31]
+  -w <WINDOW_SIZE>                    Minimizer window size used for indexing [default: 15]
+  -o, --output <OUTPUT>               Path to output file (- for stdout) [default: -]
+  -c, --capacity <CAPACITY_MILLIONS>  Preallocated index capacity in millions of minimizers [default: 500]
+  -t, --threads <THREADS>             Number of execution threads (0 = auto) [default: 8]
+  -h, --help                          Print help
+```
+
+
 
 ## Building custom indexes
 

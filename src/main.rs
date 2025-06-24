@@ -15,17 +15,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Build and manipulate minimizer indexes
+    /// Create and compose minimizer indexes
     Index {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Filter fastx sequences based on minimizer matches to the index
+    /// Keep or discard fastx records with sufficient minimizer hits to the index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
 
-        /// Path to fastx file (or - for stdin)
+        /// Optional path to fastx file (or - for stdin)
         #[arg(default_value = "-")]
         input1: String,
 
@@ -48,7 +48,7 @@ enum Commands {
         #[arg(short = 'p', long = "prefix-length", default_value_t = 0)]
         prefix_length: usize,
 
-        /// Remove matching sequences (invert filtering behaviour)
+        /// Discard matching sequences (invert filtering behaviour)
         #[arg(short = 'd', long = "deplete", default_value_t = false)]
         deplete: bool,
 
@@ -68,7 +68,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum IndexCommands {
-    /// Build index of minimizers contained within a fastx file
+    /// Index minimizers contained within a fastx file
     Build {
         /// Path to input fastx file (supports .gz compression)
         input: PathBuf,
