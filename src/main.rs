@@ -63,6 +63,10 @@ enum Commands {
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
+
+        /// Compression level for output files (1-22 for zst, 1-9 for gz)
+        #[arg(long = "compression-level", default_value_t = 2)]
+        compression_level: u8,
     },
 }
 
@@ -190,6 +194,7 @@ fn main() -> Result<()> {
             deplete,
             rename,
             threads,
+            compression_level,
         } => {
             // Validate output2 usage
             if output2.is_some() && input2.is_none() {
@@ -210,6 +215,7 @@ fn main() -> Result<()> {
                 *deplete,
                 *rename,
                 *threads,
+                *compression_level,
             )
             .context("Failed to run filter command")?;
         }
