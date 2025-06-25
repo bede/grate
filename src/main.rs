@@ -64,7 +64,7 @@ enum Commands {
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
 
-        /// Compression level for output files (1-22 for zst, 1-9 for gz)
+        /// Output compression level (1-9 for gz & xz; 1-22 for zstd)
         #[arg(long = "compression-level", default_value_t = 2)]
         compression_level: u8,
     },
