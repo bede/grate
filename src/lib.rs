@@ -116,7 +116,7 @@ impl FilterConfig {
             summary_path: None,
             deplete: false,
             rename: false,
-            threads: 0, // Use all available threads by default
+            threads: 0,           // Use all available threads by default
             compression_level: 2, // Default compression level
         }
     }

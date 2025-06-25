@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use flate2::Compression;
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use liblzma::write::XzEncoder;
 use needletail::parse_fastx_file;
 use needletail::parse_fastx_stdin;
 use needletail::parser::Format;
@@ -16,7 +17,6 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use zstd::stream::write::Encoder as ZstdEncoder;
-use liblzma::write::XzEncoder;
 
 const OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // Opt: 8MB output buffer
 
@@ -28,6 +28,135 @@ struct RecordData {
 }
 trait FastxWriter: Write {
     fn flush_all(&mut self) -> io::Result<()>;
+}
+
+trait CompressionEncoder: Write {
+    fn finish(self: Box<Self>) -> io::Result<()>;
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CompressionFormat {
+    None,
+    Gzip,
+    Zstd,
+    Xz,
+}
+
+impl CompressionFormat {
+    fn from_extension(path: &str) -> Self {
+        if path.ends_with(".gz") {
+            Self::Gzip
+        } else if path.ends_with(".zst") {
+            Self::Zstd
+        } else if path.ends_with(".xz") {
+            Self::Xz
+        } else {
+            Self::None
+        }
+    }
+
+    fn validate_compression_level(&self, level: u8) -> Result<()> {
+        match self {
+            Self::None => Ok(()),
+            Self::Gzip => {
+                if level < 1 || level > 9 {
+                    Err(anyhow::anyhow!(
+                        "Invalid gzip compression level {}. Must be between 1 and 9.",
+                        level
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::Zstd => {
+                if level < 1 || level > 22 {
+                    Err(anyhow::anyhow!(
+                        "Invalid zstd compression level {}. Must be between 1 and 22.",
+                        level
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+            Self::Xz => {
+                if level > 9 {
+                    Err(anyhow::anyhow!(
+                        "Invalid xz compression level {}. Must be between 0 and 9.",
+                        level
+                    ))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+}
+
+impl<W: Write> CompressionEncoder for GzEncoder<W> {
+    fn finish(mut self: Box<Self>) -> io::Result<()> {
+        self.try_finish()
+    }
+}
+
+impl<W: Write> CompressionEncoder for ZstdEncoder<'static, W> {
+    fn finish(self: Box<Self>) -> io::Result<()> {
+        (*self).finish().map(|_| ())
+    }
+}
+
+impl<W: Write> CompressionEncoder for XzEncoder<W> {
+    fn finish(self: Box<Self>) -> io::Result<()> {
+        (*self).finish().map(|_| ())
+    }
+}
+
+struct CompressedWriter {
+    encoder: Option<Box<dyn CompressionEncoder>>,
+}
+
+impl CompressedWriter {
+    fn new(encoder: Box<dyn CompressionEncoder>) -> Self {
+        Self {
+            encoder: Some(encoder),
+        }
+    }
+
+    fn uncompressed<W: Write>(writer: W) -> StandardWriter<W> {
+        StandardWriter(writer)
+    }
+}
+
+impl Write for CompressedWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(encoder) = &mut self.encoder {
+            encoder.write(buf)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Writer has been closed",
+            ))
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(encoder) = &mut self.encoder {
+            encoder.flush()
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Writer has been closed",
+            ))
+        }
+    }
+}
+
+impl FastxWriter for CompressedWriter {
+    fn flush_all(&mut self) -> io::Result<()> {
+        if let Some(encoder) = self.encoder.take() {
+            encoder.finish()?;
+        }
+        Ok(())
+    }
 }
 
 struct StandardWriter<W: Write>(W);
@@ -48,127 +177,13 @@ impl<W: Write> FastxWriter for StandardWriter<W> {
     }
 }
 
-struct GzipWriter<W: Write>(GzEncoder<W>);
-
-impl<W: Write> Write for GzipWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.0.write(buf)
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        self.0.flush()
-    }
-}
-
-impl<W: Write> FastxWriter for GzipWriter<W> {
-    fn flush_all(&mut self) -> io::Result<()> {
-        self.flush()?;
-        self.0.try_finish()?;
-        Ok(())
-    }
-}
-
-struct ZstdWriter<W: Write> {
-    encoder: Option<ZstdEncoder<'static, W>>,
-}
-
-impl<W: Write> ZstdWriter<W> {
-    fn new(writer: W, compression_level: i32) -> Result<Self> {
-        let encoder =
-            ZstdEncoder::new(writer, compression_level).context("Failed to create zstd encoder")?;
-        Ok(Self {
-            encoder: Some(encoder),
-        })
-    }
-}
-
-impl<W: Write> Write for ZstdWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(encoder) = &mut self.encoder {
-            encoder.write(buf)
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Writer has been closed",
-            ))
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if let Some(encoder) = &mut self.encoder {
-            encoder.flush()
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Writer has been closed",
-            ))
-        }
-    }
-}
-
-impl<W: Write> FastxWriter for ZstdWriter<W> {
-    fn flush_all(&mut self) -> io::Result<()> {
-        if let Some(encoder) = self.encoder.take() {
-            // Take ownership of the encoder
-            encoder.finish()?;
-        }
-        Ok(())
-    }
-}
-
-struct XzWriter<W: Write> {
-    encoder: Option<XzEncoder<W>>,
-}
-
-impl<W: Write> XzWriter<W> {
-    fn new(writer: W, compression_level: u32) -> Result<Self> {
-        let encoder = XzEncoder::new(writer, compression_level);
-        Ok(Self {
-            encoder: Some(encoder),
-        })
-    }
-}
-
-impl<W: Write> Write for XzWriter<W> {
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if let Some(encoder) = &mut self.encoder {
-            encoder.write(buf)
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Writer has been closed",
-            ))
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        if let Some(encoder) = &mut self.encoder {
-            encoder.flush()
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "Writer has been closed",
-            ))
-        }
-    }
-}
-
-impl<W: Write> FastxWriter for XzWriter<W> {
-    fn flush_all(&mut self) -> io::Result<()> {
-        if let Some(encoder) = self.encoder.take() {
-            encoder.finish()?;
-        }
-        Ok(())
-    }
-}
-
 // Return a file writer appropriate for the output path extension
 fn get_writer(output_path: &str, compression_level: u8) -> Result<Box<dyn FastxWriter>> {
     if output_path == "-" {
         // Write to stdout
         let stdout = io::stdout();
         let writer = BufWriter::with_capacity(OUTPUT_BUFFER_SIZE, stdout);
-        Ok(Box::new(StandardWriter(writer)))
+        Ok(Box::new(CompressedWriter::uncompressed(writer)))
     } else {
         // Write to file with extension-appropriate encoder
         let file = OpenOptions::new()
@@ -179,41 +194,27 @@ fn get_writer(output_path: &str, compression_level: u8) -> Result<Box<dyn FastxW
             .context(format!("Failed to create output file: {}", output_path))?;
 
         let buffered_file = BufWriter::with_capacity(OUTPUT_BUFFER_SIZE, file);
+        let format = CompressionFormat::from_extension(output_path);
 
-        if output_path.ends_with(".gz") {
-            // Use gzip (validate level 1-9)
-            if compression_level < 1 || compression_level > 9 {
-                return Err(anyhow::anyhow!(
-                    "Invalid gzip compression level {}. Must be between 1 and 9.",
-                    compression_level
-                ));
+        // Validate compression level for the format
+        format.validate_compression_level(compression_level)?;
+
+        match format {
+            CompressionFormat::None => Ok(Box::new(CompressedWriter::uncompressed(buffered_file))),
+            CompressionFormat::Gzip => {
+                let encoder =
+                    GzEncoder::new(buffered_file, Compression::new(compression_level as u32));
+                Ok(Box::new(CompressedWriter::new(Box::new(encoder))))
             }
-            let encoder = GzEncoder::new(buffered_file, Compression::new(compression_level as u32));
-            Ok(Box::new(GzipWriter(encoder)))
-        } else if output_path.ends_with(".zst") {
-            // Use zstd (validate level 1-22)
-            if compression_level < 1 || compression_level > 22 {
-                return Err(anyhow::anyhow!(
-                    "Invalid zstd compression level {}. Must be between 1 and 22.",
-                    compression_level
-                ));
+            CompressionFormat::Zstd => {
+                let encoder = ZstdEncoder::new(buffered_file, compression_level as i32)
+                    .context("Failed to create zstd encoder")?;
+                Ok(Box::new(CompressedWriter::new(Box::new(encoder))))
             }
-            let writer =
-                ZstdWriter::new(buffered_file, compression_level as i32).context("Failed to create zstd encoder")?;
-            Ok(Box::new(writer))
-        } else if output_path.ends_with(".xz") {
-            // Use xz (validate level 0-9)
-            if compression_level > 9 {
-                return Err(anyhow::anyhow!(
-                    "Invalid xz compression level {}. Must be between 0 and 9.",
-                    compression_level
-                ));
+            CompressionFormat::Xz => {
+                let encoder = XzEncoder::new(buffered_file, compression_level as u32);
+                Ok(Box::new(CompressedWriter::new(Box::new(encoder))))
             }
-            let writer = XzWriter::new(buffered_file, compression_level as u32)?;
-            Ok(Box::new(writer))
-        } else {
-            // Vanilla FASTQ
-            Ok(Box::new(StandardWriter(buffered_file)))
         }
     }
 }
