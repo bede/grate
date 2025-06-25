@@ -236,10 +236,12 @@ pub struct FilterSummary {
     rename: bool,
     seqs_in: u64,
     seqs_out: u64,
+    seqs_out_proportion: f64,
     seqs_removed: u64,
     seqs_removed_proportion: f64,
     bp_in: u64,
     bp_out: u64,
+    bp_out_proportion: f64,
     bp_removed: u64,
     bp_removed_proportion: f64,
     time: f64,
@@ -430,16 +432,30 @@ pub fn run<P: AsRef<Path>>(
         0.0
     };
 
+    // Calculate output proportions
+    let output_seqs = total_seqs - filtered_seqs;
+    let output_seq_proportion = if total_seqs > 0 {
+        output_seqs as f64 / total_seqs as f64
+    } else {
+        0.0
+    };
+
+    let output_bp_proportion = if total_bp > 0 {
+        output_bp as f64 / total_bp as f64
+    } else {
+        0.0
+    };
+
     // Finish and clear spinner, print final message
     spinner.finish_and_clear();
     eprintln!(
-        "Removed {}/{} sequences ({:.3}%) , {}/{} bp ({:.3}%)",
-        filtered_seqs,
+        "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
+        output_seqs,
         total_seqs,
-        filtered_proportion * 100.0,
-        filtered_bp,
+        output_seq_proportion * 100.0,
+        output_bp,
         total_bp,
-        filtered_bp_proportion * 100.0
+        output_bp_proportion * 100.0
     );
 
     // Print completion message with speed
@@ -468,10 +484,12 @@ pub fn run<P: AsRef<Path>>(
             rename,
             seqs_in: total_seqs as u64,
             seqs_out: seqs_out as u64,
+            seqs_out_proportion: output_seq_proportion,
             seqs_removed: filtered_seqs as u64,
             seqs_removed_proportion: filtered_proportion,
             bp_in: total_bp as u64,
             bp_out: output_bp as u64,
+            bp_out_proportion: output_bp_proportion,
             bp_removed: filtered_bp as u64,
             bp_removed_proportion: filtered_bp_proportion,
             time: total_time.as_secs_f64(),
@@ -653,29 +671,30 @@ fn process_single_seqs(
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
-        // Calculate filtered proportion
-        let filtered_proportion = if *total_seqs > 0 {
-            *filtered_seqs as f64 / *total_seqs as f64
+        // Calculate output proportion
+        let output_seqs = *total_seqs - *filtered_seqs;
+        let output_proportion = if *total_seqs > 0 {
+            output_seqs as f64 / *total_seqs as f64
         } else {
             0.0
         };
 
-        // Calculate filtered base pair proportion
-        let filtered_bp_proportion = if *total_bp > 0 {
-            *filtered_bp as f64 / *total_bp as f64
+        // Calculate output base pair proportion
+        let output_bp_proportion = if *total_bp > 0 {
+            *output_bp as f64 / *total_bp as f64
         } else {
             0.0
         };
 
         // Update spinner message
         spinner.set_message(format!(
-            "Removed {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-            filtered_seqs,
+            "Retained {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            output_seqs,
             total_seqs,
-            filtered_proportion * 100.0,
-            filtered_bp,
+            output_proportion * 100.0,
+            output_bp,
             total_bp,
-            filtered_bp_proportion * 100.0,
+            output_bp_proportion * 100.0,
             seqs_per_sec,
             mbp_per_sec
         ));
@@ -931,29 +950,30 @@ fn process_paired_seqs(
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
-        // Calculate filtered proportion directly
-        let filtered_proportion = if *total_seqs > 0 {
-            *filtered_seqs as f64 / *total_seqs as f64
+        // Calculate output proportion directly
+        let output_seqs = *total_seqs - *filtered_seqs;
+        let output_proportion = if *total_seqs > 0 {
+            output_seqs as f64 / *total_seqs as f64
         } else {
             0.0
         };
 
-        // Calculate filtered base pair proportion
-        let filtered_bp_proportion = if *total_bp > 0 {
-            *filtered_bp as f64 / *total_bp as f64
+        // Calculate output base pair proportion
+        let output_bp_proportion = if *total_bp > 0 {
+            *output_bp as f64 / *total_bp as f64
         } else {
             0.0
         };
 
         // Update spinner message with detailed stats
         spinner.set_message(format!(
-            "Removed {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-            filtered_seqs,
+            "Retained {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            output_seqs,
             total_seqs,
-            filtered_proportion * 100.0,
-            filtered_bp,
+            output_proportion * 100.0,
+            output_bp,
             total_bp,
-            filtered_bp_proportion * 100.0,
+            output_bp_proportion * 100.0,
             seqs_per_sec,
             mbp_per_sec
         ));
@@ -1222,29 +1242,30 @@ fn process_interleaved_paired_seqs(
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
-        // Calculate filtered proportion directly
-        let filtered_proportion = if *total_seqs > 0 {
-            *filtered_seqs as f64 / *total_seqs as f64
+        // Calculate output proportion directly
+        let output_seqs = *total_seqs - *filtered_seqs;
+        let output_proportion = if *total_seqs > 0 {
+            output_seqs as f64 / *total_seqs as f64
         } else {
             0.0
         };
 
-        // Calculate filtered base pair proportion
-        let filtered_bp_proportion = if *total_bp > 0 {
-            *filtered_bp as f64 / *total_bp as f64
+        // Calculate output base pair proportion
+        let output_bp_proportion = if *total_bp > 0 {
+            *output_bp as f64 / *total_bp as f64
         } else {
             0.0
         };
 
         // Update spinner message with detailed stats
         spinner.set_message(format!(
-            "Removed {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-            filtered_seqs,
+            "Retained {}/{} seqs ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+            output_seqs,
             total_seqs,
-            filtered_proportion * 100.0,
-            filtered_bp,
+            output_proportion * 100.0,
+            output_bp,
             total_bp,
-            filtered_bp_proportion * 100.0,
+            output_bp_proportion * 100.0,
             seqs_per_sec,
             mbp_per_sec
         ));
@@ -1351,10 +1372,12 @@ mod tests {
             rename: false,
             seqs_in: 100,
             seqs_out: 90,
+            seqs_out_proportion: 0.9,
             seqs_removed: 10,
             seqs_removed_proportion: 0.1,
             bp_in: 10000,
             bp_out: 9000,
+            bp_out_proportion: 0.9,
             bp_removed: 1000,
             bp_removed_proportion: 0.1,
             time: 1.5,
@@ -1370,6 +1393,8 @@ mod tests {
         assert_eq!(parsed.version, "deacon 0.1.0");
         assert_eq!(parsed.seqs_in, 100);
         assert_eq!(parsed.seqs_removed_proportion, 0.1);
+        assert_eq!(parsed.seqs_out_proportion, 0.9);
+        assert_eq!(parsed.bp_out_proportion, 0.9);
         assert_eq!(parsed.input, "test.fastq");
         assert_eq!(parsed.input2, Some("test2.fastq".to_string()));
         assert_eq!(parsed.output, "output.fastq");

@@ -5,9 +5,9 @@
 
 <div align="center"><img src="deacon.png" width="180" alt="Logo"></div>
 
-Fast minimizer-based search and depletion of FASTA/FASTQ files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and required memory can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be varied at filter time. `m` can be specified either as a minimum integer of minimizer matches (default is 2), else a minimum proportion of minimizer hits between 0.0 and 1.0.
+Fast minimizer-based search and depletion of FASTA/FASTQ files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be varied at filter time. `m` can be specified either as a minimum integer of minimizer matches (default is 2), else a minimum proportion of minimizer hits between 0.0 and 1.0. Short and/or paired reads are supported: matches in either mate causes both mates in the pair to be retained or discarded. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance during execution and optionally writes a JSON summary on completion. Deacon natively supports gzip, zst and xz compression formats detected by file extension.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering long reads at >250Mbp/s (Apple M4) and indexing a human genome in <30s. Short and/or paired reads are fully supported albeit more slowly. Peak memory usage during filtering is 5GB for the default panhuman index. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance during execution and optionally writes a JSON summary on completion.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering long reads at >250Mbp/s (Apple M4) and indexing a human genome in <30s.  Peak memory usage during filtering is 5GB for the default panhuman index. For best performance, avoid writing gzip output directly. 
 
 Benchmarks for panhuman host depletion of complex microbial metagenomes are described in a [preprint](https://www.biorxiv.org/content/10.1101/2025.06.09.658732v1). Among tested approaches, Deacon with the panhuman-1 (*k*=31, w=15) index exhibited the highest balanced accuracy for both long and short simulated reads. Deacon was however less specific than Hostile for short reads.
 
@@ -57,22 +57,22 @@ deacon filter panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 # Host depletion using the panhuman-1 index
 deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 
-# Host depletion using stdin and stdout
-zcat reads.fq.gz | deacon filter -d panhuman-1.k31w15.idx > filt.fq
-
-# Use pigz to compress output
-deacon filter -d panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz
-
-# Faster Zstandard compression
-deacon filter -d panhuman-1.k31w15.idx reads.fq.zst -o filt.fq.zst
-
 # More sensitive match threshold of at least 1 minimizer hit
 deacon filter -d -m 1 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
 # More specific match threshold of 50% minimizer hits (minimum 1)
 deacon filter -d -m 0.5 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
-# Deplete paired reads
+# Stdin and stdout
+zcat reads.fq.gz | deacon filter -d panhuman-1.k31w15.idx > filt.fq
+
+# Faster Zstandard compression
+deacon filter -d panhuman-1.k31w15.idx reads.fq.zst -o filt.fq.zst
+
+# Fast gzip with pigz
+deacon filter -d panhuman-1.k31w15.idx reads.fq.gz | pigz > filt.fq.gz
+
+# Paired reads
 deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz > filt12.fq
 deacon filter -d panhuman-1.k31w15.idx r1.fq.gz r2.fq.gz -o filt.r1.fq.gz -O filt.r2.fq.gz
 zcat r12.fq.gz | deacon filter -d panhuman-1.k31w15.idx - - > filt12.fq
@@ -83,7 +83,7 @@ deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz -s summary.json
 # Replace read headers with incrementing integers
 deacon filter -d -r panhuman-1.k31w15.idx reads.fq.gz > filt.fq
 
-# Only look for minimizer matches inside the first 1000bp of each record
+# Only look for minimizer hits inside the first 1000bp per record
 deacon filter -d -p 1000 panhuman-1.k31w15.idx reads.fq.gz > filt.fq
 ```
 
@@ -97,23 +97,34 @@ deacon filter -d -p 1000 panhuman-1.k31w15.idx reads.fq.gz > filt.fq
 $ deacon filter -h
 Keep or discard fastx records with sufficient minimizer hits to the index
 
-Usage: deacon filter [OPTIONS] <INDEX> [INPUT1] [INPUT2]
+Usage: deacon filter [OPTIONS] <INDEX> [INPUT] [INPUT2]
 
 Arguments:
   <INDEX>   Path to minimizer index file
-  [INPUT1]  Optional path to fastx file (or - for stdin) [default: -]
+  [INPUT]   Optional path to fastx file (or - for stdin) [default: -]
   [INPUT2]  Optional path to second paired fastx file (or - for interleaved stdin)
 
 Options:
-  -o, --output <OUTPUT>               Path to output fastx file (or - for stdout; detects .gz and .zst) [default: -]
-  -O, --output2 <OUTPUT2>              Optional path to second paired output fastx file (detects .gz and .zst)
-  -m, --matches <MATCH_THRESHOLD>      Mininum number (integer) or proportion (float) of minimizer hits for a match [default: 2]
-  -p, --prefix-length <PREFIX_LENGTH>  Search only the first N nucleotides per sequence (0 = entire sequence) [default: 0]
-  -d, --deplete                        Discard matching sequences (invert filtering behaviour)
-  -r, --rename                         Replace sequence headers with incrementing numbers
-  -s, --summary <SUMMARY>              Path to JSON summary output file
-  -t, --threads <THREADS>              Number of execution threads (0 = auto) [default: 8]
-  -h, --help                           Print help
+  -o, --output <OUTPUT>
+          Path to output fastx file (or - for stdout; detects .gz and .zst) [default: -]
+  -O, --output2 <OUTPUT2>
+          Optional path to second paired output fastx file (detects .gz and .zst)
+  -m, --matches <MATCH_THRESHOLD>
+          Mininum number (integer) or proportion (float) of minimizer hits for a match [default: 2]
+  -p, --prefix-length <PREFIX_LENGTH>
+          Search only the first N nucleotides per sequence (0 = entire sequence) [default: 0]
+  -d, --deplete
+          Discard matching sequences (invert filtering behaviour)
+  -r, --rename
+          Replace sequence headers with incrementing numbers
+  -s, --summary <SUMMARY>
+          Path to JSON summary output file
+  -t, --threads <THREADS>
+          Number of execution threads (0 = auto) [default: 8]
+      --compression-level <COMPRESSION_LEVEL>
+          Output compression level (1-9 for gz & xz; 1-22 for zstd) [default: 2]
+  -h, --help
+          Print help
 ```
 
 ### Indexing
@@ -152,8 +163,6 @@ Options:
   -t, --threads <THREADS>             Number of execution threads (0 = auto) [default: 8]
   -h, --help                          Print help
 ```
-
-
 
 ## Building custom indexes
 
