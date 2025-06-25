@@ -16,6 +16,7 @@ use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 use zstd::stream::write::Encoder as ZstdEncoder;
+use liblzma::write::XzEncoder;
 
 const OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // Opt: 8MB output buffer
 
@@ -115,6 +116,52 @@ impl<W: Write> FastxWriter for ZstdWriter<W> {
     }
 }
 
+struct XzWriter<W: Write> {
+    encoder: Option<XzEncoder<W>>,
+}
+
+impl<W: Write> XzWriter<W> {
+    fn new(writer: W, compression_level: u32) -> Result<Self> {
+        let encoder = XzEncoder::new(writer, compression_level);
+        Ok(Self {
+            encoder: Some(encoder),
+        })
+    }
+}
+
+impl<W: Write> Write for XzWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(encoder) = &mut self.encoder {
+            encoder.write(buf)
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Writer has been closed",
+            ))
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        if let Some(encoder) = &mut self.encoder {
+            encoder.flush()
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "Writer has been closed",
+            ))
+        }
+    }
+}
+
+impl<W: Write> FastxWriter for XzWriter<W> {
+    fn flush_all(&mut self) -> io::Result<()> {
+        if let Some(encoder) = self.encoder.take() {
+            encoder.finish()?;
+        }
+        Ok(())
+    }
+}
+
 // Return a file writer appropriate for the output path extension
 fn get_writer(output_path: &str, compression_level: u8) -> Result<Box<dyn FastxWriter>> {
     if output_path == "-" {
@@ -153,6 +200,16 @@ fn get_writer(output_path: &str, compression_level: u8) -> Result<Box<dyn FastxW
             }
             let writer =
                 ZstdWriter::new(buffered_file, compression_level as i32).context("Failed to create zstd encoder")?;
+            Ok(Box::new(writer))
+        } else if output_path.ends_with(".xz") {
+            // Use xz (validate level 0-9)
+            if compression_level > 9 {
+                return Err(anyhow::anyhow!(
+                    "Invalid xz compression level {}. Must be between 0 and 9.",
+                    compression_level
+                ));
+            }
+            let writer = XzWriter::new(buffered_file, compression_level as u32)?;
             Ok(Box::new(writer))
         } else {
             // Vanilla FASTQ

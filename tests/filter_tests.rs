@@ -185,6 +185,35 @@ fn test_filter_to_file_zstd() {
 }
 
 #[test]
+fn test_filter_to_file_xz() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path = temp_dir.path().join("reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq.xz");
+
+    create_test_fasta(&fasta_path);
+    create_test_fastq(&fastq_path);
+    build_index(&fasta_path, &bin_path);
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    // Check that xz output file was created
+    assert!(output_path.exists(), "XZ output file wasn't created");
+    assert!(
+        fs::metadata(&output_path).unwrap().len() > 0,
+        "XZ output file is empty"
+    );
+}
+
+#[test]
 fn test_filter_deplete_flag() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");

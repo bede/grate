@@ -31,6 +31,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 needletail = "0.6"
 zstd = "0.13"
 indicatif = "0.17"
+liblzma = "0.3.1"
 
 [dev-dependencies]
 assert_cmd = "2.0"
