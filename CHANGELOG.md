@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2025-06-25
+
+### Added
+
+- Support for the .xz compression format via liblzma.
+- Adjustable filter output compression level with `--compression-level`.
+- Report fields `seqs_out_proportion` and `bp_out_proportion`.
+
+### Changed
+
+- Use zlib-rs for much faster gzip decompression.
+- Displays number and proportion of _retained_ reads and base pairs during filtering.
+
 ## [0.5.0] - 2025-06-11
 
 ### Added
