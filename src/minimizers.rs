@@ -124,12 +124,14 @@ pub fn fill_minimizer_hashes(
         &mut positions,
     );
 
-    // Convert positions to hash values using xxh3_64
-    hashes.extend(positions.iter().map(|&pos| {
-        let pos = pos as usize;
-        assert!(pos + kmer_length <= canonical_seq.len());
-        hash_canonical_kmer(&canonical_seq[pos..(pos + kmer_length)])
-    }));
+    hashes.extend(
+        simd_minimizers::iter_canonical_minimizer_values(
+            AsciiSeq(&canonical_seq),
+            kmer_length,
+            &positions,
+        )
+        .map(|kmer| xxh3::xxh3_64(&kmer.to_le_bytes())),
+    );
 }
 
 /// Hash forward k-mers
