@@ -147,14 +147,11 @@ pub fn fill_minimizer_hashes(
     );
 
     // Convert positions to hash values using xxh3_64
-    for &pos in &positions {
+    hashes.extend(positions.iter().map(|&pos| {
         let pos = pos as usize;
-        if pos + kmer_length <= canonical_seq.len() {
-            hashes.push(hash_canonical_kmer(
-                &canonical_seq[pos..(pos + kmer_length)],
-            ));
-        }
-    }
+        assert!(pos + kmer_length <= canonical_seq.len());
+        hash_canonical_kmer(&canonical_seq[pos..(pos + kmer_length)])
+    }));
 }
 
 /// Hash forward k-mers
