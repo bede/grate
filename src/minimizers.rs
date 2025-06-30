@@ -94,31 +94,9 @@ fn canonicalize_sequence(seq: &[u8]) -> Vec<u8> {
 
 /// Returns vector of all minimizer hashes for a sequence
 pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_size: usize) -> Vec<u64> {
-    // Skip if sequence is short
-    if seq.len() < kmer_length {
-        return Vec::new();
-    }
-    let canonical_seq = canonicalize_sequence(seq);
-    // Get minimizer positions using simd-minimizers
-    let mut positions = Vec::with_capacity(seq.len() / window_size + 1);
-    simd_minimizers::canonical_minimizer_positions(
-        AsciiSeq(&canonical_seq),
-        kmer_length,
-        window_size,
-        &mut positions,
-    );
-    // Convert positions to hash values with xxh3_64
-    positions
-        .iter()
-        .map(|&pos| {
-            let pos = pos as usize;
-            if pos + kmer_length <= canonical_seq.len() {
-                hash_canonical_kmer(&canonical_seq[pos..(pos + kmer_length)])
-            } else {
-                0 // Should never happen with valid minimizer positions
-            }
-        })
-        .collect()
+    let mut hashes = Vec::new();
+    fill_minimizer_hashes(seq, kmer_length, window_size, &mut hashes);
+    hashes
 }
 
 /// Fill a vector with minimizer hashes
