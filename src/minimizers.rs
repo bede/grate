@@ -134,40 +134,6 @@ pub fn fill_minimizer_hashes(
     );
 }
 
-/// Hash forward k-mers
-#[inline]
-fn hash_kmer(kmer: &[u8]) -> u64 {
-    xxh3::xxh3_64(kmer)
-}
-
-/// Hash function for canonical k-mers (min of forward and reverse complement)
-#[inline]
-fn hash_canonical_kmer(kmer: &[u8]) -> u64 {
-    let forward_hash = hash_kmer(kmer);
-    let reverse_hash = hash_reverse_complement(kmer);
-
-    // Return min of both hashes
-    std::cmp::min(forward_hash, reverse_hash)
-}
-
-/// Hash revcomp k-mers
-fn hash_reverse_complement(kmer: &[u8]) -> u64 {
-    let mut state = xxh3::Xxh3::new();
-
-    for &nucleotide in kmer.iter().rev() {
-        let complement = match nucleotide {
-            b'A' => b'T',
-            b'C' => b'G',
-            b'G' => b'C',
-            b'T' => b'A',
-            _ => b'N',
-        };
-        state.update(&[complement]);
-    }
-
-    state.digest()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -223,19 +189,5 @@ mod tests {
         let short_seq = b"ACGT";
         let short_hashes = compute_minimizer_hashes(short_seq, k, w);
         assert!(short_hashes.is_empty());
-    }
-
-    #[test]
-    fn test_hash_canonical_kmer() {
-        // Test canonical hashing (min of forward/reverse)
-        let kmer = b"ACGTA";
-        let rc_kmer = b"TACGT";
-
-        let forward_hash = hash_kmer(kmer);
-        let reverse_hash = hash_kmer(rc_kmer);
-        let canonical_hash = hash_canonical_kmer(kmer);
-
-        // Canonical hash should be minimum of the two
-        assert_eq!(canonical_hash, std::cmp::min(forward_hash, reverse_hash));
     }
 }
