@@ -12,74 +12,17 @@ fn canonicalize_nucleotide(nucleotide: u8, position: usize) -> u8 {
         b'C' | b'c' => b'C',
         b'G' | b'g' => b'G',
         b'T' | b't' => b'T',
-        b'R' | b'r' => {
-            if position % 2 == 0 {
-                b'A'
-            } else {
-                b'G'
-            }
-        }
-        b'Y' | b'y' => {
-            if position % 2 == 0 {
-                b'C'
-            } else {
-                b'T'
-            }
-        }
-        b'S' | b's' => {
-            if position % 2 == 0 {
-                b'G'
-            } else {
-                b'C'
-            }
-        }
-        b'W' | b'w' => {
-            if position % 2 == 0 {
-                b'A'
-            } else {
-                b'T'
-            }
-        }
-        b'K' | b'k' => {
-            if position % 2 == 0 {
-                b'G'
-            } else {
-                b'T'
-            }
-        }
-        b'M' | b'm' => {
-            if position % 2 == 0 {
-                b'A'
-            } else {
-                b'C'
-            }
-        }
-        b'B' | b'b' => match position % 3 {
-            0 => b'C',
-            1 => b'G',
-            _ => b'T',
-        },
-        b'D' | b'd' => match position % 3 {
-            0 => b'A',
-            1 => b'G',
-            _ => b'T',
-        },
-        b'H' | b'h' => match position % 3 {
-            0 => b'A',
-            1 => b'C',
-            _ => b'T',
-        },
-        b'V' | b'v' => match position % 3 {
-            0 => b'A',
-            1 => b'C',
-            _ => b'G',
-        },
-        b'N' | b'n' => match position % 4 {
-            0 => b'A',
-            1 => b'C',
-            2 => b'G',
-            _ => b'T',
-        },
+        b'R' | b'r' => b'A',
+        b'Y' | b'y' => b'T',
+        b'S' | b's' => b'C',
+        b'W' | b'w' => b'T',
+        b'K' | b'k' => b'T',
+        b'M' | b'm' => b'C',
+        b'B' | b'b' => b'C',
+        b'D' | b'd' => b'A',
+        b'H' | b'h' => b'A',
+        b'V' | b'v' => b'A',
+        b'N' | b'n' => b'A',
         _ => b'A', // Default to A for anything else
     }
 }
