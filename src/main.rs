@@ -74,7 +74,7 @@ enum Commands {
 enum IndexCommands {
     /// Index minimizers contained within a fastx file
     Build {
-        /// Path to input fastx file (supports .gz compression)
+        /// Path to input fastx file (supports gz, zst and xz compression)
         input: PathBuf,
 
         /// K-mer length used for indexing
