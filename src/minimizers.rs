@@ -4,26 +4,26 @@ use xxhash_rust::xxh3;
 pub const DEFAULT_KMER_LENGTH: usize = 31;
 pub const DEFAULT_WINDOW_SIZE: usize = 15;
 
-/// Canonicalize IUPAC ambiguous nucleotides to ACGT based on position, avoiding compositional bias?
+/// Resolve IUPAC ambiguous nucleotides to ACGT
 #[inline]
 fn canonicalize_nucleotide(nucleotide: u8, position: usize) -> u8 {
-    match nucleotide {
+match nucleotide {
         b'A' | b'a' => b'A',
         b'C' | b'c' => b'C',
         b'G' | b'g' => b'G',
         b'T' | b't' => b'T',
-        b'R' | b'r' => b'A',
-        b'Y' | b'y' => b'T',
-        b'S' | b's' => b'C',
-        b'W' | b'w' => b'T',
-        b'K' | b'k' => b'T',
+        b'R' | b'r' => b'G',
+        b'Y' | b'y' => b'C',
+        b'S' | b's' => b'G',
+        b'W' | b'w' => b'A',
+        b'K' | b'k' => b'G',
         b'M' | b'm' => b'C',
         b'B' | b'b' => b'C',
-        b'D' | b'd' => b'A',
-        b'H' | b'h' => b'A',
-        b'V' | b'v' => b'A',
-        b'N' | b'n' => b'A',
-        _ => b'A', // Default to A for anything else
+        b'D' | b'd' => b'G',
+        b'H' | b'h' => b'C',
+        b'V' | b'v' => b'G',
+        b'N' | b'n' => b'C',
+        _ => b'C',
     }
 }
 
