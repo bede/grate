@@ -21,7 +21,7 @@ pub struct IndexHeader {
 impl IndexHeader {
     pub fn new(kmer_length: usize, window_size: usize) -> Self {
         IndexHeader {
-            format_version: 1,
+            format_version: 2,
             kmer_length: kmer_length as u8,
             window_size: window_size as u8,
         }
@@ -29,9 +29,9 @@ impl IndexHeader {
 
     /// Validate header
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.format_version != 1 {
+        if self.format_version != 2 {
             return Err(anyhow::anyhow!(
-                "Unsupported file format version: {}",
+                "Unsupported index format version: {}",
                 self.format_version
             ));
         }
@@ -374,7 +374,7 @@ mod tests {
     fn test_header_creation() {
         let header = IndexHeader::new(31, 21);
 
-        assert_eq!(header.format_version, 1);
+        assert_eq!(header.format_version, 2);
         assert_eq!(header.kmer_length(), 31);
         assert_eq!(header.window_size(), 21);
     }
@@ -383,7 +383,7 @@ mod tests {
     fn test_header_validation() {
         // Valid header
         let valid_header = IndexHeader {
-            format_version: 1,
+            format_version: 2,
             kmer_length: 31,
             window_size: 21,
         };
@@ -391,7 +391,7 @@ mod tests {
 
         // Invalid format version
         let invalid_header = IndexHeader {
-            format_version: 2, // Unsupported version
+            format_version: 1, // Unsupported version
             kmer_length: 31,
             window_size: 21,
         };
