@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use needletail::parse_fastx_file;
 
-/// Serializable header for the index file
+/// Serialisable header for the index file
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IndexHeader {
     pub format_version: u8,
@@ -21,7 +21,7 @@ pub struct IndexHeader {
 impl IndexHeader {
     pub fn new(kmer_length: usize, window_size: usize) -> Self {
         IndexHeader {
-            format_version: 1,
+            format_version: 2,
             kmer_length: kmer_length as u8,
             window_size: window_size as u8,
         }
@@ -29,9 +29,9 @@ impl IndexHeader {
 
     /// Validate header
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.format_version != 1 {
+        if self.format_version != 2 {
             return Err(anyhow::anyhow!(
-                "Unsupported file format version: {}",
+                "Unsupported index format version: {}",
                 self.format_version
             ));
         }
@@ -56,14 +56,14 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
         File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
     let mut reader = BufReader::new(file);
 
-    // Deserialize header
+    // Deserialise header
     let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialize index header")?;
+        .context("Failed to deserialise index header")?;
     header.validate()?;
 
-    // Deserialize the count of minimizers so we can init a FxHashSet with the right capacity
+    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
     let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialize minimizer count")?;
+        .context("Failed to deserialise minimizer count")?;
 
     // Pre-allocate FxHashSet with correct capacity
     let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
@@ -71,7 +71,7 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
     // Populate FxHashSet
     for _ in 0..count {
         let hash: u64 = decode_from_std_read(&mut reader, bincode::config::standard())
-            .context("Failed to deserialize minimizer hash")?;
+            .context("Failed to deserialise minimizer hash")?;
         minimizers.insert(hash);
     }
 
@@ -97,20 +97,20 @@ pub fn write_minimizers(
         Box::new(BufWriter::new(io::stdout()))
     };
 
-    // Serialize header and minimizers
+    // Serialise header and minimizers
     let mut writer = BufWriter::new(writer);
     encode_into_std_write(header, &mut writer, bincode::config::standard())
-        .context("Failed to serialize index header")?;
+        .context("Failed to serialise index header")?;
 
-    // Serialize the count of minimizers first
+    // Serialise the count of minimizers first
     let count = minimizers.len();
     encode_into_std_write(&count, &mut writer, bincode::config::standard())
-        .context("Failed to serialize minimizer count")?;
+        .context("Failed to serialise minimizer count")?;
 
-    // Serialize each minimizer directly
+    // Serialise each minimizer directly
     for &hash in minimizers {
         encode_into_std_write(&hash, &mut writer, bincode::config::standard())
-            .context("Failed to serialize minimizer hash")?;
+            .context("Failed to serialise minimizer hash")?;
     }
     Ok(())
 }
@@ -374,7 +374,7 @@ mod tests {
     fn test_header_creation() {
         let header = IndexHeader::new(31, 21);
 
-        assert_eq!(header.format_version, 1);
+        assert_eq!(header.format_version, 2);
         assert_eq!(header.kmer_length(), 31);
         assert_eq!(header.window_size(), 21);
     }
@@ -383,7 +383,7 @@ mod tests {
     fn test_header_validation() {
         // Valid header
         let valid_header = IndexHeader {
-            format_version: 1,
+            format_version: 2,
             kmer_length: 31,
             window_size: 21,
         };
@@ -391,7 +391,7 @@ mod tests {
 
         // Invalid format version
         let invalid_header = IndexHeader {
-            format_version: 2, // Unsupported version
+            format_version: 1, // Unsupported version
             kmer_length: 31,
             window_size: 21,
         };
