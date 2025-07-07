@@ -502,7 +502,7 @@ pub fn run<P: AsRef<Path>>(
             .context(format!("Failed to create summary: {:?}", summary_file))?;
         let writer = BufWriter::new(file);
 
-        // Serialize and write the summary JSON
+        // Serialise and write the summary JSON
         serde_json::to_writer_pretty(writer, &summary).context("Failed to write summary")?;
 
         eprintln!("Summary saved to {:?}", summary_file);

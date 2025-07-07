@@ -4,9 +4,9 @@ use xxhash_rust::xxh3;
 pub const DEFAULT_KMER_LENGTH: usize = 31;
 pub const DEFAULT_WINDOW_SIZE: usize = 15;
 
-/// Resolve IUPAC ambiguous nucleotides to ACGT
+/// Canonicalise IUPAC ambiguous nucleotides to ACGT
 #[inline]
-fn canonicalize_nucleotide(nucleotide: u8, position: usize) -> u8 {
+fn canonicalise_nucleotide(nucleotide: u8) -> u8 {
 match nucleotide {
         b'A' | b'a' => b'A',
         b'C' | b'c' => b'C',
@@ -27,11 +27,10 @@ match nucleotide {
     }
 }
 
-/// Canonicalize a sequence
-fn canonicalize_sequence(seq: &[u8]) -> Vec<u8> {
+/// Canonicalise a sequence
+fn canonicalise_sequence(seq: &[u8]) -> Vec<u8> {
     seq.iter()
-        .enumerate()
-        .map(|(i, &nucleotide)| canonicalize_nucleotide(nucleotide, i))
+        .map(|&nucleotide| canonicalise_nucleotide(nucleotide))
         .collect()
 }
 
@@ -56,7 +55,7 @@ pub fn fill_minimizer_hashes(
         return;
     }
 
-    let canonical_seq = canonicalize_sequence(seq);
+    let canonical_seq = canonicalise_sequence(seq);
 
     // Get minimizer positions using simd-minimizers
     let mut positions = Vec::new();
@@ -82,38 +81,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_canonicalize_nucleotide() {
+    fn test_canonicalise_nucleotide() {
         // Test basic nucleotides
-        assert_eq!(canonicalize_nucleotide(b'A', 0), b'A');
-        assert_eq!(canonicalize_nucleotide(b'C', 0), b'C');
-        assert_eq!(canonicalize_nucleotide(b'G', 0), b'G');
-        assert_eq!(canonicalize_nucleotide(b'T', 0), b'T');
+        assert_eq!(canonicalise_nucleotide(b'A'), b'A');
+        assert_eq!(canonicalise_nucleotide(b'C'), b'C');
+        assert_eq!(canonicalise_nucleotide(b'G'), b'G');
+        assert_eq!(canonicalise_nucleotide(b'T'), b'T');
 
         // Test lowercase
-        assert_eq!(canonicalize_nucleotide(b'a', 0), b'A');
-        assert_eq!(canonicalize_nucleotide(b'c', 0), b'C');
+        assert_eq!(canonicalise_nucleotide(b'a'), b'A');
+        assert_eq!(canonicalise_nucleotide(b'c'), b'C');
 
-        // Test ambiguous nucleotides (position-dependent)
-        assert_eq!(canonicalize_nucleotide(b'R', 0), b'A'); // position 0 -> A
-        assert_eq!(canonicalize_nucleotide(b'R', 1), b'G'); // position 1 -> G
-
-        // Test N at different positions
-        assert_eq!(canonicalize_nucleotide(b'N', 0), b'A');
-        assert_eq!(canonicalize_nucleotide(b'N', 1), b'C');
-        assert_eq!(canonicalize_nucleotide(b'N', 2), b'G');
-        assert_eq!(canonicalize_nucleotide(b'N', 3), b'T');
+        // Test ambiguous nucleotides
+        assert_eq!(canonicalise_nucleotide(b'R'), b'G');
+        assert_eq!(canonicalise_nucleotide(b'Y'), b'C');
+        assert_eq!(canonicalise_nucleotide(b'S'), b'G');
+        assert_eq!(canonicalise_nucleotide(b'W'), b'A');
+        assert_eq!(canonicalise_nucleotide(b'K'), b'G');
+        assert_eq!(canonicalise_nucleotide(b'M'), b'C');
+        assert_eq!(canonicalise_nucleotide(b'B'), b'C');
+        assert_eq!(canonicalise_nucleotide(b'D'), b'G');
+        assert_eq!(canonicalise_nucleotide(b'H'), b'C');
+        assert_eq!(canonicalise_nucleotide(b'V'), b'G');
+        assert_eq!(canonicalise_nucleotide(b'N'), b'C');
     }
 
     #[test]
-    fn test_canonicalize_sequence() {
+    fn test_canonicalise_sequence() {
         let seq = b"ACGTN";
-        let canonical = canonicalize_sequence(seq);
-        assert_eq!(canonical, b"ACGTA"); // N at position 4 becomes A
+        let canonical = canonicalise_sequence(seq);
+        assert_eq!(canonical, b"ACGTC"); // N becomes C
 
         let seq = b"RYMKWS";
-        let canonical = canonicalize_sequence(seq);
-        assert_eq!(canonical[0], b'A'); // R at position 0 becomes A
-        assert_eq!(canonical[1], b'T'); // Y at position 1 becomes T (not C) since position 1 % 2 == 1
+        let canonical = canonicalise_sequence(seq);
+        assert_eq!(canonical, b"GCCGAG"); // R->G, Y->C, M->C, K->G, W->A, S->G
     }
 
     #[test]

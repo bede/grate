@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use needletail::parse_fastx_file;
 
-/// Serializable header for the index file
+/// Serialisable header for the index file
 #[derive(Serialize, Deserialize, Debug)]
 pub struct IndexHeader {
     pub format_version: u8,
@@ -56,14 +56,14 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
         File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
     let mut reader = BufReader::new(file);
 
-    // Deserialize header
+    // Deserialise header
     let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialize index header")?;
+        .context("Failed to deserialise index header")?;
     header.validate()?;
 
-    // Deserialize the count of minimizers so we can init a FxHashSet with the right capacity
+    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
     let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialize minimizer count")?;
+        .context("Failed to deserialise minimizer count")?;
 
     // Pre-allocate FxHashSet with correct capacity
     let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
@@ -71,7 +71,7 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
     // Populate FxHashSet
     for _ in 0..count {
         let hash: u64 = decode_from_std_read(&mut reader, bincode::config::standard())
-            .context("Failed to deserialize minimizer hash")?;
+            .context("Failed to deserialise minimizer hash")?;
         minimizers.insert(hash);
     }
 
@@ -97,20 +97,20 @@ pub fn write_minimizers(
         Box::new(BufWriter::new(io::stdout()))
     };
 
-    // Serialize header and minimizers
+    // Serialise header and minimizers
     let mut writer = BufWriter::new(writer);
     encode_into_std_write(header, &mut writer, bincode::config::standard())
-        .context("Failed to serialize index header")?;
+        .context("Failed to serialise index header")?;
 
-    // Serialize the count of minimizers first
+    // Serialise the count of minimizers first
     let count = minimizers.len();
     encode_into_std_write(&count, &mut writer, bincode::config::standard())
-        .context("Failed to serialize minimizer count")?;
+        .context("Failed to serialise minimizer count")?;
 
-    // Serialize each minimizer directly
+    // Serialise each minimizer directly
     for &hash in minimizers {
         encode_into_std_write(&hash, &mut writer, bincode::config::standard())
-            .context("Failed to serialize minimizer hash")?;
+            .context("Failed to serialise minimizer hash")?;
     }
     Ok(())
 }
