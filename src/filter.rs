@@ -344,6 +344,9 @@ pub fn run<P: AsRef<Path>>(
     let mut filtered_bp = 0;
     let mut output_seq_counter = 0;
 
+    // Start timer for filtering rate calculation (excludes index loading time)
+    let filtering_start_time = Instant::now();
+
     if paired_stdin {
         process_interleaved_paired_seqs(
             &minimizer_hashes,
@@ -362,7 +365,7 @@ pub fn run<P: AsRef<Path>>(
             &mut filtered_bp,
             &mut output_seq_counter,
             &spinner,
-            start_time,
+            filtering_start_time,
         )?;
     } else if let Some(input2_path) = input2_path {
         process_paired_seqs(
@@ -384,7 +387,7 @@ pub fn run<P: AsRef<Path>>(
             &mut filtered_bp,
             &mut output_seq_counter,
             &spinner,
-            start_time,
+            filtering_start_time,
         )?;
     } else {
         process_single_seqs(
@@ -404,7 +407,7 @@ pub fn run<P: AsRef<Path>>(
             &mut filtered_bp,
             &mut output_seq_counter,
             &spinner,
-            start_time,
+            filtering_start_time,
         )?;
     }
 
@@ -528,7 +531,7 @@ fn process_single_seqs(
     filtered_bp: &mut u64,
     output_seq_counter: &mut u64,
     spinner: &ProgressBar,
-    start_time: Instant,
+    filtering_start_time: Instant,
 ) -> Result<()> {
     // Create a reader based on the input source
     let mut reader = if input_path == "-" {
@@ -666,7 +669,7 @@ fn process_single_seqs(
         }
 
         // Update spinner and flush periodically
-        let elapsed = start_time.elapsed();
+        let elapsed = filtering_start_time.elapsed();
         let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
@@ -730,7 +733,7 @@ fn process_paired_seqs(
     filtered_bp: &mut u64,
     output_seq_counter: &mut u64,
     spinner: &ProgressBar,
-    start_time: Instant,
+    filtering_start_time: Instant,
 ) -> Result<()> {
     // Open both input files
     let mut reader1 = if input1_path == "-" {
@@ -945,7 +948,7 @@ fn process_paired_seqs(
         }
 
         // Update spinner and flush periodically
-        let elapsed = start_time.elapsed();
+        let elapsed = filtering_start_time.elapsed();
         let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
@@ -1010,7 +1013,7 @@ fn process_interleaved_paired_seqs(
     filtered_bp: &mut u64,
     output_seq_counter: &mut u64,
     spinner: &ProgressBar,
-    start_time: Instant,
+    filtering_start_time: Instant,
 ) -> Result<()> {
     // Parse FASTX from stdin
     let mut reader = parse_fastx_stdin()?;
@@ -1237,7 +1240,7 @@ fn process_interleaved_paired_seqs(
         }
 
         // Update spinner and flush periodically
-        let elapsed = start_time.elapsed();
+        let elapsed = filtering_start_time.elapsed();
         let seqs_per_sec = *total_seqs as f64 / elapsed.as_secs_f64();
         let bp_per_sec = *total_bp as f64 / elapsed.as_secs_f64();
         let mbp_per_sec = bp_per_sec / 1_000_000.0;
