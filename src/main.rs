@@ -118,9 +118,17 @@ enum IndexCommands {
         #[arg(required = true)]
         first: PathBuf,
 
-        /// Path to second index file (to subtract from first)
+        /// Path to second index file or FASTX file (or - for stdin when using FASTX)
         #[arg(required = true)]
         second: PathBuf,
+
+        /// K-mer length (required if second argument is FASTX file)
+        #[arg(short = 'k', long = "kmer-length")]
+        kmer_length: Option<usize>,
+
+        /// Window size (required if second argument is FASTX file)
+        #[arg(short = 'w', long = "window-size")]
+        window_size: Option<usize>,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
@@ -176,9 +184,11 @@ fn main() -> Result<()> {
             IndexCommands::Diff {
                 first,
                 second,
+                kmer_length,
+                window_size,
                 output,
             } => {
-                diff_index(first, second, output.as_ref())
+                diff_index(first, second, *kmer_length, *window_size, output.as_ref())
                     .context("Failed to run index diff command")?;
             }
         },

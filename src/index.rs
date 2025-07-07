@@ -8,7 +8,7 @@ use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-use needletail::parse_fastx_file;
+use needletail::{parse_fastx_file, parse_fastx_stdin};
 
 /// Serialisable header for the index file
 #[derive(Serialize, Deserialize, Debug)]
@@ -230,41 +230,220 @@ pub fn build<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Compute the set difference between two minimizer indexes (A - B)
-pub fn diff<P: AsRef<Path>>(first: P, second: P, output: Option<&PathBuf>) -> Result<()> {
-    let start_time = Instant::now();
+/// Stream minimizers from a FASTX file or stdin and remove those present in first_minimizers
+fn stream_diff_fastx<P: AsRef<Path>>(
+    fastx_path: P,
+    kmer_length: usize,
+    window_size: usize,
+    first_header: &IndexHeader,
+    first_minimizers: &mut FxHashSet<u64>,
+) -> Result<(usize, usize)> {
+    let path = fastx_path.as_ref();
 
-    // Load first file
-    let (mut first_minimizers, header) = load_minimizer_hashes(&first)?;
-    eprintln!(
-        "Loaded {} minimizers from first index",
-        first_minimizers.len()
-    );
-
-    // Load second file
-    let (second_minimizers, second_header) = load_minimizer_hashes(&second)?;
-    eprintln!(
-        "Loaded {} minimizers from second index",
-        second_minimizers.len()
-    );
-
-    // Validate compatible headers
-    if second_header.kmer_length() != header.kmer_length()
-        || second_header.window_size() != header.window_size()
-    {
+    // Validate parameters match the first index
+    if kmer_length != first_header.kmer_length() || window_size != first_header.window_size() {
         return Err(anyhow::anyhow!(
-            "Incompatible headers: second index has k={}, w={}, but first index has k={}, w={}",
-            second_header.kmer_length(),
-            second_header.window_size(),
-            header.kmer_length(),
-            header.window_size()
+            "FASTX parameters (k={}, w={}) must match first index (k={}, w={})",
+            kmer_length,
+            window_size,
+            first_header.kmer_length(),
+            first_header.window_size()
         ));
     }
 
+    if path.to_string_lossy() == "-" {
+        eprintln!(
+            "Second index: processing FASTX from stdin (k={}, w={})…",
+            kmer_length, window_size
+        );
+    } else {
+        eprintln!(
+            "Second index: processing FASTX from file (k={}, w={})…",
+            kmer_length, window_size
+        );
+    }
+
+    // Create a fastx reader
+    let mut reader = if path.to_string_lossy() == "-" {
+        parse_fastx_stdin().context("Failed to parse FASTX from stdin")?
+    } else {
+        parse_fastx_file(path).context("Failed to open FASTX file")?
+    };
+
+    let mut seq_count = 0;
+    let mut total_bp = 0;
+    let mut removed_count = 0;
+    let mut last_reported_gb = 0;
+
+    // Process sequences in batches for parallelization
+    let batch_size = 1000;
+
+    loop {
+        // Collect a batch of sequences
+        let mut batch = Vec::with_capacity(batch_size);
+        let mut reached_end = false;
+
+        for _ in 0..batch_size {
+            if let Some(record_result) = reader.next() {
+                match record_result {
+                    Ok(record) => {
+                        let seq_data = record.seq().to_vec();
+                        let id = record.id().to_vec();
+                        batch.push((seq_data, id));
+                    }
+                    Err(e) => return Err(e.into()),
+                }
+            } else {
+                reached_end = true;
+                break;
+            }
+        }
+
+        if batch.is_empty() {
+            break;
+        }
+
+        // Process batch in parallel
+        let batch_results: Vec<_> = batch
+            .par_iter()
+            .map(|(seq_data, _id)| {
+                // Compute minimizer hashes for this sequence
+                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size)
+            })
+            .collect();
+
+        // Stream removal: remove minimizers as we find them
+        for (i, hashes) in batch_results.iter().enumerate() {
+            let (seq_data, _id) = &batch[i];
+
+            // Remove matching minimizers from first_minimizers immediately
+            for &hash in hashes {
+                if first_minimizers.remove(&hash) {
+                    removed_count += 1;
+                }
+            }
+
+            seq_count += 1;
+            total_bp += seq_data.len();
+
+            let current_gb = total_bp / 1_000_000_000;
+            if current_gb > last_reported_gb {
+                eprintln!(
+                    "  Processed {} sequences ({}bp), removed {} minimizers",
+                    seq_count, total_bp, removed_count
+                );
+                last_reported_gb = current_gb;
+            }
+        }
+
+        // Check if we've reached the end of the file
+        if reached_end {
+            break;
+        }
+    }
+
+    eprintln!(
+        "Processed {} sequences ({}bp) from FASTX file",
+        seq_count, total_bp
+    );
+
+    Ok((seq_count, total_bp))
+}
+
+/// Compute the set difference between two minimizer indexes (A - B)
+pub fn diff<P: AsRef<Path>>(
+    first: P,
+    second: P,
+    kmer_length: Option<usize>,
+    window_size: Option<usize>,
+    output: Option<&PathBuf>,
+) -> Result<()> {
+    let start_time = Instant::now();
+
+    // Load first file (always an index)
+    let (mut first_minimizers, header) = load_minimizer_hashes(&first)?;
+    eprintln!("First index: loaded {} minimizers", first_minimizers.len());
+
+    // Guess if second file is an index or FASTX file
+    let second_minimizers = if let (Some(k), Some(w)) = (kmer_length, window_size) {
+        // Second file is a FASTX file - stream diff with provided k, w
+        let before_count = first_minimizers.len();
+        let (_seq_count, _total_bp) =
+            stream_diff_fastx(&second, k, w, &header, &mut first_minimizers)?;
+
+        // Report results
+        eprintln!(
+            "Removed {} minimizers, {} remaining",
+            before_count - first_minimizers.len(),
+            first_minimizers.len()
+        );
+
+        write_minimizers(&first_minimizers, &header, output)?;
+
+        let total_time = start_time.elapsed();
+        eprintln!("Completed difference operation in {:.2?}", total_time);
+
+        return Ok(());
+    } else {
+        // Try to load as index file first
+        if let Ok((second_minimizers, second_header)) = load_minimizer_hashes(&second) {
+            // Second file is an index file
+            eprintln!(
+                "Second index: loaded {} minimizers",
+                second_minimizers.len()
+            );
+
+            // Validate compatible headers
+            if second_header.kmer_length() != header.kmer_length()
+                || second_header.window_size() != header.window_size()
+            {
+                return Err(anyhow::anyhow!(
+                    "Incompatible headers: second index has k={}, w={}, but first index has k={}, w={}",
+                    second_header.kmer_length(),
+                    second_header.window_size(),
+                    header.kmer_length(),
+                    header.window_size()
+                ));
+            }
+
+            second_minimizers
+        } else {
+            // Second file is not a valid index, treat as FASTX file
+            // Use k and w from first index header and do a streaming diff
+            let k = header.kmer_length();
+            let w = header.window_size();
+            // eprintln!(
+            //     "Second index is not valid, treating as FASTX and extracting minimizers (k={}, w={})",
+            //     k, w
+            // );
+
+            // Count minimizers before diff
+            let before_count = first_minimizers.len();
+
+            let (_seq_count, _total_bp) =
+                stream_diff_fastx(&second, k, w, &header, &mut first_minimizers)?;
+
+            // Report results
+            eprintln!(
+                "Removed {} minimizers, {} remaining",
+                before_count - first_minimizers.len(),
+                first_minimizers.len()
+            );
+
+            write_minimizers(&first_minimizers, &header, output)?;
+
+            let total_time = start_time.elapsed();
+            eprintln!("Completed difference operation in {:.2?}", total_time);
+
+            return Ok(());
+        }
+    };
+
+    // Handle straightforward index-to-index diffing
     // Count minimizers before diff
     let before_count = first_minimizers.len();
 
-    // Remove all hashes in second_minimizers from main_minimizers
+    // Remove all hashes in second_minimizers from first_minimizers
     for hash in &second_minimizers {
         first_minimizers.remove(hash);
     }
@@ -276,11 +455,10 @@ pub fn diff<P: AsRef<Path>>(first: P, second: P, output: Option<&PathBuf>) -> Re
         first_minimizers.len()
     );
 
-    // Write to output
     write_minimizers(&first_minimizers, &header, output)?;
 
     let total_time = start_time.elapsed();
-    eprintln!("Completed difference operation in {:.2?}", total_time);
+    eprintln!("Completed diff operation in {:.2?}", total_time);
 
     Ok(())
 }
@@ -352,7 +530,6 @@ pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<(
         );
     }
 
-    // Write output
     write_minimizers(&all_minimizers, &header, output)?;
 
     let total_time = start_time.elapsed();

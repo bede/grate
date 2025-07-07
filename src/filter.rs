@@ -1350,7 +1350,6 @@ mod tests {
         let minimizers: FxHashSet<u64> = [1, 2, 3, 4, 5].iter().cloned().collect();
         let header = IndexHeader::new(5, 3);
 
-        // Write to file
         write_minimizers(&minimizers, &header, Some(&index_path)).unwrap();
 
         // Return the TempDir along with the other values to keep it in scope

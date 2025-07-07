@@ -7,7 +7,7 @@ pub const DEFAULT_WINDOW_SIZE: usize = 15;
 /// Canonicalise IUPAC ambiguous nucleotides to ACGT
 #[inline]
 fn canonicalise_nucleotide(nucleotide: u8) -> u8 {
-match nucleotide {
+    match nucleotide {
         b'A' | b'a' => b'A',
         b'C' | b'c' => b'C',
         b'G' | b'g' => b'G',
