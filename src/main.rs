@@ -90,7 +90,7 @@ enum IndexCommands {
         output: String,
 
         /// Preallocated index capacity in millions of minimizers
-        #[arg(short = 'c', long = "capacity", default_value_t = 500)]
+        #[arg(short = 'c', long = "capacity", default_value_t = 400)]
         capacity_millions: usize,
 
         /// Number of execution threads (0 = auto)

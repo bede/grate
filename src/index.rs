@@ -128,7 +128,19 @@ pub fn build<P: AsRef<Path>>(
     let path = input.as_ref();
 
     let version: String = env!("CARGO_PKG_VERSION").to_string();
-    eprintln!("Deacon v{}", version,);
+
+    // Build options string similar to filter
+    let mut options = Vec::<String>::new();
+    options.push(format!("capacity={}M", capacity_millions));
+    if threads > 0 {
+        options.push(format!("threads={}", threads));
+    }
+
+    eprintln!(
+        "Deacon v{}; mode: build; input: single; options: {}",
+        version,
+        options.join(", ")
+    );
 
     // Ensure l = k + w - 1 is odd so that canonicalisation tie breaks work correctly
     let l = kmer_length + window_size - 1;
@@ -156,7 +168,7 @@ pub fn build<P: AsRef<Path>>(
     let mut all_minimizers: FxHashSet<u64> =
         FxHashSet::with_capacity_and_hasher(capacity, Default::default());
 
-    eprintln!("Indexing (k={}, w={})…", kmer_length, window_size);
+    eprintln!("Building index (k={}, w={})", kmer_length, window_size);
 
     let mut seq_count = 0;
     let mut total_bp = 0;
