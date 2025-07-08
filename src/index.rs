@@ -130,6 +130,16 @@ pub fn build<P: AsRef<Path>>(
     let version: String = env!("CARGO_PKG_VERSION").to_string();
     eprintln!("Deacon v{}", version,);
 
+    // Ensure l = k + w - 1 is odd so that canonicalisation tie breaks work correctly
+    let l = kmer_length + window_size - 1;
+    if l % 2 == 0 {
+        return Err(anyhow::anyhow!(
+            "Constraint violated: k + w - 1 must be odd (k={}, w={})",
+            kmer_length,
+            window_size
+        ));
+    }
+
     // Configure thread pool if specified (non-zero)
     if threads > 0 {
         rayon::ThreadPoolBuilder::new()
