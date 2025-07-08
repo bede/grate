@@ -169,7 +169,8 @@ Options:
 Building custom Deacon indexes is quite fast. Nevertheless, when indexing many large genomes, it may be worthwhile separately indexing and subsequently combining indexes into one succinct index. Combine distinct minimizers from multiple indexes using `deacon index union`. Similarly, use `deacon index diff` to subtract the minimizers contained in one index from another. This can be helpful  for e.g. eliminating shared minimizers between the target and host genomes when building custom (non-human) indexes for host depletion.
 
 - Use `deacon index union 1.idx 2.idx 3.idx… > 1+2+3.idx` to succinctly combine two (or more!) deacon indexes.
-- Use `deacon index diff host.idx fungi.idx > 1-2.idx` to subtract minimizers in fungi.idx from host.idx. Useful for masking out shared minimizer content between e.g. target and host genomes.
+- Use `deacon index diff 1.idx 2.idx > 1-2.idx` to subtract minimizers in fungi.idx from host.idx. Useful for masking out shared minimizer content between e.g. target and host genomes.
+- In version `0.7.0` and above, `deacon index diff` also supports subtracting minimizers from an index using a fastx file or stream, e.g. `deacon index diff 1.idx 2.fa.gz > 1-2.idx` or ``zcat *.fa.gz | deacon index diff 1.idx - > 1-2.idx`.
 
 For best performance, set the `--capacity` argument of `deacon index build` to a number of minimizers in millions greater than that you expect your index to contain. Setting this too low will cause delays during indexing for hash table resizing.
 

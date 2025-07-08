@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2025-07-08
+
+### Added
+- `deacon index diff` optionally accepts a fastx file or stream in place of a second index. This enables index masking using massive sequence collections without the need to first index them.
+
+### Changed
+- Deacon uses the recently added `simd-minimizers::iter_canonical_minimizer_values()`, increasing filtering speed by up to 50% on Linux/x86_64 systems. Speeds exceeding 500Mbp/s are now possible.
+  - Index format is now version 2. Existing indexes must be rebuilt for use with this version. A new version of the panhuman-1 index is available from Zenodo and object storage. Attempting to load an incompatible index throws an error.
+- Position-dependent IUPAC ambiguous base canonicalisation was replaced with a simpler and faster fixed mapping, meaning that records containing ambiguous IUPAC bases may be classified differently to before.
+- `deacon index union` now automatically preallocates the required hash table capacity, eleminating slowdowns when combining indexes.
+- Compatible minimizer _k_ and _w_ is now validated (k+w-1 must be odd) prior to indexing.
+- Default index capacity is now 400M (Was 500).
+
+
+
+
 ## [0.6.0] - 2025-06-25
 
 ### Added
