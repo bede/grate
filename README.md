@@ -7,7 +7,7 @@
 
 Fast minimizer-based search and depletion of FASTA/FASTQ files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be varied at filter time. `m` can be specified either as a minimum integer of minimizer matches (default is 2), else a minimum proportion of minimizer hits between 0.0 and 1.0. Short and/or paired reads are supported: A match in either mate causes both mates in the pair to be retained or discarded. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance during execution and optionally writes a JSON summary on completion. Gzip, zst and xz compression formats are natively supported and detected by file extension.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering long reads at >250Mbp/s (Apple M4) and indexing a human genome in <30s.  Peak memory usage during filtering is 5GB for the default panhuman index. Use Zstandard (zst) compression or pipe output to e.g. `pigz` for best performance.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering compressed long reads at >250Mbp/s and indexing a human genome in <30s. Filtering at >1Gbp/s is possible with uncompressed FASTA input. Peak memory usage during filtering is 5GB for the default panhuman index. Use Zstandard (zst) compression and/or pipe output to e.g. `pigz` for best performance.
 
 Benchmarks for panhuman host depletion of complex microbial metagenomes are described in a [preprint](https://www.biorxiv.org/content/10.1101/2025.06.09.658732v1). Among tested approaches, Deacon with the panhuman-1 (*k*=31, w=15) index exhibited the highest balanced accuracy for both long and short simulated reads. Deacon was however less specific than Hostile for short reads.
 
@@ -60,8 +60,8 @@ deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 # More sensitive match threshold of at least 1 minimizer hit
 deacon filter -d -m 1 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
-# More specific match threshold of 50% minimizer hits (minimum 1)
-deacon filter -d -m 0.5 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
+# More specific match threshold of 25% minimizer hits (minimum 1)
+deacon filter -d -m 0.25 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
 # Stdin and stdout
 zcat reads.fq.gz | deacon filter -d panhuman-1.k31w15.idx > filt.fq
