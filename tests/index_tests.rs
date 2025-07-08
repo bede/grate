@@ -3,12 +3,18 @@ use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
 
-// Create one of several test fastas
+// Create one of several test fastas with sequences long enough for k=31
 fn create_test_fasta(path: &Path, variant: usize) {
     let fasta_content = match variant {
-        1 => ">seq1\nACGTACGTACGT\n>seq2\nCGTACGTACGTA\n",
-        2 => ">seq1\nTGCATGCATGCA\n>seq2\nGCATGCATGCAT\n",
-        _ => ">seq1\nACGTACGTACGT\n>seq2\nGTACGTACGTAC\n",
+        1 => {
+            ">seq1\nACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n>seq2\nCGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTA\n"
+        }
+        2 => {
+            ">seq1\nTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n>seq2\nGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCAT\n"
+        }
+        _ => {
+            ">seq1\nACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGT\n>seq2\nGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTACGTAC\n"
+        }
     };
     fs::write(path, fasta_content).unwrap();
 }
@@ -64,7 +70,7 @@ fn test_index_build_with_custom_kmer_window() {
         .arg("-k")
         .arg("15")
         .arg("-w")
-        .arg("10")
+        .arg("11")
         .arg("-o")
         .arg(&bin_path)
         .assert()
@@ -160,5 +166,186 @@ fn test_index_diff() {
         "Result index size {} should be less than or equal to the first index size {}",
         result_size,
         bin1_size
+    );
+}
+
+#[test]
+fn test_index_diff_three_methods() {
+    let temp_dir = tempdir().unwrap();
+    let fasta1_path = temp_dir.path().join("test1.fasta");
+    let fasta2_path = temp_dir.path().join("test2.fasta");
+    let bin1_path = temp_dir.path().join("test1.bin");
+    let bin2_path = temp_dir.path().join("test2.bin");
+    let result_index_path = temp_dir.path().join("result_index.bin");
+    let result_fastx_path = temp_dir.path().join("result_fastx.bin");
+    let result_stdin_path = temp_dir.path().join("result_stdin.bin");
+
+    // Create test FASTAs with overlapping content
+    create_test_fasta(&fasta1_path, 1);
+    create_test_fasta(&fasta2_path, 2);
+
+    // Build indexes
+    build_index(&fasta1_path, &bin1_path);
+    build_index(&fasta2_path, &bin2_path);
+
+    // Method 1: Index + Index diff
+    let output1 = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("index")
+        .arg("diff")
+        .arg("-o")
+        .arg(&result_index_path)
+        .arg(&bin1_path)
+        .arg(&bin2_path)
+        .output()
+        .unwrap();
+    assert!(output1.status.success());
+
+    // Method 2: Index + FASTX file diff (with explicit k,w)
+    let output2 = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("index")
+        .arg("diff")
+        .arg("-k")
+        .arg("31")
+        .arg("-w")
+        .arg("15")
+        .arg("-o")
+        .arg(&result_fastx_path)
+        .arg(&bin1_path)
+        .arg(&fasta2_path)
+        .output()
+        .unwrap();
+    assert!(output2.status.success());
+
+    // Method 3: Index + FASTX stdin diff (auto-detect k,w)
+    let fasta2_content = fs::read(&fasta2_path).unwrap();
+    let output3 = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("index")
+        .arg("diff")
+        .arg("-o")
+        .arg(&result_stdin_path)
+        .arg(&bin1_path)
+        .arg("-")
+        .write_stdin(fasta2_content)
+        .output()
+        .unwrap();
+    assert!(output3.status.success());
+
+    // All three result files should exist
+    assert!(result_index_path.exists());
+    assert!(result_fastx_path.exists());
+    assert!(result_stdin_path.exists());
+
+    // Parse the number of remaining minimizers from stderr output
+    fn extract_remaining_count(stderr: &[u8]) -> usize {
+        let stderr_str = String::from_utf8_lossy(stderr);
+        for line in stderr_str.lines() {
+            if line.contains("remaining") {
+                // Look for pattern like "Removed X minimizers, Y remaining"
+                if let Some(parts) = line.split_once("remaining") {
+                    let before_remaining = parts.0;
+                    // Look for the last number before "remaining"
+                    for word in before_remaining.split_whitespace().rev() {
+                        // Try to parse the word, removing trailing comma if present
+                        let clean_word = word.trim_end_matches(',');
+                        if let Ok(count) = clean_word.parse::<usize>() {
+                            return count;
+                        }
+                    }
+                }
+            }
+        }
+        panic!(
+            "Could not extract remaining minimizer count from stderr: {}",
+            stderr_str
+        );
+    }
+
+    let remaining1 = extract_remaining_count(&output1.stderr);
+    let remaining2 = extract_remaining_count(&output2.stderr);
+    let remaining3 = extract_remaining_count(&output3.stderr);
+
+    // All three methods should produce the same number of remaining minimizers
+    assert_eq!(
+        remaining1, remaining2,
+        "Index+Index ({}) and Index+FASTX ({}) should have same remaining count",
+        remaining1, remaining2
+    );
+    assert_eq!(
+        remaining1, remaining3,
+        "Index+Index ({}) and Index+FASTX stdin ({}) should have same remaining count",
+        remaining1, remaining3
+    );
+
+    // Verify all result files have the same size (they should be identical)
+    let size1 = fs::metadata(&result_index_path).unwrap().len();
+    let size2 = fs::metadata(&result_fastx_path).unwrap().len();
+    let size3 = fs::metadata(&result_stdin_path).unwrap().len();
+
+    assert_eq!(
+        size1, size2,
+        "Index+Index and Index+FASTX should produce same file size"
+    );
+    assert_eq!(
+        size1, size3,
+        "Index+Index and Index+FASTX stdin should produce same file size"
+    );
+}
+
+#[test]
+fn test_index_diff_auto_detect_parameters() {
+    let temp_dir = tempdir().unwrap();
+    let fasta1_path = temp_dir.path().join("test1.fasta");
+    let fasta2_path = temp_dir.path().join("test2.fasta");
+    let bin1_path = temp_dir.path().join("test1.bin");
+    let result_auto_path = temp_dir.path().join("result_auto.bin");
+    let result_explicit_path = temp_dir.path().join("result_explicit.bin");
+
+    // Create test FASTAs
+    create_test_fasta(&fasta1_path, 1);
+    create_test_fasta(&fasta2_path, 2);
+
+    // Build index with default parameters (k=31, w=15)
+    build_index(&fasta1_path, &bin1_path);
+
+    // Method 1: Auto-detect k,w from first index
+    let output_auto = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("index")
+        .arg("diff")
+        .arg("-o")
+        .arg(&result_auto_path)
+        .arg(&bin1_path)
+        .arg(&fasta2_path)
+        .output()
+        .unwrap();
+    assert!(output_auto.status.success());
+
+    // Method 2: Explicitly specify k,w (should match index defaults)
+    let output_explicit = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("index")
+        .arg("diff")
+        .arg("-k")
+        .arg("31")
+        .arg("-w")
+        .arg("15")
+        .arg("-o")
+        .arg(&result_explicit_path)
+        .arg(&bin1_path)
+        .arg(&fasta2_path)
+        .output()
+        .unwrap();
+    assert!(output_explicit.status.success());
+
+    // Both should produce identical results
+    let auto_content = fs::read(&result_auto_path).unwrap();
+    let explicit_content = fs::read(&result_explicit_path).unwrap();
+
+    assert_eq!(
+        auto_content, explicit_content,
+        "Auto-detected and explicit parameters should produce identical results"
     );
 }
