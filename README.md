@@ -7,12 +7,12 @@
 
 Fast minimizer-based search and depletion of FASTA/FASTQ files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and the number or proportion of required index matches (`-m`) per query. Minimizer `k` and `w`  are chosen at index time, while the match threshold `m` can be varied at filter time. `m` can be specified either as a minimum integer of minimizer matches (default is 2), else a minimum proportion of minimizer hits between 0.0 and 1.0. Short and/or paired reads are supported: A match in either mate causes both mates in the pair to be retained or discarded. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance during execution and optionally writes a JSON summary on completion. Gzip, zst and xz compression formats are natively supported and detected by file extension.
 
-Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering compressed long reads at >250Mbp/s and indexing a human genome in <30s. Filtering at >1Gbp/s is possible with uncompressed FASTA input. Peak memory usage during filtering is 5GB for the default panhuman index. Use Zstandard (zst) compression and/or pipe output to e.g. `pigz` for best performance.
+Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering compressed long reads at >250Mbp/s and indexing a human genome in <30s. Filtering at >1Gbp/s is possible with uncompressed FASTA input. Peak memory usage during filtering is 5GB for the default panhuman index. Use Zstandard (zst) compression and/or pipe output to an external compressor such as `pigz` for best performance.
 
 Benchmarks for panhuman host depletion of complex microbial metagenomes are described in a [preprint](https://www.biorxiv.org/content/10.1101/2025.06.09.658732v1). Among tested approaches, Deacon with the panhuman-1 (*k*=31, w=15) index exhibited the highest balanced accuracy for both long and short simulated reads. Deacon was however less specific than Hostile for short reads.
 
 > [!IMPORTANT]
-> Deacon is not yet stable. 0.5.0 for instance introduced major CLI changes. Please carefully review the CHANGELOG when upgrading. Please report problems by creating an issue or using the email address in my profile.
+> Deacon is still unstable, so please carefully review the CHANGELOG when updating. Version 0.7.0 for instance introduced a new index format (version 2) that is not backwards compatible. Please report any problems you encounter by creating an issue or using the email address in my profile.
 
 ## Install
 
@@ -42,7 +42,7 @@ deacon index build chm13v2.fa > human.k31w15.idx
 
 |                           Name/URL                           |                         Composition                          | Minimizers  | Subtracted minimizers | Size  | Date    |
 | :----------------------------------------------------------: | :----------------------------------------------------------: | ----------- | --------------------- | ----- | ------- |
-| [**panhuman-1 (*k*=31, *w*=15)**](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/panhuman-1.k31w15.idx) | ([HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [CHM13v2.0](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [GRCh38.p14](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40)) - bacteria (FDA-ARGOS)  - viruses (RefSeq) | 409,914,298 | 20,741 (**0.0051%**)  | 3.7GB | 2025-04 |
+| [**panhuman-1 (*k*=31, *w*=15)**](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/2/panhuman-1.k31w15.idx) | ([HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [CHM13v2.0](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [GRCh38.p14](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40)) - bacteria (FDA-ARGOS)  - viruses (RefSeq) | 409,913,780 | 20,781 (**0.0051%**)  | 3.7GB | 2025-07 |
 
 ### Filtering
 
