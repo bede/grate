@@ -50,6 +50,24 @@ impl IndexHeader {
     }
 }
 
+/// Load just the header and count from an index file
+pub fn load_header_and_count<P: AsRef<Path>>(path: &P) -> Result<(IndexHeader, usize)> {
+    let file =
+        File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
+    let mut reader = BufReader::new(file);
+
+    // Deserialise header
+    let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
+        .context("Failed to deserialise index header")?;
+    header.validate()?;
+
+    // Deserialise the count of minimizers
+    let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
+        .context("Failed to deserialise minimizer count")?;
+
+    Ok((header, count))
+}
+
 /// Load the hashes without spiking memory usage with an extra vec
 pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>, IndexHeader)> {
     let file =
@@ -514,39 +532,64 @@ pub fn union<P: AsRef<Path>>(inputs: &[P], output: Option<&PathBuf>) -> Result<(
             "No input files provided for union operation"
         ));
     }
-    // Load the first file to get header information
-    let (mut all_minimizers, header) = load_minimizer_hashes(&inputs[0])?;
+
+    // Read all headers first to determine total capacity needed
+    let mut headers_and_counts = Vec::new();
+    let mut total_capacity = 0;
+
+    for path in inputs {
+        let (header, count) = load_header_and_count(path)?;
+        total_capacity += count;
+        headers_and_counts.push((header, count));
+    }
+
+    // Get header from first file for output
+    let header = &headers_and_counts[0].0;
+
     eprintln!(
         "Performing union of indexes (k={}, w={})",
         header.kmer_length(),
         header.window_size()
     );
     eprintln!(
-        "Loaded {} minimizers from first index",
-        all_minimizers.len()
+        "Pre-allocating capacity for {} minimizers across {} indexes",
+        total_capacity,
+        inputs.len()
     );
-    // Process remaining files
-    for (_i, path) in inputs.iter().skip(1).enumerate() {
-        let (minimizers, file_header) = load_minimizer_hashes(path)?;
-        // Verify header compat
+
+    // Verify all headers are compatible
+    for (i, (file_header, _)) in headers_and_counts.iter().enumerate() {
         if file_header.kmer_length() != header.kmer_length()
             || file_header.window_size() != header.window_size()
         {
             return Err(anyhow::anyhow!(
-                "Incompatible headers: index at {:?} has k={}, w={}, but first index has k={}, w={}",
-                path.as_ref(),
+                "Incompatible headers: index {} has k={}, w={}, but first index has k={}, w={}",
+                i,
                 file_header.kmer_length(),
                 file_header.window_size(),
                 header.kmer_length(),
                 header.window_size()
             ));
         }
-        // Count minimizers before union
+    }
+
+    // Pre-allocate hash set with total capacity to avoid resizing
+    let mut all_minimizers: FxHashSet<u64> =
+        FxHashSet::with_capacity_and_hasher(total_capacity, Default::default());
+
+    // Now load and merge all indexes
+    for (i, path) in inputs.iter().enumerate() {
+        let (minimizers, _) = load_minimizer_hashes(path)?;
         let before_count = all_minimizers.len();
+
         // Merge minimizers (set union)
         all_minimizers.extend(minimizers);
+
+        let expected_count = headers_and_counts[i].1;
         eprintln!(
-            " Added {} new minimizers, total: {}",
+            "Index {}: expected {} minimizers, added {} new, total: {}",
+            i + 1,
+            expected_count,
             all_minimizers.len() - before_count,
             all_minimizers.len()
         );
