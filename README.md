@@ -32,7 +32,7 @@ cargo install deacon
 
 ### Indexing
 
-Build indexes with `deacon index build`. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
+Build indexes with `deacon index build`. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below from either Zenodo or fast object storage. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
 
 ```shell
 deacon index build chm13v2.fa > human.k31w15.idx
