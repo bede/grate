@@ -4,6 +4,18 @@ use xxhash_rust::xxh3;
 pub const DEFAULT_KMER_LENGTH: usize = 31;
 pub const DEFAULT_WINDOW_SIZE: usize = 15;
 
+/// Check if nucleotide is valid ACGT (case insensitive)
+#[inline]
+fn is_valid_acgt(nucleotide: u8) -> bool {
+    matches!(nucleotide, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')
+}
+
+/// Check if k-mer contains only ACGT nucleotides
+#[inline]
+fn kmer_contains_only_acgt(kmer: &[u8]) -> bool {
+    kmer.iter().all(|&b| is_valid_acgt(b))
+}
+
 /// Canonicalise IUPAC ambiguous nucleotides to ACGT
 #[inline]
 fn canonicalise_nucleotide(nucleotide: u8) -> u8 {
@@ -41,7 +53,7 @@ pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_size: usi
     hashes
 }
 
-/// Fill a vector with minimizer hashes
+/// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
 pub fn fill_minimizer_hashes(
     seq: &[u8],
     kmer_length: usize,
@@ -50,7 +62,7 @@ pub fn fill_minimizer_hashes(
 ) {
     hashes.clear();
 
-    // Skip  if sequence is too short
+    // Skip if sequence is too short
     if seq.len() < kmer_length {
         return;
     }
@@ -66,11 +78,21 @@ pub fn fill_minimizer_hashes(
         &mut positions,
     );
 
+    // Filter positions to only include k-mers with ACGT bases in original sequence
+    let valid_positions: Vec<u32> = positions
+        .into_iter()
+        .filter(|&pos| {
+            let pos_usize = pos as usize;
+            let kmer = &seq[pos_usize..pos_usize + kmer_length];
+            kmer_contains_only_acgt(kmer)
+        })
+        .collect();
+
     hashes.extend(
         simd_minimizers::iter_canonical_minimizer_values(
             AsciiSeq(&canonical_seq),
             kmer_length,
-            &positions,
+            &valid_positions,
         )
         .map(|kmer| xxh3::xxh3_64(&kmer.to_le_bytes())),
     );
