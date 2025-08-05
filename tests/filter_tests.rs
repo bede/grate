@@ -10,6 +10,11 @@ fn create_test_fasta(path: &Path) {
     fs::write(path, fasta_content).unwrap();
 }
 
+fn create_test_fasta_aaa(path: &Path) {
+    let fasta_content = ">seq1\nAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n";
+    fs::write(path, fasta_content).unwrap();
+}
+
 fn create_test_fastq(path: &Path) {
     let fastq_content = "@seq1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@seq2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
     fs::write(path, fastq_content).unwrap();
@@ -34,6 +39,7 @@ fn build_index(fasta_path: &Path, bin_path: &Path) {
     fs::write(bin_path, output.stdout).expect("Failed to write index file");
     assert!(output.status.success(), "Index build command failed");
 }
+
 
 fn create_test_fasta_sc2(path: &Path) {
     let fasta_content =
@@ -92,13 +98,13 @@ fn test_filter_to_file() {
     let output_path = temp_dir.path().join("filtered.fastq");
     let summary_path = temp_dir.path().join("summary.json");
 
-    create_test_fasta(&fasta_path);
+    create_test_fasta_aaa(&fasta_path);
     create_test_fastq(&fastq_path);
 
     build_index(&fasta_path, &bin_path);
     assert!(bin_path.exists(), "Index file wasn't created");
 
-    // Run filtering command - sequences too short for k=31, so no matches, will be filtered out
+    // Run filtering command
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg(&bin_path)
@@ -670,15 +676,15 @@ mod output2_tests {
     use tempfile::tempdir;
 
     fn create_test_fasta(path: &Path) {
-        let fasta_content = ">seq1\nACGTACGTACGT\n>seq2\nGTACGTACGTAC\n";
+        let fasta_content = ">seq1\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCTGTTCTCTAAA\n>seq2\nCGAACTTTAAAATCTGTGTGGCTGTCACTCGGCTGCATGCTTAGTGCACTCACGCAGTATAATTAATAAC\n";
         fs::write(path, fasta_content).unwrap();
     }
 
     fn create_test_paired_fastq(path1: &Path, path2: &Path) {
         let fastq_content1 =
-            "@read1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@read2\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n";
+            "@read1\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCTGTTCTCTAAA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2\nCGAACTTTAAAATCTGTGTGGCTGTCACTCGGCTGCATGCTTAGTGCACTCACGCAGTATAATTAATAAC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
         let fastq_content2 =
-            "@read1\nTGCATGCATGCA\n+\n~~~~~~~~~~~~\n@read2\nCATGCATGCATG\n+\n~~~~~~~~~~~~\n";
+            "@read1\nTAATTACTGTCGTTGACAGGACACGAGTAACTCGTCTATCTTCTGCAGGCTGCTTACGGTTTCGTCCGTG\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2\nTTGCAGCCGATCATCAGCACATCTAGGTTTCGTCCGGGTGTGACCGAAAGGTAAGATGGAGAGCCTTGTC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
 
         fs::write(path1, fastq_content1).unwrap();
         fs::write(path2, fastq_content2).unwrap();
