@@ -24,46 +24,6 @@ pub use minimizers::{
 use anyhow::Result;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MatchThreshold {
-    Absolute(usize),
-    Relative(f64),
-}
-
-impl FromStr for MatchThreshold {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(val) = s.parse::<usize>() {
-            Ok(MatchThreshold::Absolute(val))
-        } else if let Ok(val) = s.parse::<f64>() {
-            if val.is_nan() || val.is_sign_negative() || val > 1.0 {
-                Err(format!(
-                    "Relative threshold must be in [0, 1], got: {}",
-                    val
-                ))
-            } else {
-                Ok(MatchThreshold::Relative(val))
-            }
-        } else {
-            Err(format!(
-                "Invalid threshold format: '{}'. Expected an integer or a float between [0, 1]",
-                s
-            ))
-        }
-    }
-}
-
-impl std::fmt::Display for MatchThreshold {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MatchThreshold::Absolute(n) => write!(f, "{}", n),
-            MatchThreshold::Relative(p) => write!(f, "{}", p),
-        }
-    }
-}
 
 pub struct FilterConfig {
     /// Minimizer index file path
@@ -81,8 +41,11 @@ pub struct FilterConfig {
     /// Path to optional second output fastx file for paired reads (detects .gz and .zst)
     pub output2_path: Option<String>,
 
-    /// Match threshold for filtering sequences
-    pub match_threshold: MatchThreshold,
+    /// Absolute threshold for filtering sequences
+    pub abs_threshold: usize,
+
+    /// Relative threshold for filtering sequences (0.0-1.0)
+    pub rel_threshold: f64,
 
     /// Consider only the first N nucleotides per sequence (0 = entire sequence)
     pub prefix_length: usize,
@@ -111,7 +74,8 @@ impl FilterConfig {
             input2_path: None,
             output_path: "-".to_string(),
             output2_path: None,
-            match_threshold: MatchThreshold::Absolute(2),
+            abs_threshold: 2,
+            rel_threshold: 0.01,
             prefix_length: 0,
             summary_path: None,
             deplete: false,
@@ -141,8 +105,13 @@ impl FilterConfig {
         self
     }
 
-    pub fn with_match_threshold(mut self, match_threshold: MatchThreshold) -> Self {
-        self.match_threshold = match_threshold;
+    pub fn with_abs_threshold(mut self, abs_threshold: usize) -> Self {
+        self.abs_threshold = abs_threshold;
+        self
+    }
+
+    pub fn with_rel_threshold(mut self, rel_threshold: f64) -> Self {
+        self.rel_threshold = rel_threshold;
         self
     }
 
@@ -184,7 +153,8 @@ impl FilterConfig {
             self.input2_path.as_deref(),
             &self.output_path,
             self.output2_path.as_deref(),
-            &self.match_threshold,
+            self.abs_threshold,
+            self.rel_threshold,
             self.prefix_length,
             self.summary_path.as_ref(),
             self.deplete,

@@ -1,4 +1,3 @@
-use crate::MatchThreshold;
 use crate::index::load_minimizer_hashes;
 use crate::minimizers::fill_minimizer_hashes;
 use anyhow::{Context, Result};
@@ -230,7 +229,8 @@ pub struct FilterSummary {
     output2: Option<String>,
     k: usize,
     w: usize,
-    match_threshold: String,
+    abs_threshold: usize,
+    rel_threshold: f64,
     prefix_length: usize,
     deplete: bool,
     rename: bool,
@@ -255,7 +255,8 @@ pub fn run<P: AsRef<Path>>(
     input2_path: Option<&str>,
     output_path: &str,
     output2_path: Option<&str>,
-    match_threshold: &MatchThreshold,
+    abs_threshold: usize,
+    rel_threshold: f64,
     prefix_length: usize,
     summary_path: Option<&PathBuf>,
     deplete: bool,
@@ -287,7 +288,7 @@ pub fn run<P: AsRef<Path>>(
     } else {
         input_type.push_str("single");
     }
-    options.push(format!("match_threshold={}", match_threshold));
+    options.push(format!("abs_threshold={}, rel_threshold={}", abs_threshold, rel_threshold));
     if prefix_length > 0 {
         options.push(format!("prefix_length={}", prefix_length));
     }
@@ -352,7 +353,8 @@ pub fn run<P: AsRef<Path>>(
             &minimizer_hashes,
             &mut writer,
             writer2.as_mut(),
-            match_threshold,
+            abs_threshold,
+            rel_threshold,
             prefix_length,
             kmer_length,
             window_size,
@@ -374,7 +376,8 @@ pub fn run<P: AsRef<Path>>(
             input2_path,
             &mut writer,
             writer2.as_mut(),
-            match_threshold,
+            abs_threshold,
+            rel_threshold,
             prefix_length,
             kmer_length,
             window_size,
@@ -394,7 +397,8 @@ pub fn run<P: AsRef<Path>>(
             &minimizer_hashes,
             input_path,
             &mut writer,
-            match_threshold,
+            abs_threshold,
+            rel_threshold,
             prefix_length,
             kmer_length,
             window_size,
@@ -481,7 +485,8 @@ pub fn run<P: AsRef<Path>>(
             output2: output2_path.map(|s| s.to_string()),
             k: kmer_length,
             w: window_size,
-            match_threshold: match_threshold.to_string(),
+            abs_threshold,
+            rel_threshold,
             prefix_length,
             deplete,
             rename,
@@ -518,7 +523,8 @@ fn process_single_seqs(
     minimizer_hashes: &FxHashSet<u64>,
     input_path: &str,
     writer: &mut Box<dyn FastxWriter>,
-    match_threshold: &MatchThreshold,
+    abs_threshold: usize,
+    rel_threshold: f64,
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
@@ -612,17 +618,15 @@ fn process_single_seqs(
                     }
                 }
 
-                // Convert threshold to absolute count
-                let required_hits = match match_threshold {
-                    MatchThreshold::Absolute(n) => *n,
-                    MatchThreshold::Relative(f) => {
-                        if minimizer_buffer.is_empty() {
-                            0
-                        } else {
-                            ((*f * minimizer_buffer.len() as f64).ceil() as usize).max(1)
-                        }
-                    }
+                // Calculate required hits based on both thresholds
+                let abs_required = abs_threshold;
+                let rel_required = if minimizer_buffer.is_empty() {
+                    0
+                } else {
+                    ((rel_threshold * minimizer_buffer.len() as f64).ceil() as usize).max(1)
                 };
+                // Use the maximum of both thresholds
+                let required_hits = abs_required.max(rel_required);
 
                 let should_output = if deplete {
                     // Deplete mode: remove sequences that meet the threshold
@@ -720,7 +724,8 @@ fn process_paired_seqs(
     input2_path: &str,
     writer: &mut Box<dyn FastxWriter>,
     mut writer2: Option<&mut Box<dyn FastxWriter>>,
-    match_threshold: &MatchThreshold,
+    abs_threshold: usize,
+    rel_threshold: f64,
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
@@ -856,18 +861,16 @@ fn process_paired_seqs(
                     }
                 }
 
-                // Convert threshold to absolute count based on total minimizers in both reads
+                // Calculate required hits based on both thresholds
                 let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
-                let required_hits = match match_threshold {
-                    MatchThreshold::Absolute(n) => *n,
-                    MatchThreshold::Relative(f) => {
-                        if total_minimizers == 0 {
-                            0
-                        } else {
-                            ((*f * total_minimizers as f64).ceil() as usize).max(1)
-                        }
-                    }
+                let abs_required = abs_threshold;
+                let rel_required = if total_minimizers == 0 {
+                    0
+                } else {
+                    ((rel_threshold * total_minimizers as f64).ceil() as usize).max(1)
                 };
+                // Use the maximum of both thresholds
+                let required_hits = abs_required.max(rel_required);
 
                 let should_output = if deplete {
                     // Deplete mode: remove pairs that meet the threshold
@@ -1000,7 +1003,8 @@ fn process_interleaved_paired_seqs(
     minimizer_hashes: &FxHashSet<u64>,
     writer: &mut Box<dyn FastxWriter>,
     mut writer2: Option<&mut Box<dyn FastxWriter>>,
-    match_threshold: &MatchThreshold,
+    abs_threshold: usize,
+    rel_threshold: f64,
     prefix_length: usize,
     kmer_length: usize,
     window_size: usize,
@@ -1145,18 +1149,16 @@ fn process_interleaved_paired_seqs(
                         }
                     }
 
-                    // Convert threshold to absolute count based on total minimizers in both reads
+                    // Calculate required hits based on both thresholds
                     let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
-                    let required_hits = match match_threshold {
-                        MatchThreshold::Absolute(n) => *n,
-                        MatchThreshold::Relative(f) => {
-                            if total_minimizers == 0 {
-                                0
-                            } else {
-                                ((*f * total_minimizers as f64).ceil() as usize).max(1)
-                            }
-                        }
+                    let abs_required = abs_threshold;
+                    let rel_required = if total_minimizers == 0 {
+                        0
+                    } else {
+                        ((rel_threshold * total_minimizers as f64).ceil() as usize).max(1)
                     };
+                    // Use the maximum of both thresholds
+                    let required_hits = abs_required.max(rel_required);
 
                     let should_output = if deplete {
                         // Deplete mode: remove pairs that meet the threshold
@@ -1368,7 +1370,8 @@ mod tests {
             output2: Some("output2.fastq".to_string()),
             k: 31,
             w: 21,
-            match_threshold: "1".to_string(),
+            abs_threshold: 1,
+            rel_threshold: 0.01,
             prefix_length: 0,
             deplete: false,
             rename: false,

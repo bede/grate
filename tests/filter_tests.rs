@@ -1,5 +1,4 @@
 use assert_cmd::Command;
-use deacon::MatchThreshold;
 use std::fs;
 use std::fs::File;
 use std::path::Path;
@@ -256,8 +255,10 @@ fn test_filter_rename() {
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg("--rename")
-        .arg("-m")
+        .arg("-a")
         .arg("0")
+        .arg("-r")
+        .arg("0.0")
         .arg(&bin_path)
         .arg(&fastq_path)
         .arg("--output")
@@ -291,8 +292,10 @@ fn test_filter_min_matches() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--matches")
+        .arg("--abs-threshold")
         .arg("2")
+        .arg("--rel-threshold")
+        .arg("0.01")
         .arg(&bin_path)
         .arg(&fastq_path)
         .arg("--output")
@@ -353,8 +356,10 @@ fn test_filter_paired() {
     // Run filtering command with paired-end reads (using -m 0 so short sequences pass through)
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("-m")
+        .arg("-a")
         .arg("0")
+        .arg("-r")
+        .arg("0.0")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -417,8 +422,10 @@ fn test_filter_paired_with_rename() {
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg("--rename")
-        .arg("-m")
+        .arg("-a")
         .arg("0")
+        .arg("-r")
+        .arg("0.0")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -454,8 +461,10 @@ fn test_filter_paired_with_min_matches() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--matches")
+        .arg("--abs-threshold")
         .arg("2")
+        .arg("--rel-threshold")
+        .arg("0.01")
         .arg(&bin_path)
         .arg(&fastq_path1)
         .arg(&fastq_path2)
@@ -494,8 +503,10 @@ fn test_interleaved_paired_reads() {
     let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"));
     let output = cmd
         .arg("filter")
-        .arg("-m")
+        .arg("-a")
         .arg("0")
+        .arg("-r")
+        .arg("0.0")
         .arg(&bin_path)
         .arg("-") // stdin for input
         .arg("-") // stdin for input2 (signals interleaved mode)
@@ -538,8 +549,10 @@ fn test_filter_filtration_fwd() {
         .arg(&output_path)
         .arg("--summary")
         .arg(&summary_path)
-        .arg("--matches")
+        .arg("--abs-threshold")
         .arg("1")
+        .arg("--rel-threshold")
+        .arg("0.01")
         .assert()
         .success();
 
@@ -706,8 +719,10 @@ mod output2_tests {
         // Run filtering command with separate output files (using -m 0 so short sequences pass through)
         let mut cmd = Command::cargo_bin("deacon").unwrap();
         cmd.arg("filter")
-            .arg("-m")
+            .arg("-a")
             .arg("0")
+            .arg("-r")
+            .arg("0.0")
             .arg(&bin_path)
             .arg(&fastq_path1)
             .arg(&fastq_path2)
@@ -867,8 +882,10 @@ fn test_shared_minimizer_counted_once() {
         .arg(&output_path)
         .arg("--summary")
         .arg(&summary_path)
-        .arg("--matches")
-        .arg("2") // Critical parameter: any pair with 2+ hits gets filtered
+        .arg("--abs-threshold")
+        .arg("2")
+        .arg("--rel-threshold")
+        .arg("0.01") // Critical parameter: any pair with 2+ hits gets filtered
         .assert()
         .success();
 
@@ -896,66 +913,6 @@ fn test_shared_minimizer_counted_once() {
     );
 }
 
-#[test]
-fn test_match_threshold_parsing() {
-    // Test MatchThreshold parsing functionality
-    assert_eq!(
-        "2".parse::<MatchThreshold>().unwrap(),
-        MatchThreshold::Absolute(2)
-    );
-    assert_eq!(
-        "0.5".parse::<MatchThreshold>().unwrap(),
-        MatchThreshold::Relative(0.5)
-    );
-    assert_eq!(
-        "0.0".parse::<MatchThreshold>().unwrap(),
-        MatchThreshold::Relative(0.0)
-    );
-    assert_eq!(
-        "1.0".parse::<MatchThreshold>().unwrap(),
-        MatchThreshold::Relative(1.0)
-    );
-
-    // Test invalid inputs
-    assert!("1.5".parse::<MatchThreshold>().is_err()); // > 1.0
-    assert!("-0.1".parse::<MatchThreshold>().is_err()); // < 0.0
-    assert!("abc".parse::<MatchThreshold>().is_err()); // not a number
-}
-
-#[test]
-fn test_match_threshold_logic() {
-    let abs_threshold = MatchThreshold::Absolute(3);
-    let prop_threshold = MatchThreshold::Relative(0.5);
-
-    // Test absolute threshold
-    let required_abs = match abs_threshold {
-        MatchThreshold::Absolute(n) => n,
-        _ => panic!(),
-    };
-    assert!(3 >= required_abs);
-    assert!(5 >= required_abs);
-    assert!(2 < required_abs);
-
-    // Test relative threshold (50% of 10 minimizers = 5 hits required)
-    let required_rel = match prop_threshold {
-        MatchThreshold::Relative(f) => ((f * 10.0).ceil() as usize).max(1),
-        _ => panic!(),
-    };
-    assert!(5 >= required_rel);
-    assert!(6 >= required_rel);
-    assert!(4 < required_rel);
-
-    // Test edge case: minimum 1 hit required even for small proportions
-    let small_prop = MatchThreshold::Relative(0.1);
-    let required_small = match small_prop {
-        MatchThreshold::Relative(f) => ((f * 5.0).ceil() as usize).max(1),
-        _ => panic!(),
-    };
-    assert!(1 >= required_small); // 0.1 * 5 = 0.5, ceil to 1
-    assert!(0 < required_small);
-
-    // Test edge case: zero minimizers case would be handled at runtime
-}
 
 #[test]
 fn test_filter_proportional_threshold() {
@@ -971,7 +928,9 @@ fn test_filter_proportional_threshold() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--matches")
+        .arg("--abs-threshold")
+        .arg("1")
+        .arg("--rel-threshold")
         .arg("0.5") // 50% proportional threshold
         .arg(&bin_path)
         .arg(&fastq_path)
@@ -1001,7 +960,9 @@ fn test_filter_proportional_paired() {
 
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--matches")
+        .arg("--abs-threshold")
+        .arg("1")
+        .arg("--rel-threshold")
         .arg("0.3") // 30% proportional threshold
         .arg(&bin_path)
         .arg(&fastq_path1)
@@ -1032,7 +993,9 @@ fn test_filter_edge_case_proportional_values() {
     // Test with 0.0 (should pass everything)
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--matches")
+        .arg("--abs-threshold")
+        .arg("0")
+        .arg("--rel-threshold")
         .arg("0.0")
         .arg(&bin_path)
         .arg(&fastq_path)
@@ -1045,7 +1008,9 @@ fn test_filter_edge_case_proportional_values() {
     let output_path_strict = temp_dir.path().join("filtered_strict.fastq");
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
-        .arg("--matches")
+        .arg("--abs-threshold")
+        .arg("1")
+        .arg("--rel-threshold")
         .arg("1.0")
         .arg(&bin_path)
         .arg(&fastq_path)
