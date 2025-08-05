@@ -57,4 +57,4 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = false
-debug = true
+debug = false
