@@ -81,13 +81,13 @@ enum IndexCommands {
         /// Path to input fastx file (supports gz, zst and xz compression)
         input: PathBuf,
 
-        /// K-mer length used for indexing
-        #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH)]
-        kmer_length: usize,
+        /// K-mer length used for indexing (1-32)
+        #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=32))]
+        kmer_length: u8,
 
         /// Minimizer window size used for indexing
         #[arg(short = 'w', default_value_t = DEFAULT_WINDOW_SIZE)]
-        window_size: usize,
+        window_size: u8,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
@@ -126,13 +126,13 @@ enum IndexCommands {
         #[arg(required = true)]
         second: PathBuf,
 
-        /// K-mer length (required if second argument is FASTX file)
-        #[arg(short = 'k', long = "kmer-length")]
-        kmer_length: Option<usize>,
+        /// K-mer length (required if second argument is FASTX file, 1-32)
+        #[arg(short = 'k', long = "kmer-length", value_parser = clap::value_parser!(u8).range(1..=32))]
+        kmer_length: Option<u8>,
 
         /// Window size (required if second argument is FASTX file)
         #[arg(short = 'w', long = "window-size")]
-        window_size: Option<usize>,
+        window_size: Option<u8>,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]

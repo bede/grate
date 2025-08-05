@@ -486,8 +486,8 @@ pub fn run<P: AsRef<Path>>(
             input2: input2_path.map(|s| s.to_string()),
             output: output_path.to_string(),
             output2: output2_path.map(|s| s.to_string()),
-            k: kmer_length,
-            w: window_size,
+            k: kmer_length as usize,
+            w: window_size as usize,
             abs_threshold,
             rel_threshold,
             prefix_length,
@@ -529,8 +529,8 @@ fn process_single_seqs(
     abs_threshold: usize,
     rel_threshold: f64,
     prefix_length: usize,
-    kmer_length: usize,
-    window_size: usize,
+    kmer_length: u8,
+    window_size: u8,
     deplete: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -597,7 +597,7 @@ fn process_single_seqs(
                 // Check for minimizer hits
                 let mut hit_count = 0;
 
-                if seq_len >= kmer_length {
+                if seq_len >= kmer_length as usize {
                     // Apply prefix length limit if specified
                     let effective_seq = if prefix_length > 0 && seq_len > prefix_length {
                         &record_data.seq[..prefix_length]
@@ -730,8 +730,8 @@ fn process_paired_seqs(
     abs_threshold: usize,
     rel_threshold: f64,
     prefix_length: usize,
-    kmer_length: usize,
-    window_size: usize,
+    kmer_length: u8,
+    window_size: u8,
     deplete: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -811,7 +811,7 @@ fn process_paired_seqs(
                 let mut pair_hit_count = 0;
 
                 // Check for minimizer hits in read 1
-                if seq1_len >= kmer_length {
+                if seq1_len >= kmer_length as usize {
                     minimizer_buffer1.clear();
 
                     // Apply prefix length limit if specified
@@ -838,7 +838,7 @@ fn process_paired_seqs(
                 }
 
                 // Check for minimizer hits in read 2
-                if seq2_len >= kmer_length {
+                if seq2_len >= kmer_length as usize {
                     minimizer_buffer2.clear();
 
                     // Apply prefix length limit if specified
@@ -1009,8 +1009,8 @@ fn process_interleaved_paired_seqs(
     abs_threshold: usize,
     rel_threshold: f64,
     prefix_length: usize,
-    kmer_length: usize,
-    window_size: usize,
+    kmer_length: u8,
+    window_size: u8,
     deplete: bool,
     rename: bool,
     total_seqs: &mut u64,
@@ -1101,7 +1101,7 @@ fn process_interleaved_paired_seqs(
                     let mut pair_hit_count = 0;
 
                     // Check for minimizer hits in read 1
-                    if record1_seq.len() >= kmer_length {
+                    if record1_seq.len() >= kmer_length as usize {
                         // Apply prefix length limit if specified
                         let effective_seq =
                             if prefix_length > 0 && record1_seq.len() > prefix_length {
@@ -1127,7 +1127,7 @@ fn process_interleaved_paired_seqs(
                     }
 
                     // Check for minimizer hits in read 2
-                    if record2_seq.len() >= kmer_length {
+                    if record2_seq.len() >= kmer_length as usize {
                         // Apply prefix length limit if specified
                         let effective_seq =
                             if prefix_length > 0 && record2_seq.len() > prefix_length {

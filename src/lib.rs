@@ -170,10 +170,10 @@ pub struct IndexConfig {
     pub input_path: PathBuf,
 
     /// K-mer length used for indexing
-    pub kmer_length: usize,
+    pub kmer_length: u8,
 
     /// Minimizer window size used for indexing
-    pub window_size: usize,
+    pub window_size: u8,
 
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
@@ -199,13 +199,13 @@ impl IndexConfig {
     }
 
     /// Set k-mer length
-    pub fn with_kmer_length(mut self, kmer_length: usize) -> Self {
+    pub fn with_kmer_length(mut self, kmer_length: u8) -> Self {
         self.kmer_length = kmer_length;
         self
     }
 
     /// Set window size
-    pub fn with_window_size(mut self, window_size: usize) -> Self {
+    pub fn with_window_size(mut self, window_size: u8) -> Self {
         self.window_size = window_size;
         self
     }

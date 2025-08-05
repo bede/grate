@@ -1,8 +1,8 @@
 use packed_seq::AsciiSeq;
 use xxhash_rust::xxh3;
 
-pub const DEFAULT_KMER_LENGTH: usize = 31;
-pub const DEFAULT_WINDOW_SIZE: usize = 15;
+pub const DEFAULT_KMER_LENGTH: u8 = 31;
+pub const DEFAULT_WINDOW_SIZE: u8 = 15;
 
 /// Check if nucleotide is valid ACGT (case insensitive)
 #[inline]
@@ -50,23 +50,18 @@ fn canonicalise_sequence(seq: &[u8]) -> Vec<u8> {
 }
 
 /// Returns vector of all minimizer hashes for a sequence
-pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: usize, window_size: usize) -> Vec<u64> {
+pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u8) -> Vec<u64> {
     let mut hashes = Vec::new();
     fill_minimizer_hashes(seq, kmer_length, window_size, &mut hashes);
     hashes
 }
 
 /// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
-pub fn fill_minimizer_hashes(
-    seq: &[u8],
-    kmer_length: usize,
-    window_size: usize,
-    hashes: &mut Vec<u64>,
-) {
+pub fn fill_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u8, hashes: &mut Vec<u64>) {
     hashes.clear();
 
     // Skip if sequence is too short
-    if seq.len() < kmer_length {
+    if seq.len() < kmer_length as usize {
         return;
     }
 
@@ -76,8 +71,8 @@ pub fn fill_minimizer_hashes(
     let mut positions = Vec::new();
     simd_minimizers::canonical_minimizer_positions(
         AsciiSeq(&canonical_seq),
-        kmer_length,
-        window_size,
+        kmer_length as usize,
+        window_size as usize,
         &mut positions,
     );
 
@@ -86,7 +81,7 @@ pub fn fill_minimizer_hashes(
         .into_iter()
         .filter(|&pos| {
             let pos_usize = pos as usize;
-            let kmer = &seq[pos_usize..pos_usize + kmer_length];
+            let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
             kmer_contains_only_acgt(kmer)
         })
         .collect();
@@ -94,7 +89,7 @@ pub fn fill_minimizer_hashes(
     hashes.extend(
         simd_minimizers::iter_canonical_minimizer_values(
             AsciiSeq(&canonical_seq),
-            kmer_length,
+            kmer_length as usize,
             &valid_positions,
         )
         .map(|kmer| xxh3::xxh3_64(&kmer.to_le_bytes())),
