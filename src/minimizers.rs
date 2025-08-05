@@ -2,7 +2,7 @@ use packed_seq::AsciiSeq;
 use xxhash_rust::xxh3;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
-pub const DEFAULT_WINDOW_SIZE: u8 = 15;
+pub const DEFAULT_WINDOW_SIZE: u16 = 15;
 
 /// Check if nucleotide is valid ACGT (case insensitive)
 #[inline]
@@ -50,14 +50,14 @@ fn canonicalise_sequence(seq: &[u8]) -> Vec<u8> {
 }
 
 /// Returns vector of all minimizer hashes for a sequence
-pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u8) -> Vec<u64> {
+pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u16) -> Vec<u64> {
     let mut hashes = Vec::new();
     fill_minimizer_hashes(seq, kmer_length, window_size, &mut hashes);
     hashes
 }
 
 /// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
-pub fn fill_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u8, hashes: &mut Vec<u64>) {
+pub fn fill_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u16, hashes: &mut Vec<u64>) {
     hashes.clear();
 
     // Skip if sequence is too short

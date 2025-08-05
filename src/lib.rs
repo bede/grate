@@ -173,7 +173,7 @@ pub struct IndexConfig {
     pub kmer_length: u8,
 
     /// Minimizer window size used for indexing
-    pub window_size: u8,
+    pub window_size: u16,
 
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
@@ -205,7 +205,7 @@ impl IndexConfig {
     }
 
     /// Set window size
-    pub fn with_window_size(mut self, window_size: u8) -> Self {
+    pub fn with_window_size(mut self, window_size: u16) -> Self {
         self.window_size = window_size;
         self
     }
