@@ -288,7 +288,10 @@ pub fn run<P: AsRef<Path>>(
     } else {
         input_type.push_str("single");
     }
-    options.push(format!("abs_threshold={}, rel_threshold={}", abs_threshold, rel_threshold));
+    options.push(format!(
+        "abs_threshold={}, rel_threshold={}",
+        abs_threshold, rel_threshold
+    ));
     if prefix_length > 0 {
         options.push(format!("prefix_length={}", prefix_length));
     }
@@ -623,7 +626,7 @@ fn process_single_seqs(
                 let rel_required = if minimizer_buffer.is_empty() {
                     0
                 } else {
-                    ((rel_threshold * minimizer_buffer.len() as f64).ceil() as usize).max(1)
+                    ((rel_threshold * minimizer_buffer.len() as f64).round() as usize).max(1)
                 };
                 // Use the maximum of both thresholds
                 let required_hits = abs_required.max(rel_required);
@@ -867,7 +870,7 @@ fn process_paired_seqs(
                 let rel_required = if total_minimizers == 0 {
                     0
                 } else {
-                    ((rel_threshold * total_minimizers as f64).ceil() as usize).max(1)
+                    ((rel_threshold * total_minimizers as f64).round() as usize).max(1)
                 };
                 // Use the maximum of both thresholds
                 let required_hits = abs_required.max(rel_required);
@@ -1155,7 +1158,7 @@ fn process_interleaved_paired_seqs(
                     let rel_required = if total_minimizers == 0 {
                         0
                     } else {
-                        ((rel_threshold * total_minimizers as f64).ceil() as usize).max(1)
+                        ((rel_threshold * total_minimizers as f64).round() as usize).max(1)
                     };
                     // Use the maximum of both thresholds
                     let required_hits = abs_required.max(rel_required);

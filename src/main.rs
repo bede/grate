@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use deacon::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, build_index, diff_index, index_info,
-    run_filter, union_index,
+    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, build_index, diff_index, index_info, run_filter,
+    union_index,
 };
 use std::path::PathBuf;
 
@@ -41,8 +41,8 @@ enum Commands {
         output2: Option<String>,
 
         /// Minimum absolute number of minimizer hits for a match
-        #[arg(short = 'a', long = "abs-threshold", default_value_t = 2)]
-        abs_threshold: usize,
+        #[arg(short = 'a', long = "abs-threshold", default_value_t = 2, value_parser = clap::value_parser!(u16).range(1..))]
+        abs_threshold: u16,
 
         /// Minimum relative proportion (0.0-1.0) of minimizer hits for a match
         #[arg(short = 'r', long = "rel-threshold", default_value_t = 0.01)]
@@ -224,7 +224,7 @@ fn main() -> Result<()> {
                 input2.as_deref(),
                 output,
                 output2.as_deref(),
-                *abs_threshold,
+                *abs_threshold as usize,
                 *rel_threshold,
                 *prefix_length,
                 summary.as_ref(),

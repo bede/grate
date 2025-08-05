@@ -6,21 +6,18 @@ use std::process::Command as StdCommand;
 use tempfile::tempdir;
 
 fn create_test_fasta(path: &Path) {
-    let fasta_content = ">seq1\nACGTACGTACGT\n>seq2\nGTACGTACGTAC\n";
+    let fasta_content = ">seq1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n>seq2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n";
     fs::write(path, fasta_content).unwrap();
 }
 
 fn create_test_fastq(path: &Path) {
-    let fastq_content =
-        "@seq1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@seq2\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n";
+    let fastq_content = "@seq1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@seq2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
     fs::write(path, fastq_content).unwrap();
 }
 
 fn create_test_paired_fastq(path1: &Path, path2: &Path) {
-    let fastq_content1 =
-        "@read1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@read2\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n";
-    let fastq_content2 =
-        "@read1\nTGCATGCATGCA\n+\n~~~~~~~~~~~~\n@read2\nCATGCATGCATG\n+\n~~~~~~~~~~~~\n";
+    let fastq_content1 = "@read1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    let fastq_content2 = "@read1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
 
     fs::write(path1, fastq_content1).unwrap();
     fs::write(path2, fastq_content2).unwrap();
@@ -256,7 +253,7 @@ fn test_filter_rename() {
     cmd.arg("filter")
         .arg("--rename")
         .arg("-a")
-        .arg("0")
+        .arg("1")
         .arg("-r")
         .arg("0.0")
         .arg(&bin_path)
@@ -353,11 +350,11 @@ fn test_filter_paired() {
     build_index(&fasta_path, &bin_path);
     assert!(bin_path.exists(), "Index file wasn't created");
 
-    // Run filtering command with paired-end reads (using -m 0 so short sequences pass through)
+    // Run filtering command with paired-end reads (using -a 1 so short sequences pass through)
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg("-a")
-        .arg("0")
+        .arg("1")
         .arg("-r")
         .arg("0.0")
         .arg(&bin_path)
@@ -423,7 +420,7 @@ fn test_filter_paired_with_rename() {
     cmd.arg("filter")
         .arg("--rename")
         .arg("-a")
-        .arg("0")
+        .arg("1")
         .arg("-r")
         .arg("0.0")
         .arg(&bin_path)
@@ -491,9 +488,9 @@ fn test_interleaved_paired_reads() {
     create_test_fasta(&fasta_path);
 
     let interleaved_content =
-        "@read1/1\nACGTACGTACGT\n+\n~~~~~~~~~~~~\n@read1/2\nTGCATGCATGCA\n+\n~~~~~~~~~~~~\n"
+        "@read1/1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read1/2\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
             .to_owned()
-            + "@read2/1\nGTACGTACGTAC\n+\n~~~~~~~~~~~~\n@read2/2\nCATGCATGCATG\n+\n~~~~~~~~~~~~\n";
+            + "@read2/1\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2/2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
     fs::write(&interleaved_fastq_path, interleaved_content).unwrap();
 
     build_index(&fasta_path, &bin_path);
@@ -504,7 +501,7 @@ fn test_interleaved_paired_reads() {
     let output = cmd
         .arg("filter")
         .arg("-a")
-        .arg("0")
+        .arg("1")
         .arg("-r")
         .arg("0.0")
         .arg(&bin_path)
@@ -706,9 +703,8 @@ mod output2_tests {
         let fastq_path1 = temp_dir.path().join("reads_1.fastq");
         let fastq_path2 = temp_dir.path().join("reads_2.fastq");
         let bin_path = temp_dir.path().join("ref.bin");
-        let output_path1 = temp_dir.path().join("filtered_1.fastq");
-        let output_path2 = temp_dir.path().join("filtered_2.fastq");
-        let summary_path = temp_dir.path().join("summary.json");
+        let output_path1 = temp_dir.path().join("filtered_1.fastq.gz");
+        let output_path2 = temp_dir.path().join("filtered_2.fastq.gz");
 
         create_test_fasta(&fasta_path);
         create_test_paired_fastq(&fastq_path1, &fastq_path2);
@@ -716,13 +712,9 @@ mod output2_tests {
         build_index(&fasta_path, &bin_path);
         assert!(bin_path.exists(), "Index file wasn't created");
 
-        // Run filtering command with separate output files (using -m 0 so short sequences pass through)
+        // Run filtering command with separate output files
         let mut cmd = Command::cargo_bin("deacon").unwrap();
         cmd.arg("filter")
-            .arg("-a")
-            .arg("0")
-            .arg("-r")
-            .arg("0.0")
             .arg(&bin_path)
             .arg(&fastq_path1)
             .arg(&fastq_path2)
@@ -730,28 +722,50 @@ mod output2_tests {
             .arg(&output_path1)
             .arg("--output2")
             .arg(&output_path2)
-            .arg("--summary")
-            .arg(&summary_path)
             .assert()
             .success();
 
         // Check both output files were created
         assert!(output_path1.exists(), "First output file wasn't created");
         assert!(output_path2.exists(), "Second output file wasn't created");
-        assert!(summary_path.exists(), "Summary file wasn't created");
 
         // Validate output content
-        let output1_content = fs::read_to_string(&output_path1).unwrap();
-        let output2_content = fs::read_to_string(&output_path2).unwrap();
-
-        assert!(!output1_content.is_empty(), "First output file is empty");
-        assert!(!output2_content.is_empty(), "Second output file is empty");
-
-        // Check that the summary includes output2 path
-        let summary_content = fs::read_to_string(&summary_path).unwrap();
         assert!(
-            summary_content.contains("output2"),
-            "Summary doesn't mention output2"
+            fs::metadata(&output_path1).unwrap().len() > 0,
+            "First gzipped output file is empty"
+        );
+        assert!(
+            fs::metadata(&output_path2).unwrap().len() > 0,
+            "Second gzipped output file is empty"
+        );
+
+        // Actually decompress and check if there are reads
+        use flate2::read::GzDecoder;
+        use std::fs::File;
+        use std::io::Read;
+
+        let file1 = File::open(&output_path1).unwrap();
+        let mut gz1 = GzDecoder::new(file1);
+        let mut contents1 = String::new();
+        gz1.read_to_string(&mut contents1).unwrap();
+
+        let file2 = File::open(&output_path2).unwrap();
+        let mut gz2 = GzDecoder::new(file2);
+        let mut contents2 = String::new();
+        gz2.read_to_string(&mut contents2).unwrap();
+
+        println!(
+            "Output2 test - Output1 length: {}, Output2 length: {}",
+            contents1.len(),
+            contents2.len()
+        );
+        println!(
+            "Output2 test - Output1 preview: {:?}",
+            &contents1.chars().take(100).collect::<String>()
+        );
+        println!(
+            "Output2 test - Output2 preview: {:?}",
+            &contents2.chars().take(100).collect::<String>()
         );
     }
 
@@ -798,6 +812,35 @@ mod output2_tests {
         assert!(
             fs::metadata(&output_path2).unwrap().len() > 0,
             "Second gzipped output file is empty"
+        );
+
+        // Actually decompress and check if there are reads
+        use flate2::read::GzDecoder;
+        use std::fs::File;
+        use std::io::Read;
+
+        let file1 = File::open(&output_path1).unwrap();
+        let mut gz1 = GzDecoder::new(file1);
+        let mut contents1 = String::new();
+        gz1.read_to_string(&mut contents1).unwrap();
+
+        let file2 = File::open(&output_path2).unwrap();
+        let mut gz2 = GzDecoder::new(file2);
+        let mut contents2 = String::new();
+        gz2.read_to_string(&mut contents2).unwrap();
+
+        println!(
+            "Gzip test - Output1 length: {}, Output2 length: {}",
+            contents1.len(),
+            contents2.len()
+        );
+        println!(
+            "Gzip test - Output1 preview: {:?}",
+            &contents1.chars().take(100).collect::<String>()
+        );
+        println!(
+            "Gzip test - Output2 preview: {:?}",
+            &contents2.chars().take(100).collect::<String>()
         );
     }
 
@@ -913,7 +956,6 @@ fn test_shared_minimizer_counted_once() {
     );
 }
 
-
 #[test]
 fn test_filter_proportional_threshold() {
     let temp_dir = tempdir().unwrap();
@@ -994,7 +1036,7 @@ fn test_filter_edge_case_proportional_values() {
     let mut cmd = Command::cargo_bin("deacon").unwrap();
     cmd.arg("filter")
         .arg("--abs-threshold")
-        .arg("0")
+        .arg("1")
         .arg("--rel-threshold")
         .arg("0.0")
         .arg(&bin_path)

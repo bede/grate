@@ -7,7 +7,10 @@ pub const DEFAULT_WINDOW_SIZE: usize = 15;
 /// Check if nucleotide is valid ACGT (case insensitive)
 #[inline]
 fn is_valid_acgt(nucleotide: u8) -> bool {
-    matches!(nucleotide, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')
+    matches!(
+        nucleotide,
+        b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'
+    )
 }
 
 /// Check if k-mer contains only ACGT nucleotides
