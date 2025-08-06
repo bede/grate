@@ -482,7 +482,7 @@ fn test_filter_paired_with_min_matches() {
 }
 
 #[test]
-fn test_interleaved_paired_reads() {
+fn test_interleaved_paired_reads_stdin() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
     let interleaved_fastq_path = temp_dir.path().join("interleaved_reads.fastq");
@@ -524,6 +524,62 @@ fn test_interleaved_paired_reads() {
     // Validate output content (should contain processed reads)
     let output_content = fs::read_to_string(&output_path).unwrap();
     assert!(!output_content.is_empty(), "Output file is empty");
+}
+
+#[test]
+fn test_single_read_stdin() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let fastq_path = temp_dir.path().join("reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq");
+
+    create_test_fasta(&fasta_path);
+
+    let fastq_content = "@read1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    fs::write(&fastq_path, fastq_content).unwrap();
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    // Test single-end stdin
+    let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"));
+    let output = cmd
+        .arg("filter")
+        .arg("-a")
+        .arg("1")
+        .arg("-r")
+        .arg("0.0")
+        .arg(&bin_path)
+        .arg("-") // stdin
+        .arg("--output")
+        .arg(&output_path)
+        .stdin(File::open(&fastq_path).unwrap())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command failed for single-read stdin"
+    );
+    assert!(
+        output_path.exists(),
+        "Output file wasn't created for single-read stdin"
+    );
+
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(
+        !output_content.is_empty(),
+        "Output file is empty for single-read stdin"
+    );
+    assert!(
+        output_content.contains("read1"),
+        "read1 not found in output"
+    );
+    assert!(
+        output_content.contains("read2"),
+        "read2 not found in output"
+    );
 }
 
 #[test]

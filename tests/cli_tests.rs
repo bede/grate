@@ -13,7 +13,5 @@ fn test_version() {
 #[test]
 fn test_no_args() {
     let mut cmd = Command::cargo_bin("deacon").unwrap();
-    cmd.assert()
-        .failure()
-        .stderr(str::contains("Usage"));
+    cmd.assert().failure().stderr(str::contains("Usage"));
 }

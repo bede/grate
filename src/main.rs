@@ -101,7 +101,7 @@ enum IndexCommands {
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
 
-        /// Suppress per-sequence progress output
+        /// Suppress sequence header output
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
     },
