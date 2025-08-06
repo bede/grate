@@ -71,6 +71,10 @@ enum Commands {
         /// Output compression level (1-9 for gz & xz; 1-22 for zstd)
         #[arg(long = "compression-level", default_value_t = 2)]
         compression_level: u8,
+
+        /// Debug mode: output sequences with minimizer hits to stderr
+        #[arg(long = "debug", default_value_t = false)]
+        debug: bool,
     },
 }
 
@@ -216,6 +220,7 @@ fn main() -> Result<()> {
             rename,
             threads,
             compression_level,
+            debug,
         } => {
             // Validate output2 usage
             if output2.is_some() && input2.is_none() {
@@ -238,6 +243,7 @@ fn main() -> Result<()> {
                 *rename,
                 *threads,
                 *compression_level,
+                *debug,
             )
             .context("Failed to run filter command")?;
         }

@@ -175,6 +175,7 @@ struct FilterProcessor {
     prefix_length: usize,
     deplete: bool,
     rename: bool,
+    debug: bool,
 
     // Local buffers
     local_buffer: Vec<u8>,
@@ -228,6 +229,7 @@ impl FilterProcessor {
         prefix_length: usize,
         deplete: bool,
         rename: bool,
+        debug: bool,
         writer: BoxedWriter,
         writer2: Option<BoxedWriter>,
         spinner: Arc<Mutex<ProgressBar>>,
@@ -242,6 +244,7 @@ impl FilterProcessor {
             prefix_length,
             deplete,
             rename,
+            debug,
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
             global_writer: Arc::new(Mutex::new(writer)),
@@ -252,9 +255,9 @@ impl FilterProcessor {
         }
     }
 
-    fn should_keep_sequence(&self, seq: &[u8]) -> bool {
+    fn should_keep_sequence(&self, seq: &[u8]) -> (bool, usize, usize) {
         if seq.len() < self.kmer_length as usize {
-            return self.deplete; // If too short, keep if in deplete mode
+            return (self.deplete, 0, 0); // If too short, keep if in deplete mode
         }
 
         // Apply prefix length limit if specified
@@ -282,10 +285,14 @@ impl FilterProcessor {
             }
         }
 
-        self.meets_filtering_criteria(hit_count, minimizer_buffer.len())
+        (
+            self.meets_filtering_criteria(hit_count, minimizer_buffer.len()),
+            hit_count,
+            minimizer_buffer.len(),
+        )
     }
 
-    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> bool {
+    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> (bool, usize, usize) {
         let mut minimizer_buffer1 = Vec::with_capacity(64);
         let mut minimizer_buffer2 = Vec::with_capacity(64);
         let mut seen_hits_pair = FxHashSet::default();
@@ -336,7 +343,11 @@ impl FilterProcessor {
         }
 
         let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
-        self.meets_filtering_criteria(pair_hit_count, total_minimizers)
+        (
+            self.meets_filtering_criteria(pair_hit_count, total_minimizers),
+            pair_hit_count,
+            total_minimizers,
+        )
     }
 
     fn write_record<Rf: Record>(&mut self, record: Rf) -> Result<()> {
@@ -389,7 +400,21 @@ impl ParallelProcessor for FilterProcessor {
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq_len as u64;
 
-        if self.should_keep_sequence(&record.seq_raw()) {
+        let (should_keep, hit_count, total_minimizers) =
+            self.should_keep_sequence(&record.seq_raw());
+
+        // Debug output: write to stderr if there are hits
+        if self.debug && hit_count > 0 {
+            eprintln!(
+                "DEBUG: {} hits={}/{} keep={}",
+                String::from_utf8_lossy(&record.id()),
+                hit_count,
+                total_minimizers,
+                should_keep
+            );
+        }
+
+        if should_keep {
             self.local_stats.output_bp += seq_len as u64;
             self.write_record(record)?;
         } else {
@@ -472,7 +497,22 @@ impl ParallelProcessor for InterleavedFilterProcessor {
             self.inner.local_stats.total_seqs += 2;
             self.inner.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-            if self.inner.should_keep_pair(&r1_seq, &record.seq_raw()) {
+            let (should_keep, hit_count, total_minimizers) =
+                self.inner.should_keep_pair(&r1_seq, &record.seq_raw());
+
+            // Debug output for interleaved pairs
+            if self.inner.debug && hit_count > 0 {
+                eprintln!(
+                    "DEBUG: {}/{} hits={}/{} keep={}",
+                    String::from_utf8_lossy(&r1_id),
+                    String::from_utf8_lossy(&record.id()),
+                    hit_count,
+                    total_minimizers,
+                    should_keep
+                );
+            }
+
+            if should_keep {
                 self.inner.local_stats.output_bp += (seq1_len + seq2_len) as u64;
 
                 // Create temporary records for formatting
@@ -549,7 +589,22 @@ impl PairedParallelProcessor for FilterProcessor {
         self.local_stats.total_seqs += 2;
         self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-        if self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw()) {
+        let (should_keep, hit_count, total_minimizers) =
+            self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
+
+        // Debug output for paired reads
+        if self.debug && hit_count > 0 {
+            eprintln!(
+                "DEBUG: {}/{} hits={}/{} keep={}",
+                String::from_utf8_lossy(&record1.id()),
+                String::from_utf8_lossy(&record2.id()),
+                hit_count,
+                total_minimizers,
+                should_keep
+            );
+        }
+
+        if should_keep {
             self.local_stats.output_bp += (seq1_len + seq2_len) as u64;
 
             // Write to appropriate writers
@@ -634,6 +689,7 @@ pub fn run<P: AsRef<Path>>(
     rename: bool,
     threads: usize,
     compression_level: u8,
+    debug: bool,
 ) -> Result<()> {
     let start_time = Instant::now();
     let version: String = env!("CARGO_PKG_VERSION").to_string();
@@ -727,6 +783,7 @@ pub fn run<P: AsRef<Path>>(
         prefix_length,
         deplete,
         rename,
+        debug,
         writer,
         writer2,
         spinner.clone(),
