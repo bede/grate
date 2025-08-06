@@ -1,5 +1,4 @@
 use crate::index::load_minimizer_hashes;
-use crate::minimizers::fill_minimizer_hashes;
 use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -255,9 +254,9 @@ impl FilterProcessor {
         }
     }
 
-    fn should_keep_sequence(&self, seq: &[u8]) -> (bool, usize, usize) {
+    fn should_keep_sequence(&self, seq: &[u8]) -> (bool, usize, usize, Vec<String>) {
         if seq.len() < self.kmer_length as usize {
-            return (self.deplete, 0, 0); // If too short, keep if in deplete mode
+            return (self.deplete, 0, 0, Vec::new()); // If too short, keep if in deplete mode
         }
 
         // Apply prefix length limit if specified
@@ -267,38 +266,129 @@ impl FilterProcessor {
             seq
         };
 
-        // Get minimizer hash values
-        let mut minimizer_buffer = Vec::with_capacity(64);
-        fill_minimizer_hashes(
-            effective_seq,
-            self.kmer_length,
-            self.window_size,
-            &mut minimizer_buffer,
+        // Get minimizer positions first
+        let canonical_seq = effective_seq
+            .iter()
+            .map(|&b| match b {
+                b'A' | b'a' => b'A',
+                b'C' | b'c' => b'C',
+                b'G' | b'g' => b'G',
+                b'T' | b't' => b'T',
+                _ => b'C', // Default for ambiguous bases
+            })
+            .collect::<Vec<u8>>();
+
+        let mut positions = Vec::new();
+        simd_minimizers::canonical_minimizer_positions(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            self.window_size as usize,
+            &mut positions,
         );
 
-        // Count distinct minimizer hits
+        // Filter positions to only include k-mers with ACGT bases
+        let valid_positions: Vec<u32> = positions
+            .into_iter()
+            .filter(|&pos| {
+                let pos_usize = pos as usize;
+                let kmer = &effective_seq[pos_usize..pos_usize + self.kmer_length as usize];
+                kmer.iter()
+                    .all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
+            })
+            .collect();
+
+        // Get hash values for valid positions
+        let minimizer_values: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            &valid_positions,
+        )
+        .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
+        .collect();
+
+        // Count distinct minimizer hits and collect matching k-mers
         let mut seen_hits = FxHashSet::default();
         let mut hit_count = 0;
-        for &hash in &minimizer_buffer {
+        let mut hit_kmers = Vec::new();
+
+        for (i, &hash) in minimizer_values.iter().enumerate() {
             if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
                 hit_count += 1;
+                // Extract the k-mer sequence at this position
+                if self.debug && i < valid_positions.len() {
+                    let pos = valid_positions[i] as usize;
+                    let kmer = &effective_seq[pos..pos + self.kmer_length as usize];
+                    hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
+                }
             }
         }
 
         (
-            self.meets_filtering_criteria(hit_count, minimizer_buffer.len()),
+            self.meets_filtering_criteria(hit_count, minimizer_values.len()),
             hit_count,
-            minimizer_buffer.len(),
+            minimizer_values.len(),
+            hit_kmers,
         )
     }
 
-    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> (bool, usize, usize) {
-        let mut minimizer_buffer1 = Vec::with_capacity(64);
-        let mut minimizer_buffer2 = Vec::with_capacity(64);
+    fn get_minimizer_hashes_and_positions(&self, seq: &[u8]) -> (Vec<u64>, Vec<u32>) {
+        // Canonicalize sequence
+        let canonical_seq = seq
+            .iter()
+            .map(|&b| match b {
+                b'A' | b'a' => b'A',
+                b'C' | b'c' => b'C',
+                b'G' | b'g' => b'G',
+                b'T' | b't' => b'T',
+                _ => b'C',
+            })
+            .collect::<Vec<u8>>();
+
+        let mut positions = Vec::new();
+        simd_minimizers::canonical_minimizer_positions(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            self.window_size as usize,
+            &mut positions,
+        );
+
+        // Filter to valid positions
+        let valid_positions: Vec<u32> = positions
+            .into_iter()
+            .filter(|&pos| {
+                let pos_usize = pos as usize;
+                if pos_usize + self.kmer_length as usize <= seq.len() {
+                    let kmer = &seq[pos_usize..pos_usize + self.kmer_length as usize];
+                    kmer.iter().all(|&b| {
+                        matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')
+                    })
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        // Get hash values
+        let hashes: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            &valid_positions,
+        )
+        .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
+        .collect();
+
+        (hashes, valid_positions)
+    }
+
+    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> (bool, usize, usize, Vec<String>) {
+        let mut all_hashes = Vec::new();
+        let mut all_positions = Vec::new();
+        let mut all_sequences = Vec::new();
         let mut seen_hits_pair = FxHashSet::default();
         let mut pair_hit_count = 0;
+        let mut hit_kmers = Vec::new();
 
-        // Check for minimizer hits in read 1
+        // Process read 1
         if seq1.len() >= self.kmer_length as usize {
             let effective_seq = if self.prefix_length > 0 && seq1.len() > self.prefix_length {
                 &seq1[..self.prefix_length]
@@ -306,21 +396,13 @@ impl FilterProcessor {
                 seq1
             };
 
-            fill_minimizer_hashes(
-                effective_seq,
-                self.kmer_length,
-                self.window_size,
-                &mut minimizer_buffer1,
-            );
-
-            for &hash in &minimizer_buffer1 {
-                if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
-                    pair_hit_count += 1;
-                }
-            }
+            let (hashes, positions) = self.get_minimizer_hashes_and_positions(effective_seq);
+            all_hashes.extend(hashes);
+            all_positions.extend(positions);
+            all_sequences.extend(vec![effective_seq; all_hashes.len()]);
         }
 
-        // Check for minimizer hits in read 2
+        // Process read 2
         if seq2.len() >= self.kmer_length as usize {
             let effective_seq = if self.prefix_length > 0 && seq2.len() > self.prefix_length {
                 &seq2[..self.prefix_length]
@@ -328,25 +410,34 @@ impl FilterProcessor {
                 seq2
             };
 
-            fill_minimizer_hashes(
-                effective_seq,
-                self.kmer_length,
-                self.window_size,
-                &mut minimizer_buffer2,
-            );
+            let (hashes, positions) = self.get_minimizer_hashes_and_positions(effective_seq);
+            let start_idx = all_hashes.len();
+            all_hashes.extend(hashes);
+            all_positions.extend(positions);
+            all_sequences.extend(vec![effective_seq; all_hashes.len() - start_idx]);
+        }
 
-            for &hash in &minimizer_buffer2 {
-                if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
-                    pair_hit_count += 1;
+        // Count hits and collect k-mers
+        for (i, &hash) in all_hashes.iter().enumerate() {
+            if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
+                pair_hit_count += 1;
+                if self.debug && i < all_positions.len() && i < all_sequences.len() {
+                    let pos = all_positions[i] as usize;
+                    let seq = all_sequences[i];
+                    if pos + self.kmer_length as usize <= seq.len() {
+                        let kmer = &seq[pos..pos + self.kmer_length as usize];
+                        hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
+                    }
                 }
             }
         }
 
-        let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
+        let total_minimizers = all_hashes.len();
         (
             self.meets_filtering_criteria(pair_hit_count, total_minimizers),
             pair_hit_count,
             total_minimizers,
+            hit_kmers,
         )
     }
 
@@ -400,17 +491,27 @@ impl ParallelProcessor for FilterProcessor {
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq_len as u64;
 
-        let (should_keep, hit_count, total_minimizers) =
+        let (should_keep, hit_count, total_minimizers, hit_kmers) =
             self.should_keep_sequence(&record.seq_raw());
 
         // Debug output: write to stderr if there are hits
         if self.debug && hit_count > 0 {
+            let kmers_display = if hit_kmers.len() > 5 {
+                format!(
+                    "{}, ... ({} total)",
+                    hit_kmers[..5].join(", "),
+                    hit_kmers.len()
+                )
+            } else {
+                hit_kmers.join(", ")
+            };
             eprintln!(
-                "DEBUG: {} hits={}/{} keep={}",
+                "DEBUG: {} hits={}/{} keep={} kmers=[{}]",
                 String::from_utf8_lossy(&record.id()),
                 hit_count,
                 total_minimizers,
-                should_keep
+                should_keep,
+                kmers_display
             );
         }
 
@@ -497,18 +598,28 @@ impl ParallelProcessor for InterleavedFilterProcessor {
             self.inner.local_stats.total_seqs += 2;
             self.inner.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-            let (should_keep, hit_count, total_minimizers) =
+            let (should_keep, hit_count, total_minimizers, hit_kmers) =
                 self.inner.should_keep_pair(&r1_seq, &record.seq_raw());
 
             // Debug output for interleaved pairs
             if self.inner.debug && hit_count > 0 {
+                let kmers_display = if hit_kmers.len() > 5 {
+                    format!(
+                        "{}, ... ({} total)",
+                        hit_kmers[..5].join(", "),
+                        hit_kmers.len()
+                    )
+                } else {
+                    hit_kmers.join(", ")
+                };
                 eprintln!(
-                    "DEBUG: {}/{} hits={}/{} keep={}",
+                    "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
                     String::from_utf8_lossy(&r1_id),
                     String::from_utf8_lossy(&record.id()),
                     hit_count,
                     total_minimizers,
-                    should_keep
+                    should_keep,
+                    kmers_display
                 );
             }
 
@@ -589,18 +700,28 @@ impl PairedParallelProcessor for FilterProcessor {
         self.local_stats.total_seqs += 2;
         self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-        let (should_keep, hit_count, total_minimizers) =
+        let (should_keep, hit_count, total_minimizers, hit_kmers) =
             self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
 
         // Debug output for paired reads
         if self.debug && hit_count > 0 {
+            let kmers_display = if hit_kmers.len() > 5 {
+                format!(
+                    "{}, ... ({} total)",
+                    hit_kmers[..5].join(", "),
+                    hit_kmers.len()
+                )
+            } else {
+                hit_kmers.join(", ")
+            };
             eprintln!(
-                "DEBUG: {}/{} hits={}/{} keep={}",
+                "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
                 String::from_utf8_lossy(&record1.id()),
                 String::from_utf8_lossy(&record2.id()),
                 hit_count,
                 total_minimizers,
-                should_keep
+                should_keep,
+                kmers_display
             );
         }
 
