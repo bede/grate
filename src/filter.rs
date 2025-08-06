@@ -494,24 +494,15 @@ impl ParallelProcessor for FilterProcessor {
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
             self.should_keep_sequence(&record.seq_raw());
 
-        // Debug output: write to stderr if there are hits
+        // Show debug info for sequences with hits
         if self.debug && hit_count > 0 {
-            let kmers_display = if hit_kmers.len() > 5 {
-                format!(
-                    "{}, ... ({} total)",
-                    hit_kmers[..5].join(", "),
-                    hit_kmers.len()
-                )
-            } else {
-                hit_kmers.join(", ")
-            };
             eprintln!(
                 "DEBUG: {} hits={}/{} keep={} kmers=[{}]",
                 String::from_utf8_lossy(&record.id()),
                 hit_count,
                 total_minimizers,
                 should_keep,
-                kmers_display
+                hit_kmers.join(",")
             );
         }
 
@@ -601,17 +592,8 @@ impl ParallelProcessor for InterleavedFilterProcessor {
             let (should_keep, hit_count, total_minimizers, hit_kmers) =
                 self.inner.should_keep_pair(&r1_seq, &record.seq_raw());
 
-            // Debug output for interleaved pairs
+            // Debug info for interleaved pairs
             if self.inner.debug && hit_count > 0 {
-                let kmers_display = if hit_kmers.len() > 5 {
-                    format!(
-                        "{}, ... ({} total)",
-                        hit_kmers[..5].join(", "),
-                        hit_kmers.len()
-                    )
-                } else {
-                    hit_kmers.join(", ")
-                };
                 eprintln!(
                     "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
                     String::from_utf8_lossy(&r1_id),
@@ -619,7 +601,7 @@ impl ParallelProcessor for InterleavedFilterProcessor {
                     hit_count,
                     total_minimizers,
                     should_keep,
-                    kmers_display
+                    hit_kmers.join(",")
                 );
             }
 
@@ -703,17 +685,8 @@ impl PairedParallelProcessor for FilterProcessor {
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
             self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
 
-        // Debug output for paired reads
+        // Debug info for paired reads
         if self.debug && hit_count > 0 {
-            let kmers_display = if hit_kmers.len() > 5 {
-                format!(
-                    "{}, ... ({} total)",
-                    hit_kmers[..5].join(", "),
-                    hit_kmers.len()
-                )
-            } else {
-                hit_kmers.join(", ")
-            };
             eprintln!(
                 "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
                 String::from_utf8_lossy(&record1.id()),
@@ -721,7 +694,7 @@ impl PairedParallelProcessor for FilterProcessor {
                 hit_count,
                 total_minimizers,
                 should_keep,
-                kmers_display
+                hit_kmers.join(",")
             );
         }
 
