@@ -141,6 +141,7 @@ pub fn build<P: AsRef<Path>>(
     output: Option<PathBuf>,
     capacity_millions: usize,
     threads: usize,
+    quiet: bool,
 ) -> Result<()> {
     let start_time = Instant::now();
     let path = input.as_ref();
@@ -178,8 +179,12 @@ pub fn build<P: AsRef<Path>>(
             .context("Failed to initialize thread pool")?;
     }
 
-    // Create a fastx reader using needletail (handles gzip automatically)
-    let mut reader = parse_fastx_file(path).context("Failed to open input file")?;
+    // Use needletail for parsing
+    let mut reader = if path.to_string_lossy() == "-" {
+        parse_fastx_stdin().context("Failed to parse stdin")?
+    } else {
+        parse_fastx_file(path).context("Failed to open input file")?
+    };
 
     // Init FxHashSet with user-specified capacity
     let capacity = capacity_millions * 1_000_000;
@@ -237,13 +242,15 @@ pub fn build<P: AsRef<Path>>(
             seq_count += 1;
             total_bp += seq_data.len();
 
-            let id_str = std::str::from_utf8(id).unwrap_or("unknown");
-            eprintln!(
-                "  {} ({}bp), total minimizers: {}",
-                id_str,
-                seq_data.len(),
-                all_minimizers.len()
-            );
+            if !quiet {
+                let id_str = std::str::from_utf8(id).unwrap_or("unknown");
+                eprintln!(
+                    "  {} ({}bp), total minimizers: {}",
+                    id_str,
+                    seq_data.len(),
+                    all_minimizers.len()
+                );
+            }
         }
 
         // Check if we've reached the end of the file
@@ -303,9 +310,9 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         );
     }
 
-    // Create a fastx reader
+    // Use needletail for parsing
     let mut reader = if path.to_string_lossy() == "-" {
-        parse_fastx_stdin().context("Failed to parse FASTX from stdin")?
+        parse_fastx_stdin().context("Failed to parse stdin")?
     } else {
         parse_fastx_file(path).context("Failed to open FASTX file")?
     };
@@ -387,7 +394,7 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         seq_count, total_bp
     );
 
-    Ok((seq_count, total_bp))
+    Ok((seq_count as usize, total_bp as usize))
 }
 
 /// Compute the set difference between two minimizer indexes (A - B)
@@ -452,10 +459,6 @@ pub fn diff<P: AsRef<Path>>(
             // Use k and w from first index header and do a streaming diff
             let k = header.kmer_length();
             let w = header.window_size();
-            // eprintln!(
-            //     "Second index is not valid, treating as FASTX and extracting minimizers (k={}, w={})",
-            //     k, w
-            // );
 
             // Count minimizers before diff
             let before_count = first_minimizers.len();

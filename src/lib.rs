@@ -183,6 +183,9 @@ pub struct IndexConfig {
 
     /// Number of execution threads (0 = auto)
     pub threads: usize,
+
+    /// Suppress per-sequence progress output
+    pub quiet: bool,
 }
 
 impl IndexConfig {
@@ -195,6 +198,7 @@ impl IndexConfig {
             output_path: None,
             capacity_millions: 500, // Default 500M capacity
             threads: 8,
+            quiet: false,
         }
     }
 
@@ -228,6 +232,12 @@ impl IndexConfig {
         self
     }
 
+    /// Set quiet mode
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
     /// Execute index build with this configuration
     pub fn execute(&self) -> Result<()> {
         build_index(
@@ -237,6 +247,7 @@ impl IndexConfig {
             self.output_path.clone(),
             self.capacity_millions,
             self.threads,
+            self.quiet,
         )
     }
 }

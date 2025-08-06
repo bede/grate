@@ -100,6 +100,10 @@ enum IndexCommands {
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
+
+        /// Suppress per-sequence progress output
+        #[arg(short = 'q', long = "quiet")]
+        quiet: bool,
     },
     /// Show index information
     Info {
@@ -160,6 +164,7 @@ fn main() -> Result<()> {
                 output,
                 capacity_millions,
                 threads,
+                quiet,
             } => {
                 // Convert output string to Option<PathBuf>
                 let output_path = if output == "-" {
@@ -175,6 +180,7 @@ fn main() -> Result<()> {
                     output_path,
                     *capacity_millions,
                     *threads,
+                    *quiet,
                 )
                 .context("Failed to run index build command")?;
             }
