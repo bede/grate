@@ -75,6 +75,10 @@ enum Commands {
         /// Debug mode: output sequences with minimizer hits to stderr
         #[arg(long = "debug", default_value_t = false)]
         debug: bool,
+
+        /// Suppress progress reporting
+        #[arg(short = 'q', long = "quiet", default_value_t = false)]
+        quiet: bool,
     },
 }
 
@@ -221,6 +225,7 @@ fn main() -> Result<()> {
             threads,
             compression_level,
             debug,
+            quiet,
         } => {
             // Validate output2 usage
             if output2.is_some() && input2.is_none() {
@@ -244,6 +249,7 @@ fn main() -> Result<()> {
                 *threads,
                 *compression_level,
                 *debug,
+                *quiet,
             )
             .context("Failed to run filter command")?;
         }

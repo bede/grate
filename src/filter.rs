@@ -184,7 +184,7 @@ struct FilterProcessor {
     global_writer: Arc<Mutex<BoxedWriter>>,
     global_writer2: Option<Arc<Mutex<BoxedWriter>>>,
     global_stats: Arc<Mutex<ProcessingStats>>,
-    spinner: Arc<Mutex<ProgressBar>>,
+    spinner: Option<Arc<Mutex<ProgressBar>>>,
     filtering_start_time: Instant,
 }
 
@@ -231,7 +231,7 @@ impl FilterProcessor {
         debug: bool,
         writer: BoxedWriter,
         writer2: Option<BoxedWriter>,
-        spinner: Arc<Mutex<ProgressBar>>,
+        spinner: Option<Arc<Mutex<ProgressBar>>>,
         filtering_start_time: Instant,
     ) -> Self {
         Self {
@@ -452,36 +452,38 @@ impl FilterProcessor {
     }
 
     fn update_spinner(&self) {
-        let stats = self.global_stats.lock();
-        let elapsed = self.filtering_start_time.elapsed();
-        let seqs_per_sec = stats.total_seqs as f64 / elapsed.as_secs_f64();
-        let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
-        let mbp_per_sec = bp_per_sec / 1_000_000.0;
+        if let Some(ref spinner) = self.spinner {
+            let stats = self.global_stats.lock();
+            let elapsed = self.filtering_start_time.elapsed();
+            let seqs_per_sec = stats.total_seqs as f64 / elapsed.as_secs_f64();
+            let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
+            let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
-        let output_seqs = stats.total_seqs - stats.filtered_seqs;
-        let output_proportion = if stats.total_seqs > 0 {
-            output_seqs as f64 / stats.total_seqs as f64
-        } else {
-            0.0
-        };
+            let output_seqs = stats.total_seqs - stats.filtered_seqs;
+            let output_proportion = if stats.total_seqs > 0 {
+                output_seqs as f64 / stats.total_seqs as f64
+            } else {
+                0.0
+            };
 
-        let output_bp_proportion = if stats.total_bp > 0 {
-            stats.output_bp as f64 / stats.total_bp as f64
-        } else {
-            0.0
-        };
+            let output_bp_proportion = if stats.total_bp > 0 {
+                stats.output_bp as f64 / stats.total_bp as f64
+            } else {
+                0.0
+            };
 
-        self.spinner.lock().set_message(format!(
-            "Retained {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-            output_seqs,
-            stats.total_seqs,
-            output_proportion * 100.0,
-            stats.output_bp,
-            stats.total_bp,
-            output_bp_proportion * 100.0,
-            seqs_per_sec,
-            mbp_per_sec
-        ));
+            spinner.lock().set_message(format!(
+                "Retained {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+                output_seqs,
+                stats.total_seqs,
+                output_proportion * 100.0,
+                stats.output_bp,
+                stats.total_bp,
+                output_bp_proportion * 100.0,
+                seqs_per_sec,
+                mbp_per_sec
+            ));
+        }
     }
 }
 
@@ -784,10 +786,14 @@ pub fn run<P: AsRef<Path>>(
     threads: usize,
     compression_level: u8,
     debug: bool,
+    quiet: bool,
 ) -> Result<()> {
     let start_time = Instant::now();
     let version: String = env!("CARGO_PKG_VERSION").to_string();
     let tool_version = format!("deacon {}", version);
+
+    // Enable quiet mode when debug is on to avoid mixed output
+    let quiet = quiet || debug;
 
     // Configure thread pool if nonzero
     if threads > 0 {
@@ -823,13 +829,15 @@ pub fn run<P: AsRef<Path>>(
         options.push(format!("threads={}", threads));
     }
 
-    eprintln!(
-        "Deacon v{}; mode: {}; input: {}; options: {}",
-        version,
-        mode,
-        input_type,
-        options.join(", ")
-    );
+    if !quiet {
+        eprintln!(
+            "Deacon v{}; mode: {}; input: {}; options: {}",
+            version,
+            mode,
+            input_type,
+            options.join(", ")
+        );
+    }
 
     // Load minimizers hashes and parse header
     let (minimizer_hashes, header) = load_minimizer_hashes(&minimizers_path)?;
@@ -839,10 +847,12 @@ pub fn run<P: AsRef<Path>>(
     let window_size = header.window_size();
 
     let load_time = start_time.elapsed();
-    eprintln!(
-        "Loaded index (k={}, w={}) in {:.2?}",
-        kmer_length, window_size, load_time
-    );
+    if !quiet {
+        eprintln!(
+            "Loaded index (k={}, w={}) in {:.2?}",
+            kmer_length, window_size, load_time
+        );
+    }
 
     // Create the appropriate writer(s) based on the output path(s)
     let writer = get_writer(output_path, compression_level)?;
@@ -852,17 +862,19 @@ pub fn run<P: AsRef<Path>>(
         None
     };
 
-    // Progress bar setup
-    let spinner = Arc::new(Mutex::new(ProgressBar::with_draw_target(
-        None,
-        ProgressDrawTarget::stderr(),
-    )));
-    spinner.lock().set_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&[".  ", ".. ", "...", " ..", "  .", "   "])
-            .template("{msg}{spinner} ")?,
-    );
-    spinner.lock().set_message("Filtering");
+    // Progress bar setup (only if not quiet)
+    let spinner = if !quiet {
+        let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{msg} {spinner}")?,
+        );
+        pb.set_message("Filtering");
+        Some(Arc::new(Mutex::new(pb)))
+    } else {
+        None
+    };
 
     // Start timer for filtering rate calculation
     let filtering_start_time = Instant::now();
@@ -964,21 +976,26 @@ pub fn run<P: AsRef<Path>>(
     };
 
     // Finish and clear spinner
-    spinner.lock().finish_and_clear();
-    eprintln!(
-        "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
-        output_seqs,
-        total_seqs,
-        output_seq_proportion * 100.0,
-        output_bp,
-        total_bp,
-        output_bp_proportion * 100.0
-    );
+    if let Some(ref spinner) = spinner {
+        spinner.lock().finish_and_clear();
+    }
 
-    eprintln!(
-        "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
-        total_time, seqs_per_sec, mbp_per_sec
-    );
+    if !quiet {
+        eprintln!(
+            "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
+            output_seqs,
+            total_seqs,
+            output_seq_proportion * 100.0,
+            output_bp,
+            total_bp,
+            output_bp_proportion * 100.0
+        );
+
+        eprintln!(
+            "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
+            total_time, seqs_per_sec, mbp_per_sec
+        );
+    }
 
     // Build and write JSON summary if path provided
     if let Some(summary_file) = summary_path {
@@ -1019,7 +1036,9 @@ pub fn run<P: AsRef<Path>>(
 
         serde_json::to_writer_pretty(writer, &summary).context("Failed to write summary")?;
 
-        eprintln!("Summary saved to {:?}", summary_file);
+        if !quiet {
+            eprintln!("Summary saved to {:?}", summary_file);
+        }
     }
 
     Ok(())

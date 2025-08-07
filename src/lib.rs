@@ -67,6 +67,9 @@ pub struct FilterConfig {
 
     /// Debug mode: output sequences with minimizer hits to stderr
     pub debug: bool,
+
+    /// Suppress progress reporting
+    pub quiet: bool,
 }
 
 impl FilterConfig {
@@ -86,6 +89,7 @@ impl FilterConfig {
             threads: 0,           // Use all available threads by default
             compression_level: 2, // Default compression level
             debug: false,
+            quiet: false,
         }
     }
 
@@ -154,6 +158,11 @@ impl FilterConfig {
         self
     }
 
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
     /// Filter with this configuration
     pub fn execute(&self) -> Result<()> {
         filter::run(
@@ -171,6 +180,7 @@ impl FilterConfig {
             self.threads,
             self.compression_level,
             self.debug,
+            self.quiet,
         )
     }
 }
