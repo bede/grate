@@ -51,9 +51,20 @@ fn canonicalise_sequence(seq: &[u8]) -> Vec<u8> {
 }
 
 /// Returns vector of all minimizer hashes for a sequence
-pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u16, information_threshold: Option<f32>) -> Vec<u64> {
+pub fn compute_minimizer_hashes(
+    seq: &[u8],
+    kmer_length: u8,
+    window_size: u16,
+    information_threshold: Option<f32>,
+) -> Vec<u64> {
     let mut hashes = Vec::new();
-    fill_minimizer_hashes(seq, kmer_length, window_size, &mut hashes, information_threshold);
+    fill_minimizer_hashes(
+        seq,
+        kmer_length,
+        window_size,
+        &mut hashes,
+        information_threshold,
+    );
     hashes
 }
 
@@ -61,20 +72,14 @@ pub fn compute_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u16, i
 /// Returns value between 0.0 (maximally repetitive) and 1.0 (maximally complex)
 fn calculate_linguistic_complexity(kmer: &[u8]) -> f32 {
     let n = kmer.len();
-    if n == 0 {
-        return 0.0;
+
+    // K-mers less than 4 bases long always pass through (never filtered)
+    if n < 4 {
+        return 1.0;
     }
 
-    // Determine appropriate window size based on k-mer length
-    let max_word_length = if n < 18 {
-        3
-    } else if n < 67 {
-        4
-    } else {
-        5
-    };
-
-    let window_size = max_word_length.min(n);
+    // Always use max word length of 4, regardless of k-mer length
+    let window_size = 4;
     let mut complexity = 1.0;
 
     // Calculate vocabulary usage for each word length from 1 to window_size
@@ -92,7 +97,7 @@ fn calculate_linguistic_complexity(kmer: &[u8]) -> f32 {
         let observed_vocab = vocab.len();
         let max_possible_vocab = 4_usize.pow(word_len as u32).min(n - word_len + 1);
         let vocab_usage = observed_vocab as f32 / max_possible_vocab as f32;
-        
+
         complexity *= vocab_usage;
     }
 
@@ -101,7 +106,13 @@ fn calculate_linguistic_complexity(kmer: &[u8]) -> f32 {
 
 /// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
 /// and optionally filtering by linguistic complexity
-pub fn fill_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u16, hashes: &mut Vec<u64>, information_threshold: Option<f32>) {
+pub fn fill_minimizer_hashes(
+    seq: &[u8],
+    kmer_length: u8,
+    window_size: u16,
+    hashes: &mut Vec<u64>,
+    information_threshold: Option<f32>,
+) {
     hashes.clear();
 
     // Skip if sequence is too short
@@ -126,12 +137,12 @@ pub fn fill_minimizer_hashes(seq: &[u8], kmer_length: u8, window_size: u16, hash
         .filter(|&pos| {
             let pos_usize = pos as usize;
             let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
-            
+
             // First check ACGT constraint
             if !kmer_contains_only_acgt(kmer) {
                 return false;
             }
-            
+
             // Then check complexity constraint if threshold is specified
             if let Some(threshold) = information_threshold {
                 let complexity = calculate_linguistic_complexity(kmer);
@@ -216,26 +227,46 @@ mod tests {
         // Test maximum complexity (all different nucleotides)
         let max_complexity_kmer = b"ACGT";
         let complexity = calculate_linguistic_complexity(max_complexity_kmer);
-        assert!((complexity - 1.0).abs() < 0.01, "Expected ~1.0, got {}", complexity);
+        assert!(
+            (complexity - 1.0).abs() < 0.01,
+            "Expected ~1.0, got {}",
+            complexity
+        );
 
         // Test minimum complexity (homopolymer)
         let min_complexity_kmer = b"AAAA";
         let complexity = calculate_linguistic_complexity(min_complexity_kmer);
-        assert!(complexity < 0.1, "Expected very low complexity, got {}", complexity);
+        assert!(
+            complexity < 0.1,
+            "Expected very low complexity, got {}",
+            complexity
+        );
 
         // Test moderate complexity (alternating pattern)
         let alt_complexity_kmer = b"ATATAT";
         let complexity = calculate_linguistic_complexity(alt_complexity_kmer);
-        assert!(complexity > 0.05 && complexity < 0.5, "Expected moderate complexity, got {}", complexity);
+        assert!(
+            complexity > 0.05 && complexity < 0.5,
+            "Expected moderate complexity, got {}",
+            complexity
+        );
 
-        // Test empty k-mer
+        // Test empty k-mer (should also never be filtered)
         let empty_kmer = b"";
         let complexity = calculate_linguistic_complexity(empty_kmer);
-        assert_eq!(complexity, 0.0);
+        assert_eq!(complexity, 1.0);
 
-        // Test single nucleotide
+        // Test k-mers less than 4 bases (should return 1.0 to never be filtered)
         let single_kmer = b"A";
         let complexity = calculate_linguistic_complexity(single_kmer);
+        assert_eq!(complexity, 1.0);
+
+        let dinucleotide_kmer = b"AT";
+        let complexity = calculate_linguistic_complexity(dinucleotide_kmer);
+        assert_eq!(complexity, 1.0);
+
+        let trinucleotide_kmer = b"ACG";
+        let complexity = calculate_linguistic_complexity(trinucleotide_kmer);
         assert_eq!(complexity, 1.0);
     }
 
@@ -247,10 +278,10 @@ mod tests {
 
         // Without filtering
         let hashes_no_filter = compute_minimizer_hashes(seq, k, w, None);
-        
+
         // With high threshold (should filter out low complexity k-mers)
         let hashes_filtered = compute_minimizer_hashes(seq, k, w, Some(0.8));
-        
+
         // Filtered should have fewer or equal hashes
         assert!(hashes_filtered.len() <= hashes_no_filter.len());
     }

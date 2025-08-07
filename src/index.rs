@@ -230,7 +230,12 @@ pub fn build<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size, information_threshold)
+                crate::minimizers::compute_minimizer_hashes(
+                    seq_data,
+                    kmer_length,
+                    window_size,
+                    information_threshold,
+                )
             })
             .collect();
 
@@ -356,7 +361,12 @@ fn stream_diff_fastx<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size, None)
+                crate::minimizers::compute_minimizer_hashes(
+                    seq_data,
+                    kmer_length,
+                    window_size,
+                    None,
+                )
             })
             .collect();
 
