@@ -6,7 +6,7 @@ use liblzma::write::XzEncoder;
 use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{
-    PairedParallelProcessor, PairedParallelReader, ParallelProcessor, ParallelReader,
+    InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor, PairedParallelReader, ParallelProcessor, ParallelReader,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
@@ -23,19 +23,20 @@ const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
 type BoxedWriter = Box<dyn Write + Send>;
 
-/// Create a reader that handles both file paths and stdin ("-")
-fn create_reader(
-    path: &str,
-) -> Result<(
-    Box<dyn std::io::Read + Send>,
-    niffler::send::compression::Format,
-)> {
-    if path == "-" {
-        niffler::send::get_reader(Box::new(std::io::stdin()))
-            .map_err(|e| anyhow::anyhow!("Failed to create stdin reader: {}", e))
-    } else {
-        niffler::send::from_path(path)
-            .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", path, e))
+/// Create a paraseq reader from optional path (stdin if None or "-")
+fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::Read + Send>>> {
+    match path {
+        None | Some("-") => {
+            let stdin_reader = Box::new(std::io::stdin()) as Box<dyn std::io::Read + Send>;
+            Reader::new(stdin_reader)
+                .map_err(|e| anyhow::anyhow!("Failed to create stdin reader: {}", e))
+        }
+        Some(p) => {
+            let (reader, _format) = niffler::send::from_path(p)
+                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))?;
+            Reader::new(reader)
+                .map_err(|e| anyhow::anyhow!("Failed to create reader for {}: {}", p, e))
+        }
     }
 }
 
@@ -525,8 +526,10 @@ impl ParallelProcessor for FilterProcessor {
             let mut global_writer = self.global_writer.lock();
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
-            self.local_buffer.clear();
         }
+        
+        // Clear buffer after releasing the lock for better performance
+        self.local_buffer.clear();
 
         // Update global stats
         {
@@ -549,127 +552,76 @@ impl ParallelProcessor for FilterProcessor {
     }
 }
 
-/// Wrapper processor for handling interleaved paired reads
-#[derive(Clone)]
-struct InterleavedFilterProcessor {
-    inner: FilterProcessor,
-    buffer: Option<Vec<u8>>,      // Buffer for first record in pair
-    buffer_id: Option<Vec<u8>>,   // Buffer for first record id
-    buffer_qual: Option<Vec<u8>>, // Buffer for first record quality
-}
+impl InterleavedParallelProcessor for FilterProcessor {
+    fn process_interleaved_pair<Rf: Record>(
+        &mut self,
+        record1: Rf,
+        record2: Rf,
+    ) -> paraseq::parallel::Result<()> {
+        let seq1_len = record1.seq_raw().len();
+        let seq2_len = record2.seq_raw().len();
+        self.local_stats.total_seqs += 2;
+        self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-impl InterleavedFilterProcessor {
-    fn new(processor: FilterProcessor) -> Self {
-        Self {
-            inner: processor,
-            buffer: None,
-            buffer_id: None,
-            buffer_qual: None,
+        let (should_keep, hit_count, total_minimizers, hit_kmers) =
+            self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
+
+        // Debug info for interleaved pairs
+        if self.debug && hit_count > 0 {
+            eprintln!(
+                "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
+                String::from_utf8_lossy(&record1.id()),
+                String::from_utf8_lossy(&record2.id()),
+                hit_count,
+                total_minimizers,
+                should_keep,
+                hit_kmers.join(",")
+            );
         }
-    }
-}
 
-impl ParallelProcessor for InterleavedFilterProcessor {
-    fn process_record<Rf: Record>(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
-        if self.buffer.is_none() {
-            // This is the first record of a pair - buffer it
-            self.buffer = Some(record.seq().to_vec());
-            self.buffer_id = Some(record.id().to_vec());
-            self.buffer_qual = record.qual().map(|q| q.to_vec());
+        if should_keep {
+            self.local_stats.output_bp += (seq1_len + seq2_len) as u64;
+
+            // Write both records to output
+            self.write_record(record1)?;
+            self.write_record(record2)?;
         } else {
-            // This is the second record - process the pair
-            let r1_seq = self.buffer.take().unwrap();
-            let r1_id = self.buffer_id.take().unwrap();
-            let r1_qual = self.buffer_qual.take();
-
-            let r2_seq = record.seq().to_vec();
-            let _r2_qual = record.qual().map(|q| q.to_vec());
-
-            // Process the pair using the same logic as should_keep_pair
-            let seq1_len = r1_seq.len();
-            let seq2_len = r2_seq.len();
-            self.inner.local_stats.total_seqs += 2;
-            self.inner.local_stats.total_bp += (seq1_len + seq2_len) as u64;
-
-            let (should_keep, hit_count, total_minimizers, hit_kmers) =
-                self.inner.should_keep_pair(&r1_seq, &record.seq_raw());
-
-            // Debug info for interleaved pairs
-            if self.inner.debug && hit_count > 0 {
-                eprintln!(
-                    "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
-                    String::from_utf8_lossy(&r1_id),
-                    String::from_utf8_lossy(&record.id()),
-                    hit_count,
-                    total_minimizers,
-                    should_keep,
-                    hit_kmers.join(",")
-                );
-            }
-
-            if should_keep {
-                self.inner.local_stats.output_bp += (seq1_len + seq2_len) as u64;
-
-                // Create temporary records for formatting
-                struct TempRecord<'a> {
-                    id: &'a [u8],
-                    seq: &'a [u8],
-                    qual: Option<&'a [u8]>,
-                }
-
-                impl<'a> Record for TempRecord<'a> {
-                    fn id(&self) -> &[u8] {
-                        self.id
-                    }
-                    fn seq(&self) -> std::borrow::Cow<'_, [u8]> {
-                        std::borrow::Cow::Borrowed(self.seq)
-                    }
-                    fn seq_raw(&self) -> &[u8] {
-                        self.seq
-                    }
-                    fn qual(&self) -> Option<&[u8]> {
-                        self.qual
-                    }
-                }
-
-                let r1_record = TempRecord {
-                    id: &r1_id,
-                    seq: &r1_seq,
-                    qual: r1_qual.as_deref(),
-                };
-                let r2_record = TempRecord {
-                    id: &record.id(),
-                    seq: &record.seq_raw(),
-                    qual: record.qual(),
-                };
-
-                // Write both records using shared formatting
-                self.inner.local_stats.output_seq_counter += 1;
-                format_record_to_buffer(
-                    &r1_record,
-                    self.inner.local_stats.output_seq_counter,
-                    self.inner.rename,
-                    &mut self.inner.local_buffer,
-                )?;
-
-                self.inner.local_stats.output_seq_counter += 1;
-                format_record_to_buffer(
-                    &r2_record,
-                    self.inner.local_stats.output_seq_counter,
-                    self.inner.rename,
-                    &mut self.inner.local_buffer,
-                )?;
-            } else {
-                self.inner.local_stats.filtered_seqs += 2;
-                self.inner.local_stats.filtered_bp += (seq1_len + seq2_len) as u64;
-            }
+            self.local_stats.filtered_seqs += 2;
+            self.local_stats.filtered_bp += (seq1_len + seq2_len) as u64;
         }
 
         Ok(())
     }
 
     fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
-        ParallelProcessor::on_batch_complete(&mut self.inner)
+        // Write buffer to output
+        if !self.local_buffer.is_empty() {
+            let mut global_writer = self.global_writer.lock();
+            global_writer.write_all(&self.local_buffer)?;
+            global_writer.flush()?;
+        }
+        
+        // Clear buffer after releasing the lock for better performance
+        self.local_buffer.clear();
+
+        // Update global stats
+        {
+            let mut stats = self.global_stats.lock();
+            stats.total_seqs += self.local_stats.total_seqs;
+            stats.filtered_seqs += self.local_stats.filtered_seqs;
+            stats.total_bp += self.local_stats.total_bp;
+            stats.output_bp += self.local_stats.output_bp;
+            stats.filtered_bp += self.local_stats.filtered_bp;
+            stats.output_seq_counter += self.local_stats.output_seq_counter;
+        }
+
+        // Update spinner
+        self.update_spinner();
+
+        // Reset local stats
+        self.local_stats = ProcessingStats::default();
+
+        Ok(())
     }
 }
 
@@ -741,8 +693,10 @@ impl PairedParallelProcessor for FilterProcessor {
             let mut global_writer = self.global_writer.lock();
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
-            self.local_buffer.clear();
         }
+        
+        // Clear buffer after releasing the lock for better performance
+        self.local_buffer.clear();
 
         // Also flush writer2 if it exists
         if let Some(ref writer2) = self.global_writer2 {
@@ -904,27 +858,17 @@ pub fn run<P: AsRef<Path>>(
     };
 
     if paired_stdin {
-        // Interleaved paired from stdin - read single records but process as pairs
-        let (stdin_handle, _comp) = create_reader("-")?;
-        let reader = Reader::new(stdin_handle)?;
-
-        // Create an interleaved processor that buffers records and processes pairs
-        let interleaved_processor = InterleavedFilterProcessor::new(processor.clone());
-        reader.process_parallel(interleaved_processor, num_threads)?;
+        // Interleaved paired from stdin - use native interleaved processor
+        let reader = create_paraseq_reader(Some("-"))?;
+        reader.process_parallel_interleaved(processor.clone(), num_threads)?;
     } else if let Some(input2_path) = input2_path {
         // Paired files
-        let (r1_handle, _comp) = create_reader(input_path)?;
-        let (r2_handle, _comp) = create_reader(input2_path)?;
-
-        let r1_reader = Reader::new(r1_handle)?;
-        let r2_reader = Reader::new(r2_handle)?;
-
+        let r1_reader = create_paraseq_reader(Some(input_path))?;
+        let r2_reader = create_paraseq_reader(Some(input2_path))?;
         r1_reader.process_parallel_paired(r2_reader, processor.clone(), num_threads)?;
     } else {
         // Single file or stdin
-        let (input_handle, _comp) = create_reader(input_path)?;
-        let reader = Reader::new(input_handle)?;
-
+        let reader = create_paraseq_reader(Some(input_path))?;
         reader.process_parallel(processor.clone(), num_threads)?;
     }
 
