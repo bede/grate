@@ -271,6 +271,7 @@ impl FilterProcessor {
             self.kmer_length,
             self.window_size,
             &mut minimizer_buffer,
+            None,
         );
 
         // Count distinct minimizer hits
@@ -304,6 +305,7 @@ impl FilterProcessor {
                 self.kmer_length,
                 self.window_size,
                 &mut minimizer_buffer1,
+                None,
             );
 
             for &hash in &minimizer_buffer1 {
@@ -326,6 +328,7 @@ impl FilterProcessor {
                 self.kmer_length,
                 self.window_size,
                 &mut minimizer_buffer2,
+                None,
             );
 
             for &hash in &minimizer_buffer2 {

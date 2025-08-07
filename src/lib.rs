@@ -186,6 +186,9 @@ pub struct IndexConfig {
 
     /// Suppress per-sequence progress output
     pub quiet: bool,
+
+    /// Minimum linguistic complexity threshold for k-mer filtering (0.0-1.0)
+    pub information_threshold: Option<f32>,
 }
 
 impl IndexConfig {
@@ -199,6 +202,7 @@ impl IndexConfig {
             capacity_millions: 500, // Default 500M capacity
             threads: 8,
             quiet: false,
+            information_threshold: None,
         }
     }
 
@@ -238,6 +242,12 @@ impl IndexConfig {
         self
     }
 
+    /// Set information threshold for linguistic complexity filtering
+    pub fn with_information_threshold(mut self, threshold: f32) -> Self {
+        self.information_threshold = Some(threshold);
+        self
+    }
+
     /// Execute index build with this configuration
     pub fn execute(&self) -> Result<()> {
         build_index(
@@ -248,6 +258,7 @@ impl IndexConfig {
             self.capacity_millions,
             self.threads,
             self.quiet,
+            self.information_threshold,
         )
     }
 }

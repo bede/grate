@@ -142,6 +142,7 @@ pub fn build<P: AsRef<Path>>(
     capacity_millions: usize,
     threads: usize,
     quiet: bool,
+    information_threshold: Option<f32>,
 ) -> Result<()> {
     let start_time = Instant::now();
     let path = input.as_ref();
@@ -229,7 +230,7 @@ pub fn build<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size)
+                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size, information_threshold)
             })
             .collect();
 
@@ -355,7 +356,7 @@ fn stream_diff_fastx<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size)
+                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size, None)
             })
             .collect();
 
