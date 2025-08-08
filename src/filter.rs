@@ -880,22 +880,6 @@ pub fn run<P: AsRef<Path>>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::IndexHeader;
-    use crate::index::write_minimizers;
-    use tempfile::TempDir;
-
-    #[allow(dead_code)]
-    fn create_test_index() -> (PathBuf, IndexHeader, TempDir) {
-        let temp_dir = TempDir::new().unwrap();
-        let index_path = temp_dir.path().join("test.idx");
-
-        let minimizers: FxHashSet<u64> = [1, 2, 3, 4, 5].iter().cloned().collect();
-        let header = IndexHeader::new(5, 3);
-
-        write_minimizers(&minimizers, &header, Some(&index_path)).unwrap();
-
-        (index_path, header, temp_dir)
-    }
 
     #[test]
     fn test_filter_summary() {

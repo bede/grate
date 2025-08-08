@@ -1,5 +1,4 @@
 use packed_seq::AsciiSeq;
-use rustc_hash::FxHashSet;
 use xxhash_rust::xxh3;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
@@ -55,7 +54,7 @@ pub fn compute_minimizer_hashes(
     seq: &[u8],
     kmer_length: u8,
     window_size: u16,
-    information_threshold: Option<f32>,
+    entropy_threshold: Option<f32>,
 ) -> Vec<u64> {
     let mut hashes = Vec::new();
     fill_minimizer_hashes(
@@ -63,55 +62,72 @@ pub fn compute_minimizer_hashes(
         kmer_length,
         window_size,
         &mut hashes,
-        information_threshold,
+        entropy_threshold,
     );
     hashes
 }
 
-/// Calculate linguistic complexity for a k-mer using vocabulary richness approach
-/// Returns value between 0.0 (maximally repetitive) and 1.0 (maximally complex)
-fn calculate_linguistic_complexity(kmer: &[u8]) -> f32 {
-    let n = kmer.len();
-
-    // K-mers less than 4 bases long always pass through (never filtered)
-    if n < 4 {
+/// Calculate scaled entropy using character frequency analysis
+/// Returns scaled entropy between 0.0 and 1.0
+#[inline]
+fn calculate_scaled_entropy(kmer: &[u8], kmer_length: u8) -> f32 {
+    // K-mers less than 10 bases long always pass filter
+    if kmer_length < 10 {
         return 1.0;
     }
 
-    // Always use max word length of 4, regardless of k-mer length
-    let window_size = 4;
-    let mut complexity = 1.0;
+    // Count character frequencies using fixed array (faster than HashMap)
+    let mut counts = [0u8; 4]; // A, C, G, T
+    let mut total = 0u8;
 
-    // Calculate vocabulary usage for each word length from 1 to window_size
-    for word_len in 1..=window_size {
-        if word_len > n {
-            break;
+    // Iterate only up to kmer_length to avoid bounds checks
+    for i in 0..kmer_length as usize {
+        match kmer[i] {
+            b'A' | b'a' => {
+                counts[0] += 1;
+                total += 1;
+            }
+            b'C' | b'c' => {
+                counts[1] += 1;
+                total += 1;
+            }
+            b'G' | b'g' => {
+                counts[2] += 1;
+                total += 1;
+            }
+            b'T' | b't' => {
+                counts[3] += 1;
+                total += 1;
+            }
+            _ => {} // Skip invalid characters
         }
-
-        // Count unique subwords of this length
-        let mut vocab = FxHashSet::default();
-        for i in 0..=(n - word_len) {
-            vocab.insert(&kmer[i..i + word_len]);
-        }
-
-        let observed_vocab = vocab.len();
-        let max_possible_vocab = 4_usize.pow(word_len as u32).min(n - word_len + 1);
-        let vocab_usage = observed_vocab as f32 / max_possible_vocab as f32;
-
-        complexity *= vocab_usage;
     }
 
-    complexity
+    if total == 0 {
+        return 1.0; // All non-ACGT, don't filter
+    }
+
+    let total_f32 = total as f32;
+    let mut entropy = 0.0;
+    for &count in &counts {
+        if count > 0 {
+            let p = count as f32 / total_f32;
+            entropy -= p * p.log2();
+        }
+    }
+
+    // Scale entropy to [0, 1] range (max entropy for 4 bases is 2.0)
+    entropy / 2.0
 }
 
 /// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
-/// and optionally filtering by linguistic complexity
+/// and optionally filtering by scaled entropy
 pub fn fill_minimizer_hashes(
     seq: &[u8],
     kmer_length: u8,
     window_size: u16,
     hashes: &mut Vec<u64>,
-    information_threshold: Option<f32>,
+    entropy_threshold: Option<f32>,
 ) {
     hashes.clear();
 
@@ -131,22 +147,22 @@ pub fn fill_minimizer_hashes(
         &mut positions,
     );
 
-    // Filter positions to only include k-mers with ACGT bases and sufficient complexity
+    // Filter positions to only include k-mers with ACGT bases and sufficient entropy
     let valid_positions: Vec<u32> = positions
         .into_iter()
         .filter(|&pos| {
             let pos_usize = pos as usize;
             let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
 
-            // First check ACGT constraint
+            // Check ACGT constraint
             if !kmer_contains_only_acgt(kmer) {
                 return false;
             }
 
-            // Then check complexity constraint if threshold is specified
-            if let Some(threshold) = information_threshold {
-                let complexity = calculate_linguistic_complexity(kmer);
-                complexity >= threshold
+            // Check scaled entropy constraint if threshold specified
+            if let Some(threshold) = entropy_threshold {
+                let entropy = calculate_scaled_entropy(kmer, kmer_length);
+                entropy >= threshold
             } else {
                 true
             }
@@ -197,11 +213,11 @@ mod tests {
     fn test_canonicalise_sequence() {
         let seq = b"ACGTN";
         let canonical = canonicalise_sequence(seq);
-        assert_eq!(canonical, b"ACGTC"); // N becomes C
+        assert_eq!(canonical, b"ACGTC");
 
         let seq = b"RYMKWS";
         let canonical = canonicalise_sequence(seq);
-        assert_eq!(canonical, b"GCCGAG"); // R->G, Y->C, M->C, K->G, W->A, S->G
+        assert_eq!(canonical, b"GCCGAG");
     }
 
     #[test]
@@ -223,66 +239,144 @@ mod tests {
     }
 
     #[test]
-    fn test_calculate_linguistic_complexity() {
-        // Test maximum complexity (all different nucleotides)
-        let max_complexity_kmer = b"ACGT";
-        let complexity = calculate_linguistic_complexity(max_complexity_kmer);
+    fn test_calculate_scaled_entropy() {
+        // Test short k-mers (should return 1.0 for k < 10)
+        let short_kmer = b"ACGT";
+        let entropy = calculate_scaled_entropy(short_kmer, 8);
+        assert_eq!(entropy, 1.0, "Expected 1.0 for k-mer length < 10");
+
+        // Test minimum entropy (homopolymer, 10bp)
+        let min_entropy_kmer = b"AAAAAAAAAA";
+        let entropy = calculate_scaled_entropy(min_entropy_kmer, 10);
+        assert!(entropy < 0.1, "Expected very low entropy, got {}", entropy);
+
+        // Test moderate entropy (alternating pattern, 10bp)
+        let alt_entropy_kmer = b"ATATATATAT";
+        let entropy = calculate_scaled_entropy(alt_entropy_kmer, 10);
         assert!(
-            (complexity - 1.0).abs() < 0.01,
-            "Expected ~1.0, got {}",
-            complexity
+            entropy >= 0.5 && entropy < 1.0,
+            "Expected moderate entropy, got {}",
+            entropy
         );
 
-        // Test minimum complexity (homopolymer)
-        let min_complexity_kmer = b"AAAA";
-        let complexity = calculate_linguistic_complexity(min_complexity_kmer);
+        // Test maximum entropy (diverse 10bp)
+        let max_entropy_kmer = b"ACGTACGTAC";
+        let entropy = calculate_scaled_entropy(max_entropy_kmer, 10);
         assert!(
-            complexity < 0.1,
-            "Expected very low complexity, got {}",
-            complexity
+            entropy > 0.9,
+            "Expected high entropy for diverse 10-mer, got {}",
+            entropy
         );
 
-        // Test moderate complexity (alternating pattern)
-        let alt_complexity_kmer = b"ATATAT";
-        let complexity = calculate_linguistic_complexity(alt_complexity_kmer);
+        // Test realistic k-mer (31bp, default k)
+        let realistic_kmer = b"ACGTACGTACGTACGTACGTACGTACGTACG";
+        let entropy = calculate_scaled_entropy(realistic_kmer, 31);
         assert!(
-            complexity > 0.05 && complexity < 0.5,
-            "Expected moderate complexity, got {}",
-            complexity
+            entropy > 0.9,
+            "Expected high entropy for diverse 31-mer, got {}",
+            entropy
         );
-
-        // Test empty k-mer (should also never be filtered)
-        let empty_kmer = b"";
-        let complexity = calculate_linguistic_complexity(empty_kmer);
-        assert_eq!(complexity, 1.0);
-
-        // Test k-mers less than 4 bases (should return 1.0 to never be filtered)
-        let single_kmer = b"A";
-        let complexity = calculate_linguistic_complexity(single_kmer);
-        assert_eq!(complexity, 1.0);
-
-        let dinucleotide_kmer = b"AT";
-        let complexity = calculate_linguistic_complexity(dinucleotide_kmer);
-        assert_eq!(complexity, 1.0);
-
-        let trinucleotide_kmer = b"ACG";
-        let complexity = calculate_linguistic_complexity(trinucleotide_kmer);
-        assert_eq!(complexity, 1.0);
     }
 
     #[test]
-    fn test_complexity_filtering() {
-        let seq = b"AAAAAAAAAACGTACGTACGT"; // Low complexity start, high complexity end
-        let k = 10;
-        let w = 4; // k + w - 1 = 13 (odd)
+    fn test_31mer_entropy_range() {
+        // Test various 31-mers with different entropy values to demonstrate the range
 
-        // Without filtering
-        let hashes_no_filter = compute_minimizer_hashes(seq, k, w, None);
+        // Homopolymer - lowest entropy (31 A's)
+        let homopolymer = b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        let entropy = calculate_scaled_entropy(homopolymer, 31);
+        assert!(entropy < 0.01, "Homopolymer entropy = {}", entropy);
 
-        // With high threshold (should filter out low complexity k-mers)
-        let hashes_filtered = compute_minimizer_hashes(seq, k, w, Some(0.8));
+        // Mostly one base with minimal variation - low entropy
+        let mostly_a = b"AAAAAAAAAAACAAAAAGAAAAATAAAAAAA";
+        let entropy = calculate_scaled_entropy(mostly_a, 31);
+        assert!(
+            entropy >= 0.25 && entropy <= 0.35,
+            "Mostly A entropy = {}",
+            entropy
+        );
 
-        // Filtered should have fewer or equal hashes
-        assert!(hashes_filtered.len() <= hashes_no_filter.len());
+        // GC alternating - moderate entropy (2 bases, equal distribution)
+        let gc_alternating = b"GCGCGCGCGCGCGCGCGCGCGCGCGCGCGCG";
+        let entropy = calculate_scaled_entropy(gc_alternating, 31);
+        assert!(
+            entropy >= 0.45 && entropy <= 0.55,
+            "GC alternating entropy = {}",
+            entropy
+        );
+
+        // AT with G ending - moderate entropy (mostly 2 bases)
+        let dinuc_repeat = b"ATATATATATATATATATATATATATATATG";
+        let entropy = calculate_scaled_entropy(dinuc_repeat, 31);
+        assert!(
+            entropy >= 0.55 && entropy <= 0.65,
+            "AT+G repeat entropy = {}",
+            entropy
+        );
+
+        // Trinucleotide repeat - high entropy (ACG repeated)
+        let trinuc_repeat = b"ACGACGACGACGACGACGACGACGACGACGA";
+        let entropy = calculate_scaled_entropy(trinuc_repeat, 31);
+        assert!(
+            entropy >= 0.75 && entropy <= 0.85,
+            "ACG repeat entropy = {}",
+            entropy
+        );
+
+        // Four bases uneven distribution - high entropy
+        let four_uneven = b"ACGTACGTACGTAAAACCCGGGTTTACGTAC";
+        let entropy = calculate_scaled_entropy(four_uneven, 31);
+        assert!(
+            entropy >= 0.8 && entropy <= 1.0,
+            "Four bases uneven entropy = {}",
+            entropy
+        );
+
+        // Complex pattern with all 4 bases - very high entropy
+        let complex_repeat = b"AACCGGTTAACCGGTTAACCGGTTAACCGGT";
+        let entropy = calculate_scaled_entropy(complex_repeat, 31);
+        assert!(entropy >= 0.95, "Complex pattern entropy = {}", entropy);
+
+        // Four bases perfectly balanced - maximum entropy
+        let four_balanced = b"ACGTACGTACGTACGTACGTACGTACGTACG";
+        let entropy = calculate_scaled_entropy(four_balanced, 31);
+        assert!(entropy >= 0.95, "Four bases balanced entropy = {}", entropy);
+
+        // Verify entropy ordering makes sense
+        let one_base = calculate_scaled_entropy(b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", 31);
+        let two_bases_even = calculate_scaled_entropy(b"GCGCGCGCGCGCGCGCGCGCGCGCGCGCGCG", 31);
+        let three_bases = calculate_scaled_entropy(b"ACGACGACGACGACGACGACGACGACGACGA", 31);
+        let four_bases = calculate_scaled_entropy(b"ACGTACGTACGTACGTACGTACGTACGTACG", 31);
+
+        // Entropy should increase with base diversity
+        assert!(
+            one_base < two_bases_even,
+            "1 base ({}) < 2 bases even ({})",
+            one_base,
+            two_bases_even
+        );
+        assert!(
+            two_bases_even < three_bases,
+            "2 bases even ({}) < 3 bases ({})",
+            two_bases_even,
+            three_bases
+        );
+        assert!(
+            three_bases < four_bases,
+            "3 bases ({}) < 4 bases ({})",
+            three_bases,
+            four_bases
+        );
+
+        // Verify threshold behavior: common thresholds like 0.01 should filter appropriately
+        assert!(
+            one_base < 0.01,
+            "Homopolymer should be filtered at 0.01 threshold"
+        );
+        assert!(
+            four_bases > 0.01,
+            "High diversity should pass 0.01 threshold"
+        );
+        assert!(four_bases > 0.5, "High diversity should pass 0.5 threshold");
     }
 }

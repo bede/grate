@@ -105,9 +105,9 @@ enum IndexCommands {
         #[arg(short = 'q', long = "quiet")]
         quiet: bool,
 
-        /// Minimum linguistic complexity threshold for k-mer filtering (0.0-1.0)
-        #[arg(short = 'i', long = "information-threshold")]
-        information_threshold: Option<f32>,
+        /// Minimum scaled entropy threshold for k-mer filtering (0.0-1.0)
+        #[arg(short = 'e', long = "entropy-threshold")]
+        entropy_threshold: Option<f32>,
     },
     /// Show index information
     Info {
@@ -169,7 +169,7 @@ fn main() -> Result<()> {
                 capacity_millions,
                 threads,
                 quiet,
-                information_threshold,
+                entropy_threshold,
             } => {
                 // Convert output string to Option<PathBuf>
                 let output_path = if output == "-" {
@@ -186,7 +186,7 @@ fn main() -> Result<()> {
                     *capacity_millions,
                     *threads,
                     *quiet,
-                    *information_threshold,
+                    *entropy_threshold,
                 )
                 .context("Failed to run index build command")?;
             }

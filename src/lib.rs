@@ -187,8 +187,8 @@ pub struct IndexConfig {
     /// Suppress per-sequence progress output
     pub quiet: bool,
 
-    /// Minimum linguistic complexity threshold for k-mer filtering (0.0-1.0)
-    pub information_threshold: Option<f32>,
+    /// Minimum scaled entropy threshold for k-mer filtering (0.0-1.0)
+    pub entropy_threshold: Option<f32>,
 }
 
 impl IndexConfig {
@@ -202,7 +202,7 @@ impl IndexConfig {
             capacity_millions: 500, // Default 500M capacity
             threads: 8,
             quiet: false,
-            information_threshold: None,
+            entropy_threshold: None,
         }
     }
 
@@ -242,9 +242,9 @@ impl IndexConfig {
         self
     }
 
-    /// Set information threshold for linguistic complexity filtering
-    pub fn with_information_threshold(mut self, threshold: f32) -> Self {
-        self.information_threshold = Some(threshold);
+    /// Set threshold for scaled entropy filtering at indexing time
+    pub fn with_entropy_threshold(mut self, threshold: f32) -> Self {
+        self.entropy_threshold = Some(threshold);
         self
     }
 
@@ -258,7 +258,7 @@ impl IndexConfig {
             self.capacity_millions,
             self.threads,
             self.quiet,
-            self.information_threshold,
+            self.entropy_threshold,
         )
     }
 }

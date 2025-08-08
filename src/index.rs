@@ -142,7 +142,7 @@ pub fn build<P: AsRef<Path>>(
     capacity_millions: usize,
     threads: usize,
     quiet: bool,
-    information_threshold: Option<f32>,
+    entropy_threshold: Option<f32>,
 ) -> Result<()> {
     let start_time = Instant::now();
     let path = input.as_ref();
@@ -234,7 +234,7 @@ pub fn build<P: AsRef<Path>>(
                     seq_data,
                     kmer_length,
                     window_size,
-                    information_threshold,
+                    entropy_threshold,
                 )
             })
             .collect();
