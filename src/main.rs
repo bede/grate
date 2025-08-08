@@ -95,7 +95,7 @@ enum IndexCommands {
 
         /// Minimizer window size used for indexing
         #[arg(short = 'w', default_value_t = DEFAULT_WINDOW_SIZE)]
-        window_size: u16,
+        window_size: u8,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
@@ -148,7 +148,7 @@ enum IndexCommands {
 
         /// Window size (required if second argument is FASTX file)
         #[arg(short = 'w', long = "window-size")]
-        window_size: Option<u16>,
+        window_size: Option<u8>,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]

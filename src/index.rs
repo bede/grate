@@ -15,11 +15,11 @@ use needletail::{parse_fastx_file, parse_fastx_stdin};
 pub struct IndexHeader {
     pub format_version: u8,
     pub kmer_length: u8,
-    pub window_size: u16,
+    pub window_size: u8,
 }
 
 impl IndexHeader {
-    pub fn new(kmer_length: u8, window_size: u16) -> Self {
+    pub fn new(kmer_length: u8, window_size: u8) -> Self {
         IndexHeader {
             format_version: 2,
             kmer_length,
@@ -45,7 +45,7 @@ impl IndexHeader {
     }
 
     /// Get w
-    pub fn window_size(&self) -> u16 {
+    pub fn window_size(&self) -> u8 {
         self.window_size
     }
 }
@@ -137,7 +137,7 @@ pub fn write_minimizers(
 pub fn build<P: AsRef<Path>>(
     input: P,
     kmer_length: u8,
-    window_size: u16,
+    window_size: u8,
     output: Option<PathBuf>,
     capacity_millions: usize,
     threads: usize,
@@ -287,7 +287,7 @@ pub fn build<P: AsRef<Path>>(
 fn stream_diff_fastx<P: AsRef<Path>>(
     fastx_path: P,
     kmer_length: u8,
-    window_size: u16,
+    window_size: u8,
     first_header: &IndexHeader,
     first_minimizers: &mut FxHashSet<u64>,
 ) -> Result<(usize, usize)> {
@@ -413,7 +413,7 @@ pub fn diff<P: AsRef<Path>>(
     first: P,
     second: P,
     kmer_length: Option<u8>,
-    window_size: Option<u16>,
+    window_size: Option<u8>,
     output: Option<&PathBuf>,
 ) -> Result<()> {
     let start_time = Instant::now();

@@ -147,7 +147,7 @@ pub struct FilterSummary {
     output: String,
     output2: Option<String>,
     k: u8,
-    w: u16,
+    w: u8,
     abs_threshold: usize,
     rel_threshold: f64,
     prefix_length: usize,
@@ -173,7 +173,7 @@ struct FilterProcessor {
     // Minimizer matching parameters
     minimizer_hashes: Arc<FxHashSet<u64>>,
     kmer_length: u8,
-    window_size: u16,
+    window_size: u8,
     abs_threshold: usize,
     rel_threshold: f64,
     prefix_length: usize,
@@ -227,7 +227,7 @@ impl FilterProcessor {
     fn new(
         minimizer_hashes: Arc<FxHashSet<u64>>,
         kmer_length: u8,
-        window_size: u16,
+        window_size: u8,
         abs_threshold: usize,
         rel_threshold: f64,
         prefix_length: usize,
