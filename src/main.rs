@@ -20,7 +20,7 @@ enum Commands {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Keep or discard fastx records with sufficient minimizer hits to the index
+    /// Keep or discard DNA fastx records with sufficient minimizer hits to the index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
@@ -72,7 +72,7 @@ enum Commands {
         #[arg(long = "compression-level", default_value_t = 2)]
         compression_level: u8,
 
-        /// Debug mode: output sequences with minimizer hits to stderr
+        /// Output sequences with minimizer hits to stderr
         #[arg(long = "debug", default_value_t = false)]
         debug: bool,
 
