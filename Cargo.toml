@@ -1,6 +1,6 @@
 [package]
 name = "deacon"
-version = "0.7.0"
+version = "0.8.0"
 description = "Fast DNA sequence filtering with minimizers"
 authors = ["Bede Constantinides <b@bede.im>"]
 edition = "2024"
@@ -29,6 +29,9 @@ serde_json = "1.0"
 bincode = { version = "2.0", features = ["serde"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 needletail = "0.6"
+paraseq = "0.3.9"
+niffler = "3"
+parking_lot = "0.12"
 zstd = "0.13"
 indicatif = "0.17"
 liblzma = "0.3.1"

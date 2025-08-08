@@ -24,46 +24,6 @@ pub use minimizers::{
 use anyhow::Result;
 use rustc_hash::FxHashSet;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MatchThreshold {
-    Absolute(usize),
-    Relative(f64),
-}
-
-impl FromStr for MatchThreshold {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if let Ok(val) = s.parse::<usize>() {
-            Ok(MatchThreshold::Absolute(val))
-        } else if let Ok(val) = s.parse::<f64>() {
-            if val.is_nan() || val.is_sign_negative() || val > 1.0 {
-                Err(format!(
-                    "Relative threshold must be in [0, 1], got: {}",
-                    val
-                ))
-            } else {
-                Ok(MatchThreshold::Relative(val))
-            }
-        } else {
-            Err(format!(
-                "Invalid threshold format: '{}'. Expected an integer or a float between [0, 1]",
-                s
-            ))
-        }
-    }
-}
-
-impl std::fmt::Display for MatchThreshold {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            MatchThreshold::Absolute(n) => write!(f, "{}", n),
-            MatchThreshold::Relative(p) => write!(f, "{}", p),
-        }
-    }
-}
 
 pub struct FilterConfig {
     /// Minimizer index file path
@@ -81,8 +41,11 @@ pub struct FilterConfig {
     /// Path to optional second output fastx file for paired reads (detects .gz and .zst)
     pub output2_path: Option<String>,
 
-    /// Match threshold for filtering sequences
-    pub match_threshold: MatchThreshold,
+    /// Absolute threshold for filtering sequences
+    pub abs_threshold: usize,
+
+    /// Relative threshold for filtering sequences (0.0-1.0)
+    pub rel_threshold: f64,
 
     /// Consider only the first N nucleotides per sequence (0 = entire sequence)
     pub prefix_length: usize,
@@ -101,6 +64,12 @@ pub struct FilterConfig {
 
     /// Compression level for output files (1-22 for zst, 1-9 for gz)
     pub compression_level: u8,
+
+    /// Debug mode: output sequences with minimizer hits to stderr
+    pub debug: bool,
+
+    /// Suppress progress reporting
+    pub quiet: bool,
 }
 
 impl FilterConfig {
@@ -111,13 +80,16 @@ impl FilterConfig {
             input2_path: None,
             output_path: "-".to_string(),
             output2_path: None,
-            match_threshold: MatchThreshold::Absolute(2),
+            abs_threshold: 2,
+            rel_threshold: 0.01,
             prefix_length: 0,
             summary_path: None,
             deplete: false,
             rename: false,
             threads: 0,           // Use all available threads by default
             compression_level: 2, // Default compression level
+            debug: false,
+            quiet: false,
         }
     }
 
@@ -141,8 +113,13 @@ impl FilterConfig {
         self
     }
 
-    pub fn with_match_threshold(mut self, match_threshold: MatchThreshold) -> Self {
-        self.match_threshold = match_threshold;
+    pub fn with_abs_threshold(mut self, abs_threshold: usize) -> Self {
+        self.abs_threshold = abs_threshold;
+        self
+    }
+
+    pub fn with_rel_threshold(mut self, rel_threshold: f64) -> Self {
+        self.rel_threshold = rel_threshold;
         self
     }
 
@@ -176,6 +153,16 @@ impl FilterConfig {
         self
     }
 
+    pub fn with_debug(mut self, debug: bool) -> Self {
+        self.debug = debug;
+        self
+    }
+
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
     /// Filter with this configuration
     pub fn execute(&self) -> Result<()> {
         filter::run(
@@ -184,13 +171,16 @@ impl FilterConfig {
             self.input2_path.as_deref(),
             &self.output_path,
             self.output2_path.as_deref(),
-            &self.match_threshold,
+            self.abs_threshold,
+            self.rel_threshold,
             self.prefix_length,
             self.summary_path.as_ref(),
             self.deplete,
             self.rename,
             self.threads,
             self.compression_level,
+            self.debug,
+            self.quiet,
         )
     }
 }
@@ -200,10 +190,10 @@ pub struct IndexConfig {
     pub input_path: PathBuf,
 
     /// K-mer length used for indexing
-    pub kmer_length: usize,
+    pub kmer_length: u8,
 
     /// Minimizer window size used for indexing
-    pub window_size: usize,
+    pub window_size: u16,
 
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
@@ -213,6 +203,12 @@ pub struct IndexConfig {
 
     /// Number of execution threads (0 = auto)
     pub threads: usize,
+
+    /// Suppress per-sequence progress output
+    pub quiet: bool,
+
+    /// Minimum scaled entropy threshold for k-mer filtering (0.0-1.0)
+    pub entropy_threshold: Option<f32>,
 }
 
 impl IndexConfig {
@@ -225,17 +221,19 @@ impl IndexConfig {
             output_path: None,
             capacity_millions: 500, // Default 500M capacity
             threads: 8,
+            quiet: false,
+            entropy_threshold: None,
         }
     }
 
     /// Set k-mer length
-    pub fn with_kmer_length(mut self, kmer_length: usize) -> Self {
+    pub fn with_kmer_length(mut self, kmer_length: u8) -> Self {
         self.kmer_length = kmer_length;
         self
     }
 
     /// Set window size
-    pub fn with_window_size(mut self, window_size: usize) -> Self {
+    pub fn with_window_size(mut self, window_size: u16) -> Self {
         self.window_size = window_size;
         self
     }
@@ -258,6 +256,18 @@ impl IndexConfig {
         self
     }
 
+    /// Set quiet mode
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
+    /// Set threshold for scaled entropy filtering at indexing time
+    pub fn with_entropy_threshold(mut self, threshold: f32) -> Self {
+        self.entropy_threshold = Some(threshold);
+        self
+    }
+
     /// Execute index build with this configuration
     pub fn execute(&self) -> Result<()> {
         build_index(
@@ -267,6 +277,8 @@ impl IndexConfig {
             self.output_path.clone(),
             self.capacity_millions,
             self.threads,
+            self.quiet,
+            self.entropy_threshold,
         )
     }
 }

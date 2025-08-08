@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use deacon::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, MatchThreshold, build_index, diff_index, index_info,
-    run_filter, union_index,
+    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, build_index, diff_index, index_info, run_filter,
+    union_index,
 };
 use std::path::PathBuf;
 
@@ -20,7 +20,7 @@ enum Commands {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Keep or discard fastx records with sufficient minimizer hits to the index
+    /// Keep or discard DNA fastx records with sufficient minimizer hits to the index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
@@ -40,9 +40,13 @@ enum Commands {
         #[arg(short = 'O', long = "output2")]
         output2: Option<String>,
 
-        /// Mininum number (integer) or proportion (float) of minimizer hits for a match
-        #[arg(short = 'm', long = "matches", default_value_t = MatchThreshold::Absolute(2))]
-        match_threshold: MatchThreshold,
+        /// Minimum absolute number of minimizer hits for a match
+        #[arg(short = 'a', long = "abs-threshold", default_value_t = 2, value_parser = clap::value_parser!(u16).range(1..))]
+        abs_threshold: u16,
+
+        /// Minimum relative proportion (0.0-1.0) of minimizer hits for a match
+        #[arg(short = 'r', long = "rel-threshold", default_value_t = 0.01)]
+        rel_threshold: f64,
 
         /// Search only the first N nucleotides per sequence (0 = entire sequence)
         #[arg(short = 'p', long = "prefix-length", default_value_t = 0)]
@@ -53,7 +57,7 @@ enum Commands {
         deplete: bool,
 
         /// Replace sequence headers with incrementing numbers
-        #[arg(short = 'r', long = "rename", default_value_t = false)]
+        #[arg(short = 'R', long = "rename", default_value_t = false)]
         rename: bool,
 
         /// Path to JSON summary output file
@@ -67,6 +71,14 @@ enum Commands {
         /// Output compression level (1-9 for gz & xz; 1-22 for zstd)
         #[arg(long = "compression-level", default_value_t = 2)]
         compression_level: u8,
+
+        /// Output sequences with minimizer hits to stderr
+        #[arg(long = "debug", default_value_t = false)]
+        debug: bool,
+
+        /// Suppress progress reporting
+        #[arg(short = 'q', long = "quiet", default_value_t = false)]
+        quiet: bool,
     },
 }
 
@@ -77,13 +89,13 @@ enum IndexCommands {
         /// Path to input fastx file (supports gz, zst and xz compression)
         input: PathBuf,
 
-        /// K-mer length used for indexing
-        #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH)]
-        kmer_length: usize,
+        /// K-mer length used for indexing (1-32)
+        #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=32))]
+        kmer_length: u8,
 
         /// Minimizer window size used for indexing
         #[arg(short = 'w', default_value_t = DEFAULT_WINDOW_SIZE)]
-        window_size: usize,
+        window_size: u16,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
@@ -96,6 +108,14 @@ enum IndexCommands {
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
+
+        /// Suppress sequence header output
+        #[arg(short = 'q', long = "quiet")]
+        quiet: bool,
+
+        /// Minimum scaled entropy threshold for k-mer filtering (0.0-1.0)
+        #[arg(short = 'e', long = "entropy-threshold")]
+        entropy_threshold: Option<f32>,
     },
     /// Show index information
     Info {
@@ -122,13 +142,13 @@ enum IndexCommands {
         #[arg(required = true)]
         second: PathBuf,
 
-        /// K-mer length (required if second argument is FASTX file)
-        #[arg(short = 'k', long = "kmer-length")]
-        kmer_length: Option<usize>,
+        /// K-mer length (required if second argument is FASTX file, 1-32)
+        #[arg(short = 'k', long = "kmer-length", value_parser = clap::value_parser!(u8).range(1..=32))]
+        kmer_length: Option<u8>,
 
         /// Window size (required if second argument is FASTX file)
         #[arg(short = 'w', long = "window-size")]
-        window_size: Option<usize>,
+        window_size: Option<u16>,
 
         /// Path to output file (- for stdout)
         #[arg(short = 'o', long = "output", default_value = "-")]
@@ -156,6 +176,8 @@ fn main() -> Result<()> {
                 output,
                 capacity_millions,
                 threads,
+                quiet,
+                entropy_threshold,
             } => {
                 // Convert output string to Option<PathBuf>
                 let output_path = if output == "-" {
@@ -171,6 +193,8 @@ fn main() -> Result<()> {
                     output_path,
                     *capacity_millions,
                     *threads,
+                    *quiet,
+                    *entropy_threshold,
                 )
                 .context("Failed to run index build command")?;
             }
@@ -198,13 +222,16 @@ fn main() -> Result<()> {
             input2,
             output,
             output2,
-            match_threshold,
+            abs_threshold,
+            rel_threshold,
             prefix_length,
             summary,
             deplete,
             rename,
             threads,
             compression_level,
+            debug,
+            quiet,
         } => {
             // Validate output2 usage
             if output2.is_some() && input2.is_none() {
@@ -219,13 +246,16 @@ fn main() -> Result<()> {
                 input2.as_deref(),
                 output,
                 output2.as_deref(),
-                match_threshold,
+                *abs_threshold as usize,
+                *rel_threshold,
                 *prefix_length,
                 summary.as_ref(),
                 *deplete,
                 *rename,
                 *threads,
                 *compression_level,
+                *debug,
+                *quiet,
             )
             .context("Failed to run filter command")?;
         }

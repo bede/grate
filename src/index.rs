@@ -15,15 +15,15 @@ use needletail::{parse_fastx_file, parse_fastx_stdin};
 pub struct IndexHeader {
     pub format_version: u8,
     pub kmer_length: u8,
-    pub window_size: u8,
+    pub window_size: u16,
 }
 
 impl IndexHeader {
-    pub fn new(kmer_length: usize, window_size: usize) -> Self {
+    pub fn new(kmer_length: u8, window_size: u16) -> Self {
         IndexHeader {
             format_version: 2,
-            kmer_length: kmer_length as u8,
-            window_size: window_size as u8,
+            kmer_length,
+            window_size,
         }
     }
 
@@ -40,13 +40,13 @@ impl IndexHeader {
     }
 
     /// Get k
-    pub fn kmer_length(&self) -> usize {
-        self.kmer_length as usize
+    pub fn kmer_length(&self) -> u8 {
+        self.kmer_length
     }
 
     /// Get w
-    pub fn window_size(&self) -> usize {
-        self.window_size as usize
+    pub fn window_size(&self) -> u16 {
+        self.window_size
     }
 }
 
@@ -136,11 +136,13 @@ pub fn write_minimizers(
 /// Build an index of minimizers from a fastx file
 pub fn build<P: AsRef<Path>>(
     input: P,
-    kmer_length: usize,
-    window_size: usize,
+    kmer_length: u8,
+    window_size: u16,
     output: Option<PathBuf>,
     capacity_millions: usize,
     threads: usize,
+    quiet: bool,
+    entropy_threshold: Option<f32>,
 ) -> Result<()> {
     let start_time = Instant::now();
     let path = input.as_ref();
@@ -161,7 +163,7 @@ pub fn build<P: AsRef<Path>>(
     );
 
     // Ensure l = k + w - 1 is odd so that canonicalisation tie breaks work correctly
-    let l = kmer_length + window_size - 1;
+    let l = kmer_length as usize + window_size as usize - 1;
     if l % 2 == 0 {
         return Err(anyhow::anyhow!(
             "Constraint violated: k + w - 1 must be odd (k={}, w={})",
@@ -178,8 +180,12 @@ pub fn build<P: AsRef<Path>>(
             .context("Failed to initialize thread pool")?;
     }
 
-    // Create a fastx reader using needletail (handles gzip automatically)
-    let mut reader = parse_fastx_file(path).context("Failed to open input file")?;
+    // Use needletail for parsing
+    let mut reader = if path.to_string_lossy() == "-" {
+        parse_fastx_stdin().context("Failed to parse stdin")?
+    } else {
+        parse_fastx_file(path).context("Failed to open input file")?
+    };
 
     // Init FxHashSet with user-specified capacity
     let capacity = capacity_millions * 1_000_000;
@@ -224,7 +230,12 @@ pub fn build<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size)
+                crate::minimizers::compute_minimizer_hashes(
+                    seq_data,
+                    kmer_length,
+                    window_size,
+                    entropy_threshold,
+                )
             })
             .collect();
 
@@ -237,13 +248,15 @@ pub fn build<P: AsRef<Path>>(
             seq_count += 1;
             total_bp += seq_data.len();
 
-            let id_str = std::str::from_utf8(id).unwrap_or("unknown");
-            eprintln!(
-                "  {} ({}bp), total minimizers: {}",
-                id_str,
-                seq_data.len(),
-                all_minimizers.len()
-            );
+            if !quiet {
+                let id_str = std::str::from_utf8(id).unwrap_or("unknown");
+                eprintln!(
+                    "  {} ({}bp), total minimizers: {}",
+                    id_str,
+                    seq_data.len(),
+                    all_minimizers.len()
+                );
+            }
         }
 
         // Check if we've reached the end of the file
@@ -273,8 +286,8 @@ pub fn build<P: AsRef<Path>>(
 /// Stream minimizers from a FASTX file or stdin and remove those present in first_minimizers
 fn stream_diff_fastx<P: AsRef<Path>>(
     fastx_path: P,
-    kmer_length: usize,
-    window_size: usize,
+    kmer_length: u8,
+    window_size: u16,
     first_header: &IndexHeader,
     first_minimizers: &mut FxHashSet<u64>,
 ) -> Result<(usize, usize)> {
@@ -303,9 +316,9 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         );
     }
 
-    // Create a fastx reader
+    // Use needletail for parsing
     let mut reader = if path.to_string_lossy() == "-" {
-        parse_fastx_stdin().context("Failed to parse FASTX from stdin")?
+        parse_fastx_stdin().context("Failed to parse stdin")?
     } else {
         parse_fastx_file(path).context("Failed to open FASTX file")?
     };
@@ -348,7 +361,12 @@ fn stream_diff_fastx<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size)
+                crate::minimizers::compute_minimizer_hashes(
+                    seq_data,
+                    kmer_length,
+                    window_size,
+                    None,
+                )
             })
             .collect();
 
@@ -387,15 +405,15 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         seq_count, total_bp
     );
 
-    Ok((seq_count, total_bp))
+    Ok((seq_count as usize, total_bp as usize))
 }
 
 /// Compute the set difference between two minimizer indexes (A - B)
 pub fn diff<P: AsRef<Path>>(
     first: P,
     second: P,
-    kmer_length: Option<usize>,
-    window_size: Option<usize>,
+    kmer_length: Option<u8>,
+    window_size: Option<u16>,
     output: Option<&PathBuf>,
 ) -> Result<()> {
     let start_time = Instant::now();
@@ -452,10 +470,6 @@ pub fn diff<P: AsRef<Path>>(
             // Use k and w from first index header and do a streaming diff
             let k = header.kmer_length();
             let w = header.window_size();
-            // eprintln!(
-            //     "Second index is not valid, treating as FASTX and extracting minimizers (k={}, w={})",
-            //     k, w
-            // );
 
             // Count minimizers before diff
             let before_count = first_minimizers.len();
