@@ -64,6 +64,12 @@ pub struct FilterConfig {
 
     /// Compression level for output files (1-22 for zst, 1-9 for gz)
     pub compression_level: u8,
+
+    /// Debug mode: output sequences with minimizer hits to stderr
+    pub debug: bool,
+
+    /// Suppress progress reporting
+    pub quiet: bool,
 }
 
 impl FilterConfig {
@@ -82,6 +88,8 @@ impl FilterConfig {
             rename: false,
             threads: 0,           // Use all available threads by default
             compression_level: 2, // Default compression level
+            debug: false,
+            quiet: false,
         }
     }
 
@@ -145,6 +153,16 @@ impl FilterConfig {
         self
     }
 
+    pub fn with_debug(mut self, debug: bool) -> Self {
+        self.debug = debug;
+        self
+    }
+
+    pub fn with_quiet(mut self, quiet: bool) -> Self {
+        self.quiet = quiet;
+        self
+    }
+
     /// Filter with this configuration
     pub fn execute(&self) -> Result<()> {
         filter::run(
@@ -161,6 +179,8 @@ impl FilterConfig {
             self.rename,
             self.threads,
             self.compression_level,
+            self.debug,
+            self.quiet,
         )
     }
 }

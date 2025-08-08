@@ -1,13 +1,15 @@
 use crate::index::load_minimizer_hashes;
-use crate::minimizers::fill_minimizer_hashes;
 use anyhow::{Context, Result};
+use packed_seq;
+use simd_minimizers;
+use xxhash_rust;
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use liblzma::write::XzEncoder;
 use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{
-    PairedParallelProcessor, PairedParallelReader, ParallelProcessor, ParallelReader,
+    InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor, PairedParallelReader, ParallelProcessor, ParallelReader,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
@@ -24,19 +26,20 @@ const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
 type BoxedWriter = Box<dyn Write + Send>;
 
-/// Create a reader that handles both file paths and stdin ("-")
-fn create_reader(
-    path: &str,
-) -> Result<(
-    Box<dyn std::io::Read + Send>,
-    niffler::send::compression::Format,
-)> {
-    if path == "-" {
-        niffler::send::get_reader(Box::new(std::io::stdin()))
-            .map_err(|e| anyhow::anyhow!("Failed to create stdin reader: {}", e))
-    } else {
-        niffler::send::from_path(path)
-            .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", path, e))
+/// Create a paraseq reader from optional path (stdin if None or "-")
+fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::Read + Send>>> {
+    match path {
+        None | Some("-") => {
+            let stdin_reader = Box::new(std::io::stdin()) as Box<dyn std::io::Read + Send>;
+            Reader::new(stdin_reader)
+                .map_err(|e| anyhow::anyhow!("Failed to create stdin reader: {}", e))
+        }
+        Some(p) => {
+            let (reader, _format) = niffler::send::from_path(p)
+                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))?;
+            Reader::new(reader)
+                .map_err(|e| anyhow::anyhow!("Failed to create reader for {}: {}", p, e))
+        }
     }
 }
 
@@ -175,6 +178,7 @@ struct FilterProcessor {
     prefix_length: usize,
     deplete: bool,
     rename: bool,
+    debug: bool,
 
     // Local buffers
     local_buffer: Vec<u8>,
@@ -184,7 +188,7 @@ struct FilterProcessor {
     global_writer: Arc<Mutex<BoxedWriter>>,
     global_writer2: Option<Arc<Mutex<BoxedWriter>>>,
     global_stats: Arc<Mutex<ProcessingStats>>,
-    spinner: Arc<Mutex<ProgressBar>>,
+    spinner: Option<Arc<Mutex<ProgressBar>>>,
     filtering_start_time: Instant,
 }
 
@@ -228,9 +232,10 @@ impl FilterProcessor {
         prefix_length: usize,
         deplete: bool,
         rename: bool,
+        debug: bool,
         writer: BoxedWriter,
         writer2: Option<BoxedWriter>,
-        spinner: Arc<Mutex<ProgressBar>>,
+        spinner: Option<Arc<Mutex<ProgressBar>>>,
         filtering_start_time: Instant,
     ) -> Self {
         Self {
@@ -242,6 +247,7 @@ impl FilterProcessor {
             prefix_length,
             deplete,
             rename,
+            debug,
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
             global_writer: Arc::new(Mutex::new(writer)),
@@ -252,9 +258,9 @@ impl FilterProcessor {
         }
     }
 
-    fn should_keep_sequence(&self, seq: &[u8]) -> bool {
+    fn should_keep_sequence(&self, seq: &[u8]) -> (bool, usize, usize, Vec<String>) {
         if seq.len() < self.kmer_length as usize {
-            return self.deplete; // If too short, keep if in deplete mode
+            return (self.deplete, 0, 0, Vec::new()); // If too short, keep if in deplete mode
         }
 
         // Apply prefix length limit if specified
@@ -264,35 +270,129 @@ impl FilterProcessor {
             seq
         };
 
-        // Get minimizer hash values
-        let mut minimizer_buffer = Vec::with_capacity(64);
-        fill_minimizer_hashes(
-            effective_seq,
-            self.kmer_length,
-            self.window_size,
-            &mut minimizer_buffer,
-            None,
+        // Get minimizer positions first
+        let canonical_seq = effective_seq
+            .iter()
+            .map(|&b| match b {
+                b'A' | b'a' => b'A',
+                b'C' | b'c' => b'C',
+                b'G' | b'g' => b'G',
+                b'T' | b't' => b'T',
+                _ => b'C', // Default for ambiguous bases
+            })
+            .collect::<Vec<u8>>();
+
+        let mut positions = Vec::new();
+        simd_minimizers::canonical_minimizer_positions(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            self.window_size as usize,
+            &mut positions,
         );
 
-        // Count distinct minimizer hits
+        // Filter positions to only include k-mers with ACGT bases
+        let valid_positions: Vec<u32> = positions
+            .into_iter()
+            .filter(|&pos| {
+                let pos_usize = pos as usize;
+                let kmer = &effective_seq[pos_usize..pos_usize + self.kmer_length as usize];
+                kmer.iter()
+                    .all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
+            })
+            .collect();
+
+        // Get hash values for valid positions
+        let minimizer_values: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            &valid_positions,
+        )
+        .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
+        .collect();
+
+        // Count distinct minimizer hits and collect matching k-mers
         let mut seen_hits = FxHashSet::default();
         let mut hit_count = 0;
-        for &hash in &minimizer_buffer {
+        let mut hit_kmers = Vec::new();
+
+        for (i, &hash) in minimizer_values.iter().enumerate() {
             if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
                 hit_count += 1;
+                // Extract the k-mer sequence at this position
+                if self.debug && i < valid_positions.len() {
+                    let pos = valid_positions[i] as usize;
+                    let kmer = &effective_seq[pos..pos + self.kmer_length as usize];
+                    hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
+                }
             }
         }
 
-        self.meets_filtering_criteria(hit_count, minimizer_buffer.len())
+        (
+            self.meets_filtering_criteria(hit_count, minimizer_values.len()),
+            hit_count,
+            minimizer_values.len(),
+            hit_kmers,
+        )
     }
 
-    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> bool {
-        let mut minimizer_buffer1 = Vec::with_capacity(64);
-        let mut minimizer_buffer2 = Vec::with_capacity(64);
+    fn get_minimizer_hashes_and_positions(&self, seq: &[u8]) -> (Vec<u64>, Vec<u32>) {
+        // Canonicalize sequence
+        let canonical_seq = seq
+            .iter()
+            .map(|&b| match b {
+                b'A' | b'a' => b'A',
+                b'C' | b'c' => b'C',
+                b'G' | b'g' => b'G',
+                b'T' | b't' => b'T',
+                _ => b'C',
+            })
+            .collect::<Vec<u8>>();
+
+        let mut positions = Vec::new();
+        simd_minimizers::canonical_minimizer_positions(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            self.window_size as usize,
+            &mut positions,
+        );
+
+        // Filter to valid positions
+        let valid_positions: Vec<u32> = positions
+            .into_iter()
+            .filter(|&pos| {
+                let pos_usize = pos as usize;
+                if pos_usize + self.kmer_length as usize <= seq.len() {
+                    let kmer = &seq[pos_usize..pos_usize + self.kmer_length as usize];
+                    kmer.iter().all(|&b| {
+                        matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')
+                    })
+                } else {
+                    false
+                }
+            })
+            .collect();
+
+        // Get hash values
+        let hashes: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
+            packed_seq::AsciiSeq(&canonical_seq),
+            self.kmer_length as usize,
+            &valid_positions,
+        )
+        .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
+        .collect();
+
+        (hashes, valid_positions)
+    }
+
+    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> (bool, usize, usize, Vec<String>) {
+        let mut all_hashes = Vec::new();
+        let mut all_positions = Vec::new();
+        let mut all_sequences = Vec::new();
         let mut seen_hits_pair = FxHashSet::default();
         let mut pair_hit_count = 0;
+        let mut hit_kmers = Vec::new();
 
-        // Check for minimizer hits in read 1
+        // Process read 1
         if seq1.len() >= self.kmer_length as usize {
             let effective_seq = if self.prefix_length > 0 && seq1.len() > self.prefix_length {
                 &seq1[..self.prefix_length]
@@ -300,22 +400,13 @@ impl FilterProcessor {
                 seq1
             };
 
-            fill_minimizer_hashes(
-                effective_seq,
-                self.kmer_length,
-                self.window_size,
-                &mut minimizer_buffer1,
-                None,
-            );
-
-            for &hash in &minimizer_buffer1 {
-                if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
-                    pair_hit_count += 1;
-                }
-            }
+            let (hashes, positions) = self.get_minimizer_hashes_and_positions(effective_seq);
+            all_hashes.extend(hashes);
+            all_positions.extend(positions);
+            all_sequences.extend(vec![effective_seq; all_hashes.len()]);
         }
 
-        // Check for minimizer hits in read 2
+        // Process read 2
         if seq2.len() >= self.kmer_length as usize {
             let effective_seq = if self.prefix_length > 0 && seq2.len() > self.prefix_length {
                 &seq2[..self.prefix_length]
@@ -323,23 +414,35 @@ impl FilterProcessor {
                 seq2
             };
 
-            fill_minimizer_hashes(
-                effective_seq,
-                self.kmer_length,
-                self.window_size,
-                &mut minimizer_buffer2,
-                None,
-            );
+            let (hashes, positions) = self.get_minimizer_hashes_and_positions(effective_seq);
+            let start_idx = all_hashes.len();
+            all_hashes.extend(hashes);
+            all_positions.extend(positions);
+            all_sequences.extend(vec![effective_seq; all_hashes.len() - start_idx]);
+        }
 
-            for &hash in &minimizer_buffer2 {
-                if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
-                    pair_hit_count += 1;
+        // Count hits and collect k-mers
+        for (i, &hash) in all_hashes.iter().enumerate() {
+            if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
+                pair_hit_count += 1;
+                if self.debug && i < all_positions.len() && i < all_sequences.len() {
+                    let pos = all_positions[i] as usize;
+                    let seq = all_sequences[i];
+                    if pos + self.kmer_length as usize <= seq.len() {
+                        let kmer = &seq[pos..pos + self.kmer_length as usize];
+                        hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
+                    }
                 }
             }
         }
 
-        let total_minimizers = minimizer_buffer1.len() + minimizer_buffer2.len();
-        self.meets_filtering_criteria(pair_hit_count, total_minimizers)
+        let total_minimizers = all_hashes.len();
+        (
+            self.meets_filtering_criteria(pair_hit_count, total_minimizers),
+            pair_hit_count,
+            total_minimizers,
+            hit_kmers,
+        )
     }
 
     fn write_record<Rf: Record>(&mut self, record: Rf) -> Result<()> {
@@ -353,36 +456,38 @@ impl FilterProcessor {
     }
 
     fn update_spinner(&self) {
-        let stats = self.global_stats.lock();
-        let elapsed = self.filtering_start_time.elapsed();
-        let seqs_per_sec = stats.total_seqs as f64 / elapsed.as_secs_f64();
-        let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
-        let mbp_per_sec = bp_per_sec / 1_000_000.0;
+        if let Some(ref spinner) = self.spinner {
+            let stats = self.global_stats.lock();
+            let elapsed = self.filtering_start_time.elapsed();
+            let seqs_per_sec = stats.total_seqs as f64 / elapsed.as_secs_f64();
+            let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
+            let mbp_per_sec = bp_per_sec / 1_000_000.0;
 
-        let output_seqs = stats.total_seqs - stats.filtered_seqs;
-        let output_proportion = if stats.total_seqs > 0 {
-            output_seqs as f64 / stats.total_seqs as f64
-        } else {
-            0.0
-        };
+            let output_seqs = stats.total_seqs - stats.filtered_seqs;
+            let output_proportion = if stats.total_seqs > 0 {
+                output_seqs as f64 / stats.total_seqs as f64
+            } else {
+                0.0
+            };
 
-        let output_bp_proportion = if stats.total_bp > 0 {
-            stats.output_bp as f64 / stats.total_bp as f64
-        } else {
-            0.0
-        };
+            let output_bp_proportion = if stats.total_bp > 0 {
+                stats.output_bp as f64 / stats.total_bp as f64
+            } else {
+                0.0
+            };
 
-        self.spinner.lock().set_message(format!(
-            "Retained {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
-            output_seqs,
-            stats.total_seqs,
-            output_proportion * 100.0,
-            stats.output_bp,
-            stats.total_bp,
-            output_bp_proportion * 100.0,
-            seqs_per_sec,
-            mbp_per_sec
-        ));
+            spinner.lock().set_message(format!(
+                "Retained {}/{} sequences ({:.2}%), {}/{} bp ({:.2}%). {:.0} seqs/s ({:.1} Mbp/s)",
+                output_seqs,
+                stats.total_seqs,
+                output_proportion * 100.0,
+                stats.output_bp,
+                stats.total_bp,
+                output_bp_proportion * 100.0,
+                seqs_per_sec,
+                mbp_per_sec
+            ));
+        }
     }
 }
 
@@ -392,7 +497,22 @@ impl ParallelProcessor for FilterProcessor {
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq_len as u64;
 
-        if self.should_keep_sequence(&record.seq_raw()) {
+        let (should_keep, hit_count, total_minimizers, hit_kmers) =
+            self.should_keep_sequence(&record.seq_raw());
+
+        // Show debug info for sequences with hits
+        if self.debug && hit_count > 0 {
+            eprintln!(
+                "DEBUG: {} hits={}/{} keep={} kmers=[{}]",
+                String::from_utf8_lossy(&record.id()),
+                hit_count,
+                total_minimizers,
+                should_keep,
+                hit_kmers.join(",")
+            );
+        }
+
+        if should_keep {
             self.local_stats.output_bp += seq_len as u64;
             self.write_record(record)?;
         } else {
@@ -409,8 +529,10 @@ impl ParallelProcessor for FilterProcessor {
             let mut global_writer = self.global_writer.lock();
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
-            self.local_buffer.clear();
         }
+        
+        // Clear buffer after releasing the lock for better performance
+        self.local_buffer.clear();
 
         // Update global stats
         {
@@ -433,111 +555,76 @@ impl ParallelProcessor for FilterProcessor {
     }
 }
 
-/// Wrapper processor for handling interleaved paired reads
-#[derive(Clone)]
-struct InterleavedFilterProcessor {
-    inner: FilterProcessor,
-    buffer: Option<Vec<u8>>,      // Buffer for first record in pair
-    buffer_id: Option<Vec<u8>>,   // Buffer for first record id
-    buffer_qual: Option<Vec<u8>>, // Buffer for first record quality
-}
+impl InterleavedParallelProcessor for FilterProcessor {
+    fn process_interleaved_pair<Rf: Record>(
+        &mut self,
+        record1: Rf,
+        record2: Rf,
+    ) -> paraseq::parallel::Result<()> {
+        let seq1_len = record1.seq_raw().len();
+        let seq2_len = record2.seq_raw().len();
+        self.local_stats.total_seqs += 2;
+        self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-impl InterleavedFilterProcessor {
-    fn new(processor: FilterProcessor) -> Self {
-        Self {
-            inner: processor,
-            buffer: None,
-            buffer_id: None,
-            buffer_qual: None,
+        let (should_keep, hit_count, total_minimizers, hit_kmers) =
+            self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
+
+        // Debug info for interleaved pairs
+        if self.debug && hit_count > 0 {
+            eprintln!(
+                "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
+                String::from_utf8_lossy(&record1.id()),
+                String::from_utf8_lossy(&record2.id()),
+                hit_count,
+                total_minimizers,
+                should_keep,
+                hit_kmers.join(",")
+            );
         }
-    }
-}
 
-impl ParallelProcessor for InterleavedFilterProcessor {
-    fn process_record<Rf: Record>(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
-        if self.buffer.is_none() {
-            // This is the first record of a pair - buffer it
-            self.buffer = Some(record.seq().to_vec());
-            self.buffer_id = Some(record.id().to_vec());
-            self.buffer_qual = record.qual().map(|q| q.to_vec());
+        if should_keep {
+            self.local_stats.output_bp += (seq1_len + seq2_len) as u64;
+
+            // Write both records to output
+            self.write_record(record1)?;
+            self.write_record(record2)?;
         } else {
-            // This is the second record - process the pair
-            let r1_seq = self.buffer.take().unwrap();
-            let r1_id = self.buffer_id.take().unwrap();
-            let r1_qual = self.buffer_qual.take();
-
-            let r2_seq = record.seq().to_vec();
-            let _r2_qual = record.qual().map(|q| q.to_vec());
-
-            // Process the pair using the same logic as should_keep_pair
-            let seq1_len = r1_seq.len();
-            let seq2_len = r2_seq.len();
-            self.inner.local_stats.total_seqs += 2;
-            self.inner.local_stats.total_bp += (seq1_len + seq2_len) as u64;
-
-            if self.inner.should_keep_pair(&r1_seq, &record.seq_raw()) {
-                self.inner.local_stats.output_bp += (seq1_len + seq2_len) as u64;
-
-                // Create temporary records for formatting
-                struct TempRecord<'a> {
-                    id: &'a [u8],
-                    seq: &'a [u8],
-                    qual: Option<&'a [u8]>,
-                }
-
-                impl<'a> Record for TempRecord<'a> {
-                    fn id(&self) -> &[u8] {
-                        self.id
-                    }
-                    fn seq(&self) -> std::borrow::Cow<'_, [u8]> {
-                        std::borrow::Cow::Borrowed(self.seq)
-                    }
-                    fn seq_raw(&self) -> &[u8] {
-                        self.seq
-                    }
-                    fn qual(&self) -> Option<&[u8]> {
-                        self.qual
-                    }
-                }
-
-                let r1_record = TempRecord {
-                    id: &r1_id,
-                    seq: &r1_seq,
-                    qual: r1_qual.as_deref(),
-                };
-                let r2_record = TempRecord {
-                    id: &record.id(),
-                    seq: &record.seq_raw(),
-                    qual: record.qual(),
-                };
-
-                // Write both records using shared formatting
-                self.inner.local_stats.output_seq_counter += 1;
-                format_record_to_buffer(
-                    &r1_record,
-                    self.inner.local_stats.output_seq_counter,
-                    self.inner.rename,
-                    &mut self.inner.local_buffer,
-                )?;
-
-                self.inner.local_stats.output_seq_counter += 1;
-                format_record_to_buffer(
-                    &r2_record,
-                    self.inner.local_stats.output_seq_counter,
-                    self.inner.rename,
-                    &mut self.inner.local_buffer,
-                )?;
-            } else {
-                self.inner.local_stats.filtered_seqs += 2;
-                self.inner.local_stats.filtered_bp += (seq1_len + seq2_len) as u64;
-            }
+            self.local_stats.filtered_seqs += 2;
+            self.local_stats.filtered_bp += (seq1_len + seq2_len) as u64;
         }
 
         Ok(())
     }
 
     fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
-        ParallelProcessor::on_batch_complete(&mut self.inner)
+        // Write buffer to output
+        if !self.local_buffer.is_empty() {
+            let mut global_writer = self.global_writer.lock();
+            global_writer.write_all(&self.local_buffer)?;
+            global_writer.flush()?;
+        }
+        
+        // Clear buffer after releasing the lock for better performance
+        self.local_buffer.clear();
+
+        // Update global stats
+        {
+            let mut stats = self.global_stats.lock();
+            stats.total_seqs += self.local_stats.total_seqs;
+            stats.filtered_seqs += self.local_stats.filtered_seqs;
+            stats.total_bp += self.local_stats.total_bp;
+            stats.output_bp += self.local_stats.output_bp;
+            stats.filtered_bp += self.local_stats.filtered_bp;
+            stats.output_seq_counter += self.local_stats.output_seq_counter;
+        }
+
+        // Update spinner
+        self.update_spinner();
+
+        // Reset local stats
+        self.local_stats = ProcessingStats::default();
+
+        Ok(())
     }
 }
 
@@ -552,7 +639,23 @@ impl PairedParallelProcessor for FilterProcessor {
         self.local_stats.total_seqs += 2;
         self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
-        if self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw()) {
+        let (should_keep, hit_count, total_minimizers, hit_kmers) =
+            self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
+
+        // Debug info for paired reads
+        if self.debug && hit_count > 0 {
+            eprintln!(
+                "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
+                String::from_utf8_lossy(&record1.id()),
+                String::from_utf8_lossy(&record2.id()),
+                hit_count,
+                total_minimizers,
+                should_keep,
+                hit_kmers.join(",")
+            );
+        }
+
+        if should_keep {
             self.local_stats.output_bp += (seq1_len + seq2_len) as u64;
 
             // Write to appropriate writers
@@ -593,8 +696,10 @@ impl PairedParallelProcessor for FilterProcessor {
             let mut global_writer = self.global_writer.lock();
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
-            self.local_buffer.clear();
         }
+        
+        // Clear buffer after releasing the lock for better performance
+        self.local_buffer.clear();
 
         // Also flush writer2 if it exists
         if let Some(ref writer2) = self.global_writer2 {
@@ -637,10 +742,15 @@ pub fn run<P: AsRef<Path>>(
     rename: bool,
     threads: usize,
     compression_level: u8,
+    debug: bool,
+    quiet: bool,
 ) -> Result<()> {
     let start_time = Instant::now();
     let version: String = env!("CARGO_PKG_VERSION").to_string();
     let tool_version = format!("deacon {}", version);
+
+    // Enable quiet mode when debug is on to avoid mixed output
+    let quiet = quiet || debug;
 
     // Configure thread pool if nonzero
     if threads > 0 {
@@ -676,13 +786,15 @@ pub fn run<P: AsRef<Path>>(
         options.push(format!("threads={}", threads));
     }
 
-    eprintln!(
-        "Deacon v{}; mode: {}; input: {}; options: {}",
-        version,
-        mode,
-        input_type,
-        options.join(", ")
-    );
+    if !quiet {
+        eprintln!(
+            "Deacon v{}; mode: {}; input: {}; options: {}",
+            version,
+            mode,
+            input_type,
+            options.join(", ")
+        );
+    }
 
     // Load minimizers hashes and parse header
     let (minimizer_hashes, header) = load_minimizer_hashes(&minimizers_path)?;
@@ -692,10 +804,12 @@ pub fn run<P: AsRef<Path>>(
     let window_size = header.window_size();
 
     let load_time = start_time.elapsed();
-    eprintln!(
-        "Loaded index (k={}, w={}) in {:.2?}",
-        kmer_length, window_size, load_time
-    );
+    if !quiet {
+        eprintln!(
+            "Loaded index (k={}, w={}) in {:.2?}",
+            kmer_length, window_size, load_time
+        );
+    }
 
     // Create the appropriate writer(s) based on the output path(s)
     let writer = get_writer(output_path, compression_level)?;
@@ -705,17 +819,19 @@ pub fn run<P: AsRef<Path>>(
         None
     };
 
-    // Progress bar setup
-    let spinner = Arc::new(Mutex::new(ProgressBar::with_draw_target(
-        None,
-        ProgressDrawTarget::stderr(),
-    )));
-    spinner.lock().set_style(
-        ProgressStyle::default_spinner()
-            .tick_strings(&[".  ", ".. ", "...", " ..", "  .", "   "])
-            .template("{msg}{spinner} ")?,
-    );
-    spinner.lock().set_message("Filtering");
+    // Progress bar setup (only if not quiet)
+    let spinner = if !quiet {
+        let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{msg} {spinner}")?,
+        );
+        pb.set_message("Filtering");
+        Some(Arc::new(Mutex::new(pb)))
+    } else {
+        None
+    };
 
     // Start timer for filtering rate calculation
     let filtering_start_time = Instant::now();
@@ -730,6 +846,7 @@ pub fn run<P: AsRef<Path>>(
         prefix_length,
         deplete,
         rename,
+        debug,
         writer,
         writer2,
         spinner.clone(),
@@ -744,27 +861,17 @@ pub fn run<P: AsRef<Path>>(
     };
 
     if paired_stdin {
-        // Interleaved paired from stdin - read single records but process as pairs
-        let (stdin_handle, _comp) = create_reader("-")?;
-        let reader = Reader::new(stdin_handle)?;
-
-        // Create an interleaved processor that buffers records and processes pairs
-        let interleaved_processor = InterleavedFilterProcessor::new(processor.clone());
-        reader.process_parallel(interleaved_processor, num_threads)?;
+        // Interleaved paired from stdin - use native interleaved processor
+        let reader = create_paraseq_reader(Some("-"))?;
+        reader.process_parallel_interleaved(processor.clone(), num_threads)?;
     } else if let Some(input2_path) = input2_path {
         // Paired files
-        let (r1_handle, _comp) = create_reader(input_path)?;
-        let (r2_handle, _comp) = create_reader(input2_path)?;
-
-        let r1_reader = Reader::new(r1_handle)?;
-        let r2_reader = Reader::new(r2_handle)?;
-
+        let r1_reader = create_paraseq_reader(Some(input_path))?;
+        let r2_reader = create_paraseq_reader(Some(input2_path))?;
         r1_reader.process_parallel_paired(r2_reader, processor.clone(), num_threads)?;
     } else {
         // Single file or stdin
-        let (input_handle, _comp) = create_reader(input_path)?;
-        let reader = Reader::new(input_handle)?;
-
+        let reader = create_paraseq_reader(Some(input_path))?;
         reader.process_parallel(processor.clone(), num_threads)?;
     }
 
@@ -816,21 +923,26 @@ pub fn run<P: AsRef<Path>>(
     };
 
     // Finish and clear spinner
-    spinner.lock().finish_and_clear();
-    eprintln!(
-        "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
-        output_seqs,
-        total_seqs,
-        output_seq_proportion * 100.0,
-        output_bp,
-        total_bp,
-        output_bp_proportion * 100.0
-    );
+    if let Some(ref spinner) = spinner {
+        spinner.lock().finish_and_clear();
+    }
 
-    eprintln!(
-        "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
-        total_time, seqs_per_sec, mbp_per_sec
-    );
+    if !quiet {
+        eprintln!(
+            "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
+            output_seqs,
+            total_seqs,
+            output_seq_proportion * 100.0,
+            output_bp,
+            total_bp,
+            output_bp_proportion * 100.0
+        );
+
+        eprintln!(
+            "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
+            total_time, seqs_per_sec, mbp_per_sec
+        );
+    }
 
     // Build and write JSON summary if path provided
     if let Some(summary_file) = summary_path {
@@ -871,7 +983,9 @@ pub fn run<P: AsRef<Path>>(
 
         serde_json::to_writer_pretty(writer, &summary).context("Failed to write summary")?;
 
-        eprintln!("Summary saved to {:?}", summary_file);
+        if !quiet {
+            eprintln!("Summary saved to {:?}", summary_file);
+        }
     }
 
     Ok(())
