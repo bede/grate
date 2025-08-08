@@ -1,24 +1,25 @@
 use crate::index::load_minimizer_hashes;
 use anyhow::{Context, Result};
-use packed_seq;
-use simd_minimizers;
-use xxhash_rust;
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use liblzma::write::XzEncoder;
+use packed_seq;
 use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{
-    InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor, PairedParallelReader, ParallelProcessor, ParallelReader,
+    InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor,
+    PairedParallelReader, ParallelProcessor, ParallelReader,
 };
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
+use simd_minimizers;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
+use xxhash_rust;
 use zstd::stream::write::Encoder as ZstdEncoder;
 
 const OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // Opt: 8MB output buffer
@@ -530,7 +531,7 @@ impl ParallelProcessor for FilterProcessor {
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
         }
-        
+
         // Clear buffer after releasing the lock for better performance
         self.local_buffer.clear();
 
@@ -603,7 +604,7 @@ impl InterleavedParallelProcessor for FilterProcessor {
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
         }
-        
+
         // Clear buffer after releasing the lock for better performance
         self.local_buffer.clear();
 
@@ -697,7 +698,7 @@ impl PairedParallelProcessor for FilterProcessor {
             global_writer.write_all(&self.local_buffer)?;
             global_writer.flush()?;
         }
-        
+
         // Clear buffer after releasing the lock for better performance
         self.local_buffer.clear();
 
@@ -825,7 +826,7 @@ pub fn run<P: AsRef<Path>>(
         pb.set_style(
             ProgressStyle::default_spinner()
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
-                .template("{msg} {spinner}")?,
+                .template("{msg}")?,
         );
         pb.set_message("Filtering");
         Some(Arc::new(Mutex::new(pb)))
@@ -922,11 +923,6 @@ pub fn run<P: AsRef<Path>>(
         0.0
     };
 
-    // Finish and clear spinner
-    if let Some(ref spinner) = spinner {
-        spinner.lock().finish_and_clear();
-    }
-
     if !quiet {
         eprintln!(
             "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
@@ -942,6 +938,13 @@ pub fn run<P: AsRef<Path>>(
             "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
             total_time, seqs_per_sec, mbp_per_sec
         );
+    }
+
+    // Finish and clear spinner - disable it completely
+    if let Some(ref spinner) = spinner {
+        let pb = spinner.lock();
+        pb.set_draw_target(ProgressDrawTarget::hidden());
+        pb.finish_and_clear();
     }
 
     // Build and write JSON summary if path provided
