@@ -379,4 +379,13 @@ mod tests {
         );
         assert!(four_bases > 0.5, "High diversity should pass 0.5 threshold");
     }
+
+    #[test]
+    fn test_near_homopolymer_entropy() {
+        // 30 A's + 1 T, entropy ~0.1028
+        let near_homopolymer = b"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAT";
+        let entropy = calculate_scaled_entropy(near_homopolymer, 31);
+        assert!(entropy < 0.5, "Entropy {:.4} should be < 0.5", entropy);
+        assert!(entropy < 0.15, "Entropy {:.4} should be < 0.15", entropy);
+    }
 }
