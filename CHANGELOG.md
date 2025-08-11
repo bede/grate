@@ -11,13 +11,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `deacon index` now offers the ability to discard low complexity minimizers using a crude entropy-based filter with the new `--entropy` (`-e`) argument. This is disabled by default.
-
-- `deacon filter` now has a `--debug` mode which prints records with minimizer matches to stderr including the minimizer sequence.
+- Added new independent absolute (`-a`) and relative (`-r`) match thresholds with respective default values of 2 and 0.01 (1%). The new default relative threshold improves specificity for long sequences over the previous absolute-only default threshold without affecting short read accuracy. These replace the previous dual purpose `-m` parameter which could accept _either_ an absolute (integer) threshold _or_ a relative (float) threshold. 
+- `deacon index` now offers the ability to discard minimizers with information content below a specified scaled Shannon `--entropy` (`-e`) threshold. This is disabled by default.
+- `deacon filter` now has a `--debug` mode which prints all records with minimizer matches to stderr including the matched minimizer sequence(s).
+- The default worst-case hash table capacity preallocation used in `deacon index union` operations can now be overriden with the new `--capacity` (`-c`) argument, in similar fashion to `deacon index build`. 
 
 ### Changed
 
-- Filtering performance has improved dramatically on multicore systems due to improved work allocation using the Paraseq library. Filtering at >1Gbp/s is possible with uncompressed long sequences, and >500Mbp/s is achievable on many systems with Gzip-compressed long reads .
+- Filtering performance has improved dramatically on multicore systems due to improved work allocation using the Paraseq library. Filtering at >1Gbp/s is possible with uncompressed long sequences, and >500Mbp/s is achievable on many systems with Gzip-compressed long reads.
+
+### Removed
+
+- The filtering argument `--matches` (`-m`) has been removed and replaced with `--abs-threshold` (`-a`) and `--rel-threshold` (`-r`).
+
+
 
 
 ## [0.7.0] - 2025-07-08
