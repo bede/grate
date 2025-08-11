@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2025-08-11
+
+### Added
+
+- `deacon index` now offers the ability to discard low complexity minimizers using a crude entropy-based filter with the new `--entropy` (`-e`) argument. This is disabled by default.
+
+- `deacon filter` now has a `--debug` mode which prints records with minimizer matches to stderr including the minimizer sequence.
+
+### Changed
+
+- Filtering performance has improved dramatically on multicore systems due to improved work allocation using the Paraseq library. Filtering at >1Gbp/s is possible with uncompressed long sequences, and >500Mbp/s is achievable on many systems with Gzip-compressed long reads .
+
+
 ## [0.7.0] - 2025-07-08
 
 ### Added
@@ -19,8 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `deacon index union` now automatically preallocates the required hash table capacity, eliminating slowdowns when combining indexes.
 - Compatible minimizer _k_ and _w_ is now validated (k+w-1 must be odd) prior to indexing.
 - Default index capacity is now 400M (Was 500).
-
-
 
 
 ## [0.6.0] - 2025-06-25
