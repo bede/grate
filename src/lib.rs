@@ -208,7 +208,7 @@ pub struct IndexConfig {
     pub quiet: bool,
 
     /// Minimum scaled entropy threshold for k-mer filtering (0.0-1.0)
-    pub entropy_threshold: Option<f32>,
+    pub entropy_threshold: f32,
 }
 
 impl IndexConfig {
@@ -222,7 +222,7 @@ impl IndexConfig {
             capacity_millions: 500, // Default 500M capacity
             threads: 8,
             quiet: false,
-            entropy_threshold: None,
+            entropy_threshold: 0.0,
         }
     }
 
@@ -264,7 +264,7 @@ impl IndexConfig {
 
     /// Set threshold for scaled entropy filtering at indexing time
     pub fn with_entropy_threshold(mut self, threshold: f32) -> Self {
-        self.entropy_threshold = Some(threshold);
+        self.entropy_threshold = threshold;
         self
     }
 

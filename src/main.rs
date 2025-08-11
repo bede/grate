@@ -114,8 +114,8 @@ enum IndexCommands {
         quiet: bool,
 
         /// Minimum scaled entropy threshold for k-mer filtering (0.0-1.0)
-        #[arg(short = 'e', long = "entropy-threshold")]
-        entropy_threshold: Option<f32>,
+        #[arg(short = 'e', long = "entropy-threshold", default_value = "0.0")]
+        entropy_threshold: f32,
     },
     /// Show index information
     Info {

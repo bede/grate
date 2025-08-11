@@ -54,7 +54,7 @@ pub fn compute_minimizer_hashes(
     seq: &[u8],
     kmer_length: u8,
     window_size: u8,
-    entropy_threshold: Option<f32>,
+    entropy_threshold: f32,
 ) -> Vec<u64> {
     let mut hashes = Vec::new();
     fill_minimizer_hashes(
@@ -127,7 +127,7 @@ pub fn fill_minimizer_hashes(
     kmer_length: u8,
     window_size: u8,
     hashes: &mut Vec<u64>,
-    entropy_threshold: Option<f32>,
+    entropy_threshold: f32,
 ) {
     hashes.clear();
 
@@ -160,11 +160,11 @@ pub fn fill_minimizer_hashes(
             }
 
             // Check scaled entropy constraint if threshold specified
-            if let Some(threshold) = entropy_threshold {
-                let entropy = calculate_scaled_entropy(kmer, kmer_length);
-                entropy >= threshold
-            } else {
+            if entropy_threshold == 0.0 {
                 true
+            } else {
+                let entropy = calculate_scaled_entropy(kmer, kmer_length);
+                entropy >= entropy_threshold
             }
         })
         .collect();
@@ -227,14 +227,14 @@ mod tests {
         let k = 5;
         let w = 3;
 
-        let hashes = compute_minimizer_hashes(seq, k, w, None);
+        let hashes = compute_minimizer_hashes(seq, k, w, 0.0);
 
         // We should have at least one minimizer hash
         assert!(!hashes.is_empty());
 
         // Test with a sequence shorter than k
         let short_seq = b"ACGT";
-        let short_hashes = compute_minimizer_hashes(short_seq, k, w, None);
+        let short_hashes = compute_minimizer_hashes(short_seq, k, w, 0.0);
         assert!(short_hashes.is_empty());
     }
 
