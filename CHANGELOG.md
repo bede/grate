@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Filtering performance has improved dramatically on multicore systems due to improved work allocation using the Paraseq library. Filtering at >1Gbp/s is possible with uncompressed long sequences, and >500Mbp/s is achievable on many systems with Gzip-compressed long reads.
-- All minimizers containing ambiguous nucleotides are now discarded
+- Minimizers containing ambiguous nucleotides are now ignored.
 
 ### Removed
 
