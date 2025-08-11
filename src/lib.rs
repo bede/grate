@@ -219,7 +219,7 @@ impl IndexConfig {
             kmer_length: DEFAULT_KMER_LENGTH,
             window_size: DEFAULT_WINDOW_SIZE,
             output_path: None,
-            capacity_millions: 500, // Default 500M capacity
+            capacity_millions: 400,
             threads: 8,
             quiet: false,
             entropy_threshold: 0.0,
