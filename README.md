@@ -5,7 +5,7 @@
 
 <div align="center"><img src="deacon.png" width="180" alt="Logo"></div>
 
-Fast minimizer-based search and depletion of FASTA/FASTQ files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and match thresholds (`-a` and `-r`) per query. Minimizer `k` and `w` are chosen at index time, while the match thresholds can be varied at filter time. Sequences must meet both an absolute threshold (`-a`, default 2 minimizer hits) and a relative threshold (`-r`, default 0.01 or 1% of minimizers) to be considered a match. Short and/or paired reads are supported: A match in either mate causes both mates in the pair to be retained or discarded. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance during execution and optionally writes a JSON summary on completion. Gzip, zst and xz compression formats are natively supported and detected by file extension.
+Fast minimizer-based search and depletion of FASTA/FASTQ files and streams. Default parameters balance sensitivity and specificity for microbial (meta)genomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements can be tuned by varying *k*-mer length (`-k`), minimizer window size (`-w`), and match thresholds (`-a` and `-r`) per query. Minimizer `k` and `w` are chosen at index time, while the match thresholds can be varied at filter time. Sequences must meet both an absolute threshold (`-a`, default 2 minimizer hits) and a relative threshold (`-r`, default 0.01 or 1% of minimizers) to be considered a match. Short and/or paired reads are supported: a match in either mate causes both mates in the pair to be retained or discarded. Sequences can optionally be renamed for privacy and smaller file sizes. Deacon reports filtering performance during execution and optionally writes a JSON summary on completion. Gzip, zst and xz compression formats are natively supported and detected by file extension.
 
 Building on [simd-minimizers](https://github.com/rust-seq/simd-minimizers), Deacon is capable of filtering compressed long reads at >500Mbp/s and indexing a human genome in <30s (Apple M1). Filtering at >1Gbp/s is possible with uncompressed input. Peak memory usage during filtering is 5GB for the default panhuman index. Use Zstandard (zst) compression and/or pipe output to an external compressor such as `pigz` for best performance.
 
@@ -45,7 +45,8 @@ deacon index build -e 0.5 chm13v2.fa > human.k31w15e5.idx
 
 |                           Name/URL                           |                         Composition                          | Minimizers  | Subtracted minimizers | Size  | Date    |
 | :----------------------------------------------------------: | :----------------------------------------------------------: | ----------- | --------------------- | ----- | ------- |
-| **panhuman-1 (*k*=31, *w*=15)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/2/panhuman-1.k31w15.idx), [Zenodo](https://zenodo.org/records/15838532) | ([HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [CHM13v2.0](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [GRCh38.p14](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40)) - bacteria (FDA-ARGOS)  - viruses (RefSeq) | 409,913,780 | 20,781 (**0.0051%**)  | 3.7GB | 2025-07 |
+| **panhuman-1 (*k*=31, *w*=15)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/2/panhuman-1.k31w15.idx), [Zenodo](https://zenodo.org/records/15838532) | [HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [`CHM13v2.0`](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [`GRCh38.p14`](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40) - bacteria (FDA-ARGOS) - viruses (RefSeq) | 409,913,780 | 20,781 (**0.0051%**)  | 3.7GB | 2025-07 |
+| **panmouse-1a (k=31, w=15, e=0.5)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/2/panmouse-1.k31w15e05.idx) | [`GRCm39`](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001635.27) ∪ [`PRJEB47108`](https://www.ebi.ac.uk/ena/browser/view/PRJEB47108?show=sequences) - bacteria (FDA-ARGOS) - viruses (RefSeq) | 548,331,948 | 8,246 (**0.0015%**)   | 4.6GB | 2025-08 |
 
 ### Filtering
 
@@ -60,7 +61,7 @@ deacon filter panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 # Host depletion using the panhuman-1 index and default thresholds
 deacon filter -d panhuman-1.k31w15.idx reads.fq.gz -o filt.fq.gz
 
-# Maximum sensitivity with absolute threshold of 1 and relative threshold of 0
+# Max sensitivity with absolute threshold of 1 and no relative threshold
 deacon filter -d -a 1 -r 0 panhuman-1.k31w15.idx reads.fq.gz > filt.fq.gz
 
 # More specific 10% relative match threshold
