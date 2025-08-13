@@ -271,6 +271,9 @@ impl FilterProcessor {
             seq
         };
 
+        // Trim the last newline character from `effective_seq` if it has one.
+        let effective_seq = effective_seq.strip_suffix(b"\n").unwrap_or(effective_seq);
+
         // Get minimizer positions first
         let canonical_seq = effective_seq
             .iter()
