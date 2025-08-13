@@ -3,13 +3,13 @@ use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use liblzma::write::XzEncoder;
-use packed_seq;
-use paraseq::Record;
+use packed_seq::SeqVec;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{
     InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor,
     PairedParallelReader, ParallelProcessor, ParallelReader,
 };
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -274,21 +274,13 @@ impl FilterProcessor {
         // Trim the last newline character from `effective_seq` if it has one.
         let effective_seq = effective_seq.strip_suffix(b"\n").unwrap_or(effective_seq);
 
-        // Get minimizer positions first
-        let canonical_seq = effective_seq
-            .iter()
-            .map(|&b| match b {
-                b'A' | b'a' => b'A',
-                b'C' | b'c' => b'C',
-                b'G' | b'g' => b'G',
-                b'T' | b't' => b'T',
-                _ => b'C', // Default for ambiguous bases
-            })
-            .collect::<Vec<u8>>();
+        // Pack the sequence into 2-bit representation.
+        // Any non-ACGT characters are silently converted to 2-bit ACGT as well.
+        let packed_seq = packed_seq::PackedSeqVec::from_ascii(effective_seq);
 
         let mut positions = Vec::new();
         simd_minimizers::canonical_minimizer_positions(
-            packed_seq::AsciiSeq(&canonical_seq),
+            packed_seq.as_slice(),
             self.kmer_length as usize,
             self.window_size as usize,
             &mut positions,
@@ -307,7 +299,7 @@ impl FilterProcessor {
 
         // Get hash values for valid positions
         let minimizer_values: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
-            packed_seq::AsciiSeq(&canonical_seq),
+            packed_seq.as_slice(),
             self.kmer_length as usize,
             &valid_positions,
         )
