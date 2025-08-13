@@ -1129,3 +1129,60 @@ fn test_filter_edge_case_proportional_values() {
         "Output with 1.0 threshold wasn't created"
     );
 }
+
+#[test]
+fn test_multiline_fasta_matching() {
+    let temp_dir = tempdir().unwrap();
+    let ref_path = temp_dir.path().join("ref.fasta");
+    let query_path = temp_dir.path().join("query.fasta");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("output.fasta");
+
+    let reference_fasta = ">ref\nACGTTTAAGGCCAACCACACACACACACATT\n";
+    let query_fasta = ">query\nACGTTTAAGGCCAACC\nACACACACACACATT\n";
+
+    fs::write(&ref_path, reference_fasta).unwrap();
+    fs::write(&query_path, query_fasta).unwrap();
+
+    // Build index with k=31, w=1
+    let output = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"))
+        .arg("index")
+        .arg("build")
+        .arg("-k")
+        .arg("31")
+        .arg("-w")
+        .arg("1")
+        .arg(&ref_path)
+        .output()
+        .expect("Failed to execute index command");
+
+    fs::write(&bin_path, output.stdout).expect("Failed to write index file");
+    assert!(output.status.success(), "Index build command failed");
+
+    // Filter with -a 1
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("-a")
+        .arg("1")
+        .arg(&bin_path)
+        .arg(&query_path)
+        .arg("-o")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    // Verify that mid record newline doesn't break match
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(
+        !output_content.is_empty(),
+        "Multiline FASTA should match indexed sequence"
+    );
+    assert!(
+        output_content.contains(">query"),
+        "Output should contain query header"
+    );
+    assert!(
+        output_content.contains("ACGTTTAAGGCCAACCACACACACACACATT"),
+        "Output should contain the full sequence"
+    );
+}

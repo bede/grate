@@ -63,7 +63,7 @@ fn format_record_to_buffer<R: Record>(
     buffer.write(b"\n")?;
 
     // Sequence line
-    buffer.extend_from_slice(&record.seq_raw());
+    buffer.extend_from_slice(&record.seq());
 
     if is_fasta {
         buffer.write(b"\n")?;
@@ -494,15 +494,15 @@ impl FilterProcessor {
 
 impl ParallelProcessor for FilterProcessor {
     fn process_record<Rf: Record>(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
-        let seq_len = record.seq_raw().len();
+        let seq_len = record.seq().len();
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq_len as u64;
 
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_sequence(&record.seq_raw());
+            self.should_keep_sequence(&record.seq());
 
         // Show debug info for sequences with hits
-        if self.debug && hit_count > 0 {
+        if self.debug {
             eprintln!(
                 "DEBUG: {} hits={}/{} keep={} kmers=[{}]",
                 String::from_utf8_lossy(&record.id()),
@@ -562,13 +562,13 @@ impl InterleavedParallelProcessor for FilterProcessor {
         record1: Rf,
         record2: Rf,
     ) -> paraseq::parallel::Result<()> {
-        let seq1_len = record1.seq_raw().len();
-        let seq2_len = record2.seq_raw().len();
+        let seq1_len = record1.seq().len();
+        let seq2_len = record2.seq().len();
         self.local_stats.total_seqs += 2;
         self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
+            self.should_keep_pair(&record1.seq(), &record2.seq());
 
         // Debug info for interleaved pairs
         if self.debug && hit_count > 0 {
@@ -635,13 +635,13 @@ impl PairedParallelProcessor for FilterProcessor {
         record1: Rf,
         record2: Rf,
     ) -> paraseq::parallel::Result<()> {
-        let seq1_len = record1.seq_raw().len();
-        let seq2_len = record2.seq_raw().len();
+        let seq1_len = record1.seq().len();
+        let seq2_len = record2.seq().len();
         self.local_stats.total_seqs += 2;
         self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
 
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_pair(&record1.seq_raw(), &record2.seq_raw());
+            self.should_keep_pair(&record1.seq(), &record2.seq());
 
         // Debug info for paired reads
         if self.debug && hit_count > 0 {
