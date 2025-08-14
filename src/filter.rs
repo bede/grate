@@ -183,6 +183,7 @@ struct FilterProcessor {
 
     // Local buffers
     local_buffer: Vec<u8>,
+    local_buffer2: Vec<u8>, // Second buffer for paired output
     local_stats: ProcessingStats,
 
     // Global state
@@ -250,6 +251,7 @@ impl FilterProcessor {
             rename,
             debug,
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
+            local_buffer2: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
             global_writer: Arc::new(Mutex::new(writer)),
             global_writer2: writer2.map(|w| Arc::new(Mutex::new(w))),
@@ -453,6 +455,16 @@ impl FilterProcessor {
             self.local_stats.output_seq_counter,
             self.rename,
             &mut self.local_buffer,
+        )
+    }
+
+    fn write_record_to_buffer2<Rf: Record>(&mut self, record: Rf) -> Result<()> {
+        self.local_stats.output_seq_counter += 1;
+        format_record_to_buffer(
+            &record,
+            self.local_stats.output_seq_counter,
+            self.rename,
+            &mut self.local_buffer2,
         )
     }
 
@@ -661,23 +673,9 @@ impl PairedParallelProcessor for FilterProcessor {
 
             // Write to appropriate writers
             if self.global_writer2.is_some() {
-                // Separate output files
+                // Separate outputs
                 self.write_record(record1)?;
-
-                // Temporarily swap buffers for second writer
-                let mut temp_buffer = Vec::with_capacity(DEFAULT_BUFFER_SIZE);
-                std::mem::swap(&mut self.local_buffer, &mut temp_buffer);
-
-                self.write_record(record2)?;
-
-                // Write second record to writer2
-                if let Some(ref writer2) = self.global_writer2 {
-                    let mut global_writer2 = writer2.lock();
-                    global_writer2.write_all(&self.local_buffer)?;
-                }
-
-                // Restore original buffer with first record
-                self.local_buffer = temp_buffer;
+                self.write_record_to_buffer2(record2)?;
             } else {
                 // Interleaved output
                 self.write_record(record1)?;
@@ -692,21 +690,28 @@ impl PairedParallelProcessor for FilterProcessor {
     }
 
     fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
-        // Write buffer to output
-        if !self.local_buffer.is_empty() {
-            let mut global_writer = self.global_writer.lock();
-            global_writer.write_all(&self.local_buffer)?;
-            global_writer.flush()?;
-        }
-
-        // Clear buffer after releasing the lock for better performance
-        self.local_buffer.clear();
-
-        // Also flush writer2 if it exists
         if let Some(ref writer2) = self.global_writer2 {
-            let mut global_writer2 = writer2.lock();
-            global_writer2.flush()?;
+            // Atomic paired batch writing
+            if !self.local_buffer.is_empty() || !self.local_buffer2.is_empty() {
+                let mut writer1 = self.global_writer.lock();
+                let mut writer2 = writer2.lock();
+
+                writer1.write_all(&self.local_buffer)?;
+                writer1.flush()?;
+                writer2.write_all(&self.local_buffer2)?;
+                writer2.flush()?;
+            }
+        } else {
+            // Interleaved output
+            if !self.local_buffer.is_empty() {
+                let mut writer = self.global_writer.lock();
+                writer.write_all(&self.local_buffer)?;
+                writer.flush()?;
+            }
         }
+
+        self.local_buffer.clear();
+        self.local_buffer2.clear();
 
         // Update global stats
         {

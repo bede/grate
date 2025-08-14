@@ -1186,3 +1186,68 @@ fn test_multiline_fasta_matching() {
         "Output should contain the full sequence"
     );
 }
+
+#[test]
+fn test_newline_mapping_bug() {
+    let temp_dir = tempdir().unwrap();
+    let ref_path = temp_dir.path().join("reference.fa");
+    let query_path = temp_dir.path().join("query.fa");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("output.fa");
+
+    // Create reference file with sequence split across lines
+    // The newlines should be stripped but if they're not, they'll be mapped to 'C'
+    let ref_content = ">reference\nAAAAA\nAAAAA\nAAAAA\nAAAAA\n";
+    fs::write(&ref_path, ref_content).unwrap();
+
+    // Create query file with Cs where newlines would be
+    let query_content = ">query\nAAAAACAAAAACAAAAACAAAAA\n";
+    fs::write(&query_path, query_content).unwrap();
+
+    // Build index with k=5, w=5 (k+w-1 must be odd: 5+5-1=9, odd ✓)
+    let output = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"))
+        .arg("index")
+        .arg("build")
+        .arg("-k")
+        .arg("5")
+        .arg("-w")
+        .arg("5")
+        .arg(&ref_path)
+        .output()
+        .expect("Failed to execute index command");
+
+    fs::write(&bin_path, output.stdout).expect("Failed to write index file");
+    assert!(output.status.success(), "Index build command failed");
+
+    // Filter query against index
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("-a")
+        .arg("1")
+        .arg("-r")
+        .arg("0.0")
+        .arg(&bin_path)
+        .arg(&query_path)
+        .arg("-o")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    // Read filtered output
+    let output_str = fs::read_to_string(&output_path).unwrap();
+
+    // If newlines are being mapped to C, the query would match
+    // The bug would cause the reference "AAAAA\nAAAAA\nAAAAA\nAAAAA" to become
+    // "AAAAACAAAAACAAAAACAAAAA" after mapping newlines to C
+    // So if the bug exists, the query would match and be filtered (kept with deplete=false)
+
+    // With the bug, we'd expect a match. Without the bug, no match.
+    if output_str.contains(">query") {
+        panic!(
+            "BUG DETECTED: Query matched due to newlines being mapped to 'C'. Output: {}",
+            output_str
+        );
+    }
+
+    println!("Test passed - no false matches from newline mapping");
+}
