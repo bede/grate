@@ -1,4 +1,4 @@
-use crate::index::load_minimizer_hashes;
+use crate::{FilterConfig, index::load_minimizer_hashes};
 use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -16,7 +16,6 @@ use serde::{Deserialize, Serialize};
 use simd_minimizers;
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 use xxhash_rust;
@@ -26,6 +25,16 @@ const OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // Opt: 8MB output buffer
 const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
 
 type BoxedWriter = Box<dyn Write + Send>;
+
+/// Config for FilterProcessor
+struct FilterProcessorConfig {
+    abs_threshold: usize,
+    rel_threshold: f64,
+    prefix_length: usize,
+    deplete: bool,
+    rename: bool,
+    debug: bool,
+}
 
 /// Create a paraseq reader from optional path (stdin if None or "-")
 fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::Read + Send>>> {
@@ -229,12 +238,7 @@ impl FilterProcessor {
         minimizer_hashes: Arc<FxHashSet<u64>>,
         kmer_length: u8,
         window_size: u8,
-        abs_threshold: usize,
-        rel_threshold: f64,
-        prefix_length: usize,
-        deplete: bool,
-        rename: bool,
-        debug: bool,
+        config: &FilterProcessorConfig,
         writer: BoxedWriter,
         writer2: Option<BoxedWriter>,
         spinner: Option<Arc<Mutex<ProgressBar>>>,
@@ -244,12 +248,12 @@ impl FilterProcessor {
             minimizer_hashes,
             kmer_length,
             window_size,
-            abs_threshold,
-            rel_threshold,
-            prefix_length,
-            deplete,
-            rename,
-            debug,
+            abs_threshold: config.abs_threshold,
+            rel_threshold: config.rel_threshold,
+            prefix_length: config.prefix_length,
+            deplete: config.deplete,
+            rename: config.rename,
+            debug: config.debug,
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_buffer2: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
@@ -734,62 +738,48 @@ impl PairedParallelProcessor for FilterProcessor {
     }
 }
 
-pub fn run<P: AsRef<Path>>(
-    minimizers_path: P,
-    input_path: &str,
-    input2_path: Option<&str>,
-    output_path: &str,
-    output2_path: Option<&str>,
-    abs_threshold: usize,
-    rel_threshold: f64,
-    prefix_length: usize,
-    summary_path: Option<&PathBuf>,
-    deplete: bool,
-    rename: bool,
-    threads: usize,
-    compression_level: u8,
-    debug: bool,
-    quiet: bool,
-) -> Result<()> {
+pub fn run(config: &FilterConfig) -> Result<()> {
     let start_time = Instant::now();
     let version: String = env!("CARGO_PKG_VERSION").to_string();
     let tool_version = format!("deacon {}", version);
 
     // Enable quiet mode when debug is on to avoid mixed output
-    let quiet = quiet || debug;
+    let quiet = config.quiet || config.debug;
 
     // Configure thread pool if nonzero
-    if threads > 0 {
+    if config.threads > 0 {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
+            .num_threads(config.threads)
             .build_global()
             .context("Failed to initialize thread pool")?;
     }
 
-    let mode = if deplete { "deplete" } else { "search" };
+    let mode = if config.deplete { "deplete" } else { "search" };
 
     let mut input_type = String::new();
     let mut options = Vec::<String>::new();
-    let paired_stdin = input_path == "-" && input2_path.is_some() && input2_path.unwrap() == "-";
+    let paired_stdin = config.input_path == "-"
+        && config.input2_path.is_some()
+        && config.input2_path.unwrap() == "-";
     if paired_stdin {
         input_type.push_str("interleaved");
-    } else if input2_path.is_some() {
+    } else if config.input2_path.is_some() {
         input_type.push_str("paired");
     } else {
         input_type.push_str("single");
     }
     options.push(format!(
         "abs_threshold={}, rel_threshold={}",
-        abs_threshold, rel_threshold
+        config.abs_threshold, config.rel_threshold
     ));
-    if prefix_length > 0 {
-        options.push(format!("prefix_length={}", prefix_length));
+    if config.prefix_length > 0 {
+        options.push(format!("prefix_length={}", config.prefix_length));
     }
-    if rename {
+    if config.rename {
         options.push("rename".to_string());
     }
-    if threads > 0 {
-        options.push(format!("threads={}", threads));
+    if config.threads > 0 {
+        options.push(format!("threads={}", config.threads));
     }
 
     if !quiet {
@@ -803,7 +793,7 @@ pub fn run<P: AsRef<Path>>(
     }
 
     // Load minimizers hashes and parse header
-    let (minimizer_hashes, header) = load_minimizer_hashes(&minimizers_path)?;
+    let (minimizer_hashes, header) = load_minimizer_hashes(&config.minimizers_path)?;
     let minimizer_hashes = Arc::new(minimizer_hashes);
 
     let kmer_length = header.kmer_length();
@@ -818,9 +808,9 @@ pub fn run<P: AsRef<Path>>(
     }
 
     // Create the appropriate writer(s) based on the output path(s)
-    let writer = get_writer(output_path, compression_level)?;
-    let writer2 = if let (Some(output2), Some(_)) = (output2_path, input2_path) {
-        Some(get_writer(output2, compression_level)?)
+    let writer = get_writer(config.output_path, config.compression_level)?;
+    let writer2 = if let (Some(output2), Some(_)) = (config.output2_path, config.input2_path) {
+        Some(get_writer(output2, config.compression_level)?)
     } else {
         None
     };
@@ -843,16 +833,19 @@ pub fn run<P: AsRef<Path>>(
     let filtering_start_time = Instant::now();
 
     // Create processor
+    let processor_config = FilterProcessorConfig {
+        abs_threshold: config.abs_threshold,
+        rel_threshold: config.rel_threshold,
+        prefix_length: config.prefix_length,
+        deplete: config.deplete,
+        rename: config.rename,
+        debug: config.debug,
+    };
     let processor = FilterProcessor::new(
         minimizer_hashes,
         kmer_length,
         window_size,
-        abs_threshold,
-        rel_threshold,
-        prefix_length,
-        deplete,
-        rename,
-        debug,
+        &processor_config,
         writer,
         writer2,
         spinner.clone(),
@@ -860,24 +853,24 @@ pub fn run<P: AsRef<Path>>(
     );
 
     // Process based on input type
-    let num_threads = if threads == 0 {
+    let num_threads = if config.threads == 0 {
         rayon::current_num_threads()
     } else {
-        threads
+        config.threads
     };
 
     if paired_stdin {
         // Interleaved paired from stdin - use native interleaved processor
         let reader = create_paraseq_reader(Some("-"))?;
         reader.process_parallel_interleaved(processor.clone(), num_threads)?;
-    } else if let Some(input2_path) = input2_path {
+    } else if let Some(input2_path) = config.input2_path {
         // Paired files
-        let r1_reader = create_paraseq_reader(Some(input_path))?;
+        let r1_reader = create_paraseq_reader(Some(config.input_path))?;
         let r2_reader = create_paraseq_reader(Some(input2_path))?;
         r1_reader.process_parallel_paired(r2_reader, processor.clone(), num_threads)?;
     } else {
         // Single file or stdin
-        let reader = create_paraseq_reader(Some(input_path))?;
+        let reader = create_paraseq_reader(Some(config.input_path))?;
         reader.process_parallel(processor.clone(), num_threads)?;
     }
 
@@ -953,23 +946,23 @@ pub fn run<P: AsRef<Path>>(
     }
 
     // Build and write JSON summary if path provided
-    if let Some(summary_file) = summary_path {
+    if let Some(summary_file) = config.summary_path {
         let seqs_out = total_seqs - filtered_seqs;
 
         let summary = FilterSummary {
             version: tool_version,
-            index: minimizers_path.as_ref().to_string_lossy().to_string(),
-            input: input_path.to_string(),
-            input2: input2_path.map(|s| s.to_string()),
-            output: output_path.to_string(),
-            output2: output2_path.map(|s| s.to_string()),
+            index: config.minimizers_path.to_string_lossy().to_string(),
+            input: config.input_path.to_string(),
+            input2: config.input2_path.map(|s| s.to_string()),
+            output: config.output_path.to_string(),
+            output2: config.output2_path.map(|s| s.to_string()),
             k: kmer_length,
             w: window_size,
-            abs_threshold,
-            rel_threshold,
-            prefix_length,
-            deplete,
-            rename,
+            abs_threshold: config.abs_threshold,
+            rel_threshold: config.rel_threshold,
+            prefix_length: config.prefix_length,
+            deplete: config.deplete,
+            rename: config.rename,
             seqs_in: total_seqs as u64,
             seqs_out: seqs_out as u64,
             seqs_out_proportion: output_seq_proportion,

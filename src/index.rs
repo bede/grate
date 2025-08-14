@@ -1,3 +1,4 @@
+use crate::IndexConfig;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
 use rayon::prelude::*;
@@ -134,26 +135,17 @@ pub fn write_minimizers(
 }
 
 /// Build an index of minimizers from a fastx file
-pub fn build<P: AsRef<Path>>(
-    input: P,
-    kmer_length: u8,
-    window_size: u8,
-    output: Option<PathBuf>,
-    capacity_millions: usize,
-    threads: usize,
-    quiet: bool,
-    entropy_threshold: f32,
-) -> Result<()> {
+pub fn build(config: &IndexConfig) -> Result<()> {
     let start_time = Instant::now();
-    let path = input.as_ref();
+    let path = &config.input_path;
 
     let version: String = env!("CARGO_PKG_VERSION").to_string();
 
     // Build options string similar to filter
     let mut options = Vec::<String>::new();
-    options.push(format!("capacity={}M", capacity_millions));
-    if threads > 0 {
-        options.push(format!("threads={}", threads));
+    options.push(format!("capacity={}M", config.capacity_millions));
+    if config.threads > 0 {
+        options.push(format!("threads={}", config.threads));
     }
 
     eprintln!(
@@ -163,19 +155,19 @@ pub fn build<P: AsRef<Path>>(
     );
 
     // Ensure l = k + w - 1 is odd so that canonicalisation tie breaks work correctly
-    let l = kmer_length as usize + window_size as usize - 1;
+    let l = config.kmer_length as usize + config.window_size as usize - 1;
     if l % 2 == 0 {
         return Err(anyhow::anyhow!(
             "Constraint violated: k + w - 1 must be odd (k={}, w={})",
-            kmer_length,
-            window_size
+            config.kmer_length,
+            config.window_size
         ));
     }
 
     // Configure thread pool if specified (non-zero)
-    if threads > 0 {
+    if config.threads > 0 {
         rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
+            .num_threads(config.threads)
             .build_global()
             .context("Failed to initialize thread pool")?;
     }
@@ -188,11 +180,14 @@ pub fn build<P: AsRef<Path>>(
     };
 
     // Init FxHashSet with user-specified capacity
-    let capacity = capacity_millions * 1_000_000;
+    let capacity = config.capacity_millions * 1_000_000;
     let mut all_minimizers: FxHashSet<u64> =
         FxHashSet::with_capacity_and_hasher(capacity, Default::default());
 
-    eprintln!("Building index (k={}, w={})", kmer_length, window_size);
+    eprintln!(
+        "Building index (k={}, w={})",
+        config.kmer_length, config.window_size
+    );
 
     let mut seq_count = 0;
     let mut total_bp = 0;
@@ -232,9 +227,9 @@ pub fn build<P: AsRef<Path>>(
                 // Compute minimizer hashes for this sequence
                 crate::minimizers::compute_minimizer_hashes(
                     seq_data,
-                    kmer_length,
-                    window_size,
-                    entropy_threshold,
+                    config.kmer_length,
+                    config.window_size,
+                    config.entropy_threshold,
                 )
             })
             .collect();
@@ -248,7 +243,7 @@ pub fn build<P: AsRef<Path>>(
             seq_count += 1;
             total_bp += seq_data.len();
 
-            if !quiet {
+            if !config.quiet {
                 let id_str = std::str::from_utf8(id).unwrap_or("unknown");
                 eprintln!(
                     "  {} ({}bp), total minimizers: {}",
@@ -272,10 +267,10 @@ pub fn build<P: AsRef<Path>>(
         total_bp
     );
 
-    let header = IndexHeader::new(kmer_length, window_size);
+    let header = IndexHeader::new(config.kmer_length, config.window_size);
 
     // Write to output path or stdout
-    write_minimizers(&all_minimizers, &header, output.as_ref())?;
+    write_minimizers(&all_minimizers, &header, config.output_path.as_ref())?;
 
     let total_time = start_time.elapsed();
     eprintln!("Completed in {:.2?}", total_time);

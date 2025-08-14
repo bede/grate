@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use deacon::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, build_index, diff_index, index_info, run_filter,
+    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, FilterConfig, IndexConfig, diff_index, index_info,
     union_index,
 };
 use std::path::PathBuf;
@@ -190,17 +190,19 @@ fn main() -> Result<()> {
                     Some(PathBuf::from(output))
                 };
 
-                build_index(
-                    input,
-                    *kmer_length,
-                    *window_size,
+                let config = IndexConfig {
+                    input_path: input.clone(),
+                    kmer_length: *kmer_length,
+                    window_size: *window_size,
                     output_path,
-                    *capacity_millions,
-                    *threads,
-                    *quiet,
-                    *entropy_threshold,
-                )
-                .context("Failed to run index build command")?;
+                    capacity_millions: *capacity_millions,
+                    threads: *threads,
+                    quiet: *quiet,
+                    entropy_threshold: *entropy_threshold,
+                };
+                config
+                    .execute()
+                    .context("Failed to run index build command")?;
             }
             IndexCommands::Info { index } => {
                 index_info(index).context("Failed to run index info command")?;
@@ -248,24 +250,24 @@ fn main() -> Result<()> {
                 );
             }
 
-            run_filter(
-                minimizers,
-                input,
-                input2.as_deref(),
-                output,
-                output2.as_deref(),
-                *abs_threshold as usize,
-                *rel_threshold,
-                *prefix_length,
-                summary.as_ref(),
-                *deplete,
-                *rename,
-                *threads,
-                *compression_level,
-                *debug,
-                *quiet,
-            )
-            .context("Failed to run filter command")?;
+            let config = FilterConfig {
+                minimizers_path: minimizers,
+                input_path: input,
+                input2_path: input2.as_deref(),
+                output_path: output,
+                output2_path: output2.as_deref(),
+                abs_threshold: *abs_threshold as usize,
+                rel_threshold: *rel_threshold,
+                prefix_length: *prefix_length,
+                summary_path: summary.as_ref(),
+                deplete: *deplete,
+                rename: *rename,
+                threads: *threads,
+                compression_level: *compression_level,
+                debug: *debug,
+                quiet: *quiet,
+            };
+            config.execute().context("Failed to run filter command")?;
         }
     }
 
