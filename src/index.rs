@@ -122,12 +122,12 @@ pub fn write_minimizers(
 
     // Serialise the count of minimizers first
     let count = minimizers.len();
-    encode_into_std_write(&count, &mut writer, bincode::config::standard())
+    encode_into_std_write(count, &mut writer, bincode::config::standard())
         .context("Failed to serialise minimizer count")?;
 
     // Serialise each minimizer directly
     for &hash in minimizers {
-        encode_into_std_write(&hash, &mut writer, bincode::config::standard())
+        encode_into_std_write(hash, &mut writer, bincode::config::standard())
             .context("Failed to serialise minimizer hash")?;
     }
     Ok(())
@@ -400,7 +400,7 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         seq_count, total_bp
     );
 
-    Ok((seq_count as usize, total_bp as usize))
+    Ok((seq_count as usize, total_bp))
 }
 
 /// Compute the set difference between two minimizer indexes (A - B)
@@ -622,7 +622,7 @@ pub fn union<P: AsRef<Path>>(
         );
     }
 
-    write_minimizers(&all_minimizers, &header, output)?;
+    write_minimizers(&all_minimizers, header, output)?;
 
     let total_time = start_time.elapsed();
     eprintln!(

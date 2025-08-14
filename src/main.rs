@@ -250,7 +250,7 @@ fn main() -> Result<()> {
 
             run_filter(
                 minimizers,
-                &input,
+                input,
                 input2.as_deref(),
                 output,
                 output2.as_deref(),

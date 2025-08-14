@@ -54,26 +54,26 @@ fn format_record_to_buffer<R: Record>(
     let is_fasta = record.qual().is_none();
 
     // Header line
-    buffer.write(if is_fasta { b">" } else { b"@" })?;
+    buffer.write_all(if is_fasta { b">" } else { b"@" })?;
     if rename {
         buffer.extend_from_slice(counter.to_string().as_bytes());
     } else {
-        buffer.extend_from_slice(&record.id());
+        buffer.extend_from_slice(record.id());
     }
-    buffer.write(b"\n")?;
+    buffer.write_all(b"\n")?;
 
     // Sequence line
     buffer.extend_from_slice(&record.seq());
 
     if is_fasta {
-        buffer.write(b"\n")?;
+        buffer.write_all(b"\n")?;
     } else {
         // FASTQ: plus line and quality
-        buffer.write(b"\n+\n")?;
+        buffer.write_all(b"\n+\n")?;
         if let Some(qual) = record.qual() {
-            buffer.extend_from_slice(&qual);
+            buffer.extend_from_slice(qual);
         }
-        buffer.write(b"\n")?;
+        buffer.write_all(b"\n")?;
     }
     Ok(())
 }
@@ -517,7 +517,7 @@ impl ParallelProcessor for FilterProcessor {
         if self.debug {
             eprintln!(
                 "DEBUG: {} hits={}/{} keep={} kmers=[{}]",
-                String::from_utf8_lossy(&record.id()),
+                String::from_utf8_lossy(record.id()),
                 hit_count,
                 total_minimizers,
                 should_keep,
@@ -586,8 +586,8 @@ impl InterleavedParallelProcessor for FilterProcessor {
         if self.debug && hit_count > 0 {
             eprintln!(
                 "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
-                String::from_utf8_lossy(&record1.id()),
-                String::from_utf8_lossy(&record2.id()),
+                String::from_utf8_lossy(record1.id()),
+                String::from_utf8_lossy(record2.id()),
                 hit_count,
                 total_minimizers,
                 should_keep,
@@ -659,8 +659,8 @@ impl PairedParallelProcessor for FilterProcessor {
         if self.debug && hit_count > 0 {
             eprintln!(
                 "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
-                String::from_utf8_lossy(&record1.id()),
-                String::from_utf8_lossy(&record2.id()),
+                String::from_utf8_lossy(record1.id()),
+                String::from_utf8_lossy(record2.id()),
                 hit_count,
                 total_minimizers,
                 should_keep,
@@ -773,7 +773,7 @@ pub fn run<P: AsRef<Path>>(
     let paired_stdin = input_path == "-" && input2_path.is_some() && input2_path.unwrap() == "-";
     if paired_stdin {
         input_type.push_str("interleaved");
-    } else if let Some(_) = input2_path {
+    } else if input2_path.is_some() {
         input_type.push_str("paired");
     } else {
         input_type.push_str("single");

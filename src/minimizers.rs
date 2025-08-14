@@ -81,8 +81,8 @@ fn calculate_scaled_entropy(kmer: &[u8], kmer_length: u8) -> f32 {
     let mut total = 0u8;
 
     // Iterate only up to kmer_length to avoid bounds checks
-    for i in 0..kmer_length as usize {
-        match kmer[i] {
+    for &base in kmer.iter().take(kmer_length as usize) {
+        match base {
             b'A' | b'a' => {
                 counts[0] += 1;
                 total += 1;
@@ -254,7 +254,7 @@ mod tests {
         let alt_entropy_kmer = b"ATATATATAT";
         let entropy = calculate_scaled_entropy(alt_entropy_kmer, 10);
         assert!(
-            entropy >= 0.5 && entropy < 1.0,
+            (0.5..1.0).contains(&entropy),
             "Expected moderate entropy, got {}",
             entropy
         );
@@ -291,7 +291,7 @@ mod tests {
         let mostly_a = b"AAAAAAAAAAACAAAAAGAAAAATAAAAAAA";
         let entropy = calculate_scaled_entropy(mostly_a, 31);
         assert!(
-            entropy >= 0.25 && entropy <= 0.35,
+            (0.25..=0.35).contains(&entropy),
             "Mostly A entropy = {}",
             entropy
         );
@@ -300,7 +300,7 @@ mod tests {
         let gc_alternating = b"GCGCGCGCGCGCGCGCGCGCGCGCGCGCGCG";
         let entropy = calculate_scaled_entropy(gc_alternating, 31);
         assert!(
-            entropy >= 0.45 && entropy <= 0.55,
+            (0.45..=0.55).contains(&entropy),
             "GC alternating entropy = {}",
             entropy
         );
@@ -309,7 +309,7 @@ mod tests {
         let dinuc_repeat = b"ATATATATATATATATATATATATATATATG";
         let entropy = calculate_scaled_entropy(dinuc_repeat, 31);
         assert!(
-            entropy >= 0.55 && entropy <= 0.65,
+            (0.55..=0.65).contains(&entropy),
             "AT+G repeat entropy = {}",
             entropy
         );
@@ -318,7 +318,7 @@ mod tests {
         let trinuc_repeat = b"ACGACGACGACGACGACGACGACGACGACGA";
         let entropy = calculate_scaled_entropy(trinuc_repeat, 31);
         assert!(
-            entropy >= 0.75 && entropy <= 0.85,
+            (0.75..=0.85).contains(&entropy),
             "ACG repeat entropy = {}",
             entropy
         );
@@ -327,7 +327,7 @@ mod tests {
         let four_uneven = b"ACGTACGTACGTAAAACCCGGGTTTACGTAC";
         let entropy = calculate_scaled_entropy(four_uneven, 31);
         assert!(
-            entropy >= 0.8 && entropy <= 1.0,
+            (0.8..=1.0).contains(&entropy),
             "Four bases uneven entropy = {}",
             entropy
         );
