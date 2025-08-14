@@ -921,6 +921,13 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         0.0
     };
 
+    // Finish and clear spinner - disable it completely
+    if let Some(ref spinner) = spinner {
+        let pb = spinner.lock();
+        pb.set_draw_target(ProgressDrawTarget::hidden());
+        pb.finish_and_clear();
+    }
+
     if !quiet {
         eprintln!(
             "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
@@ -936,13 +943,6 @@ pub fn run(config: &FilterConfig) -> Result<()> {
             "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
             total_time, seqs_per_sec, mbp_per_sec
         );
-    }
-
-    // Finish and clear spinner - disable it completely
-    if let Some(ref spinner) = spinner {
-        let pb = spinner.lock();
-        pb.set_draw_target(ProgressDrawTarget::hidden());
-        pb.finish_and_clear();
     }
 
     // Build and write JSON summary if path provided
