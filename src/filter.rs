@@ -312,29 +312,25 @@ impl FilterProcessor {
         );
 
         // Filter positions to only include k-mers with ACGT bases
-        let valid_positions: Vec<u32> = positions
-            .into_iter()
-            .filter(|&pos| {
-                // Extract bits pos .. pos+k from the bitmask.
+        positions.retain(|&pos| {
+            // Extract bits pos .. pos+k from the bitmask.
 
-                // mask of k ones in low positions.
-                let mask = u64::MAX >> (64 - self.kmer_length);
-                let byte = pos as usize / 8;
-                let offset = pos as usize % 8;
-                // The unaligned u64 read is OK, because we ensure that the underlying `Vec` always
-                // has at least 8 bytes of padding at the end.
-                let x = (unsafe { invalid_mask.as_ptr().byte_add(byte).read_unaligned() }
-                    >> offset)
-                    & mask;
-                x == 0
-            })
-            .collect();
+            // mask of k ones in low positions.
+            let mask = u64::MAX >> (64 - self.kmer_length);
+            let byte = pos as usize / 8;
+            let offset = pos as usize % 8;
+            // The unaligned u64 read is OK, because we ensure that the underlying `Vec` always
+            // has at least 8 bytes of padding at the end.
+            let x =
+                (unsafe { invalid_mask.as_ptr().byte_add(byte).read_unaligned() } >> offset) & mask;
+            x == 0
+        });
 
         // Get hash values for valid positions
         let minimizer_values: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
             packed_seq.as_slice(),
             self.kmer_length as usize,
-            &valid_positions,
+            &positions,
         )
         .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
         .collect();
@@ -348,8 +344,8 @@ impl FilterProcessor {
             if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
                 hit_count += 1;
                 // Extract the k-mer sequence at this position
-                if self.debug && i < valid_positions.len() {
-                    let pos = valid_positions[i] as usize;
+                if self.debug && i < positions.len() {
+                    let pos = positions[i] as usize;
                     let kmer = &effective_seq[pos..pos + self.kmer_length as usize];
                     hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
                 }
