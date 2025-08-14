@@ -184,6 +184,7 @@ struct FilterProcessor {
     // Local buffers
     local_buffer: Vec<u8>,
     local_stats: ProcessingStats,
+    filter_buffers: FilterBuffers,
 
     // Global state
     global_writer: Arc<Mutex<BoxedWriter>>,
@@ -201,6 +202,14 @@ struct ProcessingStats {
     output_bp: u64,
     filtered_bp: u64,
     output_seq_counter: u64,
+}
+
+#[derive(Default, Clone)]
+struct FilterBuffers {
+    packed_seq: packed_seq::PackedSeqVec,
+    invalid_mask: Vec<u64>,
+    positions: Vec<u32>,
+    minimizer_values: Vec<u64>,
 }
 
 impl FilterProcessor {
@@ -251,6 +260,7 @@ impl FilterProcessor {
             debug,
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
+            filter_buffers: FilterBuffers::default(),
             global_writer: Arc::new(Mutex::new(writer)),
             global_writer2: writer2.map(|w| Arc::new(Mutex::new(w))),
             global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
@@ -259,7 +269,7 @@ impl FilterProcessor {
         }
     }
 
-    fn should_keep_sequence(&self, seq: &[u8]) -> (bool, usize, usize, Vec<String>) {
+    fn should_keep_sequence(&mut self, seq: &[u8]) -> (bool, usize, usize, Vec<String>) {
         if seq.len() < self.kmer_length as usize {
             return (self.deplete, 0, 0, Vec::new()); // If too short, keep if in deplete mode
         }
@@ -274,15 +284,29 @@ impl FilterProcessor {
         // Trim the last newline character from `effective_seq` if it has one.
         let effective_seq = effective_seq.strip_suffix(b"\n").unwrap_or(effective_seq);
 
+        let FilterBuffers {
+            packed_seq,
+            invalid_mask,
+            positions,
+            minimizer_values,
+        } = &mut self.filter_buffers;
+
+        packed_seq.clear();
+        minimizer_values.clear();
+        positions.clear();
+        invalid_mask.clear();
+
         // Pack the sequence into 2-bit representation.
         // Any non-ACGT characters are silently converted to 2-bit ACGT as well.
-        let packed_seq = packed_seq::PackedSeqVec::from_ascii(effective_seq);
+        packed_seq.push_ascii(effective_seq);
+        // let packed_seq = packed_seq::PackedSeqVec::from_ascii(effective_seq);
 
         // TODO: Extract this to some nicer helper function in packed_seq?
         // TODO: Use SIMD?
         // TODO: Should probably add some test for this.
         // +2: one to round up, and one buffer.
-        let mut invalid_mask = vec![0u64; packed_seq.len() / 64 + 2];
+        invalid_mask.resize(packed_seq.len() / 64 + 2, 0);
+        // let mut invalid_mask = vec![0u64; packed_seq.len() / 64 + 2];
         for i in (0..effective_seq.len()).step_by(64) {
             let mut mask = 0;
             for (j, b) in effective_seq[i..(i + 64).min(effective_seq.len())]
@@ -297,12 +321,12 @@ impl FilterProcessor {
             invalid_mask[i / 64] = mask;
         }
 
-        let mut positions = Vec::new();
+        // let mut positions = Vec::new();
         simd_minimizers::canonical_minimizer_positions(
             packed_seq.as_slice(),
             self.kmer_length as usize,
             self.window_size as usize,
-            &mut positions,
+            positions,
         );
 
         assert!(
@@ -327,13 +351,16 @@ impl FilterProcessor {
         });
 
         // Get hash values for valid positions
-        let minimizer_values: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
-            packed_seq.as_slice(),
-            self.kmer_length as usize,
-            &positions,
-        )
-        .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
-        .collect();
+        minimizer_values.extend(
+            simd_minimizers::iter_canonical_minimizer_values(
+                packed_seq.as_slice(),
+                self.kmer_length as usize,
+                &positions,
+            )
+            .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes())),
+        );
+
+        let num_minimizers = minimizer_values.len();
 
         // Count distinct minimizer hits and collect matching k-mers
         let mut seen_hits = FxHashSet::default();
@@ -353,9 +380,9 @@ impl FilterProcessor {
         }
 
         (
-            self.meets_filtering_criteria(hit_count, minimizer_values.len()),
+            self.meets_filtering_criteria(hit_count, num_minimizers),
             hit_count,
-            minimizer_values.len(),
+            num_minimizers,
             hit_kmers,
         )
     }
