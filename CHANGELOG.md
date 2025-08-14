@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2025-08-14
+
+### Changed
+
+- Fixes bug handling multiline FASTA input introduced in 0.8.0.
+- Fixes bug handling paired reads introduced in 0.8.0 which could lead to mispaired read output.
+
 ## [0.8.0] - 2025-08-11
 
 ### Added
