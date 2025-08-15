@@ -981,18 +981,16 @@ pub fn run(config: &FilterConfig) -> Result<()> {
 
     if !quiet {
         eprintln!(
-            "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%)",
+            "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%) in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
             output_seqs,
             total_seqs,
             output_seq_proportion * 100.0,
             output_bp,
             total_bp,
-            output_bp_proportion * 100.0
-        );
-
-        eprintln!(
-            "Completed in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
-            total_time, seqs_per_sec, mbp_per_sec
+            output_bp_proportion * 100.0,
+            total_time,
+            seqs_per_sec,
+            mbp_per_sec
         );
     }
 
