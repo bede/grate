@@ -1,4 +1,4 @@
-use crate::{FilterConfig, index::load_minimizer_hashes};
+use crate::{index::load_minimizer_hashes, FilterConfig};
 use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
@@ -54,8 +54,11 @@ fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::R
 }
 
 /// Format a single record into a buffer (FASTA/FASTQ format)
+///
+/// `seq` is the newline-free sequence corresponding to the record, obtained from `record.seq()`.
 fn format_record_to_buffer<R: Record>(
     record: &R,
+    seq: &[u8],
     counter: u64,
     rename: bool,
     buffer: &mut Vec<u8>,
@@ -72,7 +75,7 @@ fn format_record_to_buffer<R: Record>(
     buffer.write_all(b"\n")?;
 
     // Sequence line
-    buffer.extend_from_slice(&record.seq());
+    buffer.extend_from_slice(seq);
 
     if is_fasta {
         buffer.write_all(b"\n")?;
@@ -503,20 +506,22 @@ impl FilterProcessor {
         )
     }
 
-    fn write_record<Rf: Record>(&mut self, record: Rf) -> Result<()> {
+    fn write_record<Rf: Record>(&mut self, record: &Rf, seq: &[u8]) -> Result<()> {
         self.local_stats.output_seq_counter += 1;
         format_record_to_buffer(
-            &record,
+            record,
+            seq,
             self.local_stats.output_seq_counter,
             self.rename,
             &mut self.local_buffer,
         )
     }
 
-    fn write_record_to_buffer2<Rf: Record>(&mut self, record: Rf) -> Result<()> {
+    fn write_record_to_buffer2<Rf: Record>(&mut self, record: &Rf, seq: &[u8]) -> Result<()> {
         self.local_stats.output_seq_counter += 1;
         format_record_to_buffer(
-            &record,
+            record,
+            seq,
             self.local_stats.output_seq_counter,
             self.rename,
             &mut self.local_buffer2,
@@ -561,12 +566,11 @@ impl FilterProcessor {
 
 impl ParallelProcessor for FilterProcessor {
     fn process_record<Rf: Record>(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
-        let seq_len = record.seq().len();
+        let seq = record.seq();
         self.local_stats.total_seqs += 1;
-        self.local_stats.total_bp += seq_len as u64;
+        self.local_stats.total_bp += seq.len() as u64;
 
-        let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_sequence(&record.seq());
+        let (should_keep, hit_count, total_minimizers, hit_kmers) = self.should_keep_sequence(&seq);
 
         // Show debug info for sequences with hits
         if self.debug {
@@ -581,11 +585,11 @@ impl ParallelProcessor for FilterProcessor {
         }
 
         if should_keep {
-            self.local_stats.output_bp += seq_len as u64;
-            self.write_record(record)?;
+            self.local_stats.output_bp += seq.len() as u64;
+            self.write_record(&record, &seq)?;
         } else {
             self.local_stats.filtered_seqs += 1;
-            self.local_stats.filtered_bp += seq_len as u64;
+            self.local_stats.filtered_bp += seq.len() as u64;
         }
 
         Ok(())
@@ -629,13 +633,14 @@ impl InterleavedParallelProcessor for FilterProcessor {
         record1: Rf,
         record2: Rf,
     ) -> paraseq::parallel::Result<()> {
-        let seq1_len = record1.seq().len();
-        let seq2_len = record2.seq().len();
+        let seq1 = record1.seq();
+        let seq2 = record2.seq();
+
         self.local_stats.total_seqs += 2;
-        self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
+        self.local_stats.total_bp += (seq1.len() + seq2.len()) as u64;
 
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_pair(&record1.seq(), &record2.seq());
+            self.should_keep_pair(&seq1, &seq2);
 
         // Debug info for interleaved pairs
         if self.debug && hit_count > 0 {
@@ -651,14 +656,14 @@ impl InterleavedParallelProcessor for FilterProcessor {
         }
 
         if should_keep {
-            self.local_stats.output_bp += (seq1_len + seq2_len) as u64;
+            self.local_stats.output_bp += (seq1.len() + seq2.len()) as u64;
 
             // Write both records to output
-            self.write_record(record1)?;
-            self.write_record(record2)?;
+            self.write_record(&record1, &seq1)?;
+            self.write_record(&record2, &seq2)?;
         } else {
             self.local_stats.filtered_seqs += 2;
-            self.local_stats.filtered_bp += (seq1_len + seq2_len) as u64;
+            self.local_stats.filtered_bp += (seq1.len() + seq2.len()) as u64;
         }
 
         Ok(())
@@ -702,13 +707,13 @@ impl PairedParallelProcessor for FilterProcessor {
         record1: Rf,
         record2: Rf,
     ) -> paraseq::parallel::Result<()> {
-        let seq1_len = record1.seq().len();
-        let seq2_len = record2.seq().len();
+        let seq1 = record1.seq();
+        let seq2 = record2.seq();
         self.local_stats.total_seqs += 2;
-        self.local_stats.total_bp += (seq1_len + seq2_len) as u64;
+        self.local_stats.total_bp += (seq1.len() + seq2.len()) as u64;
 
         let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_pair(&record1.seq(), &record2.seq());
+            self.should_keep_pair(&seq1, &seq2);
 
         // Debug info for paired reads
         if self.debug && hit_count > 0 {
@@ -724,21 +729,21 @@ impl PairedParallelProcessor for FilterProcessor {
         }
 
         if should_keep {
-            self.local_stats.output_bp += (seq1_len + seq2_len) as u64;
+            self.local_stats.output_bp += (seq1.len() + seq2.len()) as u64;
 
             // Write to appropriate writers
             if self.global_writer2.is_some() {
                 // Separate outputs
-                self.write_record(record1)?;
-                self.write_record_to_buffer2(record2)?;
+                self.write_record(&record1, &seq1)?;
+                self.write_record_to_buffer2(&record2, &seq2)?;
             } else {
                 // Interleaved output
-                self.write_record(record1)?;
-                self.write_record(record2)?;
+                self.write_record(&record1, &seq1)?;
+                self.write_record(&record2, &seq2)?;
             }
         } else {
             self.local_stats.filtered_seqs += 2;
-            self.local_stats.filtered_bp += (seq1_len + seq2_len) as u64;
+            self.local_stats.filtered_bp += (seq1.len() + seq2.len()) as u64;
         }
 
         Ok(())
