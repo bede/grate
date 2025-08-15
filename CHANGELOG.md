@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2025-08-15
+
+### Changed
+
+- Performance optimisations deliver up to 80% faster filtering with unchanged accuracy.
+
+  - \>2Gbp/s with uncompressed long read input.
+
+  - \>500Mbp/s with gzip-compressed long read input.
+
 ## [0.8.1] - 2025-08-14
 
 ### Changed
