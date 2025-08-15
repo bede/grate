@@ -361,7 +361,7 @@ impl FilterProcessor {
             simd_minimizers::iter_canonical_minimizer_values(
                 packed_seq.as_slice(),
                 self.kmer_length as usize,
-                &positions,
+                positions,
             )
             .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes())),
         );

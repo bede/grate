@@ -36,6 +36,9 @@ zstd = "0.13"
 indicatif = "0.17"
 liblzma = "0.3.1"
 
+[lints.clippy]
+too_many_arguments = "allow"
+
 [dev-dependencies]
 assert_cmd = "2.0"
 predicates = "3.0"
