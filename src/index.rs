@@ -85,7 +85,7 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
         .context("Failed to deserialise minimizer count")?;
 
     // Pre-allocate FxHashSet with correct capacity
-    let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
+    let mut minimizers = FxHashSet::with_capacity_and_hasher(count + count / 5, Default::default());
 
     // Populate FxHashSet
     for _ in 0..count {

@@ -3,13 +3,13 @@ use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use liblzma::write::XzEncoder;
-use packed_seq;
-use paraseq::Record;
+use packed_seq::SeqVec;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{
     InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor,
     PairedParallelReader, ParallelProcessor, ParallelReader,
 };
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -194,6 +194,7 @@ struct FilterProcessor {
     local_buffer: Vec<u8>,
     local_buffer2: Vec<u8>, // Second buffer for paired output
     local_stats: ProcessingStats,
+    filter_buffers: FilterBuffers,
 
     // Global state
     global_writer: Arc<Mutex<BoxedWriter>>,
@@ -211,6 +212,14 @@ struct ProcessingStats {
     output_bp: u64,
     filtered_bp: u64,
     output_seq_counter: u64,
+}
+
+#[derive(Default, Clone)]
+struct FilterBuffers {
+    packed_seq: packed_seq::PackedSeqVec,
+    invalid_mask: Vec<u64>,
+    positions: Vec<u32>,
+    minimizer_values: Vec<u64>,
 }
 
 impl FilterProcessor {
@@ -257,6 +266,7 @@ impl FilterProcessor {
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_buffer2: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
+            filter_buffers: FilterBuffers::default(),
             global_writer: Arc::new(Mutex::new(writer)),
             global_writer2: writer2.map(|w| Arc::new(Mutex::new(w))),
             global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
@@ -265,7 +275,7 @@ impl FilterProcessor {
         }
     }
 
-    fn should_keep_sequence(&self, seq: &[u8]) -> (bool, usize, usize, Vec<String>) {
+    fn should_keep_sequence(&mut self, seq: &[u8]) -> (bool, usize, usize, Vec<String>) {
         if seq.len() < self.kmer_length as usize {
             return (self.deplete, 0, 0, Vec::new()); // If too short, keep if in deplete mode
         }
@@ -277,45 +287,86 @@ impl FilterProcessor {
             seq
         };
 
-        // Get minimizer positions first
-        let canonical_seq = effective_seq
-            .iter()
-            .map(|&b| match b {
-                b'A' | b'a' => b'A',
-                b'C' | b'c' => b'C',
-                b'G' | b'g' => b'G',
-                b'T' | b't' => b'T',
-                _ => b'C', // Default for ambiguous bases
-            })
-            .collect::<Vec<u8>>();
+        // Trim the last newline character from `effective_seq` if it has one.
+        let effective_seq = effective_seq.strip_suffix(b"\n").unwrap_or(effective_seq);
 
-        let mut positions = Vec::new();
+        let FilterBuffers {
+            packed_seq,
+            invalid_mask,
+            positions,
+            minimizer_values,
+        } = &mut self.filter_buffers;
+
+        packed_seq.clear();
+        minimizer_values.clear();
+        positions.clear();
+        invalid_mask.clear();
+
+        // Pack the sequence into 2-bit representation.
+        // Any non-ACGT characters are silently converted to 2-bit ACGT as well.
+        packed_seq.push_ascii(effective_seq);
+        // let packed_seq = packed_seq::PackedSeqVec::from_ascii(effective_seq);
+
+        // TODO: Extract this to some nicer helper function in packed_seq?
+        // TODO: Use SIMD?
+        // TODO: Should probably add some test for this.
+        // +2: one to round up, and one buffer.
+        invalid_mask.resize(packed_seq.len() / 64 + 2, 0);
+        // let mut invalid_mask = vec![0u64; packed_seq.len() / 64 + 2];
+        for i in (0..effective_seq.len()).step_by(64) {
+            let mut mask = 0;
+            for (j, b) in effective_seq[i..(i + 64).min(effective_seq.len())]
+                .iter()
+                .enumerate()
+            {
+                mask |= ((!matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
+                    as u64)
+                    << j;
+            }
+
+            invalid_mask[i / 64] = mask;
+        }
+
+        // let mut positions = Vec::new();
         simd_minimizers::canonical_minimizer_positions(
-            packed_seq::AsciiSeq(&canonical_seq),
+            packed_seq.as_slice(),
             self.kmer_length as usize,
             self.window_size as usize,
-            &mut positions,
+            positions,
+        );
+
+        assert!(
+            self.kmer_length <= 56,
+            "Indexing the bitmask of invalid characters requires k<=56, but it is {}",
+            self.kmer_length
         );
 
         // Filter positions to only include k-mers with ACGT bases
-        let valid_positions: Vec<u32> = positions
-            .into_iter()
-            .filter(|&pos| {
-                let pos_usize = pos as usize;
-                let kmer = &effective_seq[pos_usize..pos_usize + self.kmer_length as usize];
-                kmer.iter()
-                    .all(|&b| matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
-            })
-            .collect();
+        positions.retain(|&pos| {
+            // Extract bits pos .. pos+k from the bitmask.
+
+            // mask of k ones in low positions.
+            let mask = u64::MAX >> (64 - self.kmer_length);
+            let byte = pos as usize / 8;
+            let offset = pos as usize % 8;
+            // The unaligned u64 read is OK, because we ensure that the underlying `Vec` always
+            // has at least 8 bytes of padding at the end.
+            let x =
+                (unsafe { invalid_mask.as_ptr().byte_add(byte).read_unaligned() } >> offset) & mask;
+            x == 0
+        });
 
         // Get hash values for valid positions
-        let minimizer_values: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
-            packed_seq::AsciiSeq(&canonical_seq),
-            self.kmer_length as usize,
-            &valid_positions,
-        )
-        .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes()))
-        .collect();
+        minimizer_values.extend(
+            simd_minimizers::iter_canonical_minimizer_values(
+                packed_seq.as_slice(),
+                self.kmer_length as usize,
+                &positions,
+            )
+            .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes())),
+        );
+
+        let num_minimizers = minimizer_values.len();
 
         // Count distinct minimizer hits and collect matching k-mers
         let mut seen_hits = FxHashSet::default();
@@ -326,8 +377,8 @@ impl FilterProcessor {
             if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
                 hit_count += 1;
                 // Extract the k-mer sequence at this position
-                if self.debug && i < valid_positions.len() {
-                    let pos = valid_positions[i] as usize;
+                if self.debug && i < positions.len() {
+                    let pos = positions[i] as usize;
                     let kmer = &effective_seq[pos..pos + self.kmer_length as usize];
                     hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
                 }
@@ -335,9 +386,9 @@ impl FilterProcessor {
         }
 
         (
-            self.meets_filtering_criteria(hit_count, minimizer_values.len()),
+            self.meets_filtering_criteria(hit_count, num_minimizers),
             hit_count,
-            minimizer_values.len(),
+            num_minimizers,
             hit_kmers,
         )
     }
