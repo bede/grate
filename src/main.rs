@@ -15,12 +15,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Create and compose minimizer indexes
+    /// Build and compose minimizer indexes
     Index {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Keep or discard DNA fastx records with sufficient minimizer hits to the index
+    /// Keep or discard DNA fastx records with sufficient minimizer hits to an index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
