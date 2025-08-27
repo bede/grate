@@ -339,8 +339,8 @@ impl FilterProcessor {
         );
 
         assert!(
-            self.kmer_length <= 56,
-            "Indexing the bitmask of invalid characters requires k<=56, but it is {}",
+            self.kmer_length <= 57,
+            "Indexing the bitmask of invalid characters requires k<=57, but it is {}",
             self.kmer_length
         );
 
@@ -361,7 +361,7 @@ impl FilterProcessor {
 
         // Get hash values for valid positions
         minimizer_values.extend(
-            simd_minimizers::iter_canonical_minimizer_values(
+            simd_minimizers::iter_canonical_minimizer_values_u128(
                 packed_seq.as_slice(),
                 self.kmer_length as usize,
                 positions,

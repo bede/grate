@@ -170,7 +170,7 @@ pub fn fill_minimizer_hashes(
         .collect();
 
     hashes.extend(
-        simd_minimizers::iter_canonical_minimizer_values(
+        simd_minimizers::iter_canonical_minimizer_values_u128(
             AsciiSeq(&canonical_seq),
             kmer_length as usize,
             &valid_positions,
