@@ -1251,3 +1251,48 @@ fn test_newline_mapping_bug() {
 
     println!("Test passed - no false matches from newline mapping");
 }
+
+#[test]
+fn test_large_kmer_filter() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("test.fasta");
+    let bin_path = temp_dir.path().join("test.bin");
+    let fastq_path = temp_dir.path().join("test.fastq");
+
+    create_test_fasta(&fasta_path);
+    create_test_fastq(&fastq_path);
+
+    // Index with k=41 (u128 code path)
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("index")
+        .arg("build")
+        .arg("-k")
+        .arg("41")
+        .arg("-w")
+        .arg("15")
+        .arg(&fasta_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .assert()
+        .success();
+
+    // Test filtering with our k=41 index
+    let output = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("filter")
+        .arg(&bin_path)
+        .arg(&fastq_path)
+        .arg("-a")
+        .arg("1")
+        .arg("-r")
+        .arg("0.0")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Filter command failed");
+
+    // Should retain both seqs
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let num_sequences = stdout.lines().filter(|line| line.starts_with('@')).count();
+    assert_eq!(num_sequences, 2, "Should retain both sequences");
+}
