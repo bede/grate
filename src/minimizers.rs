@@ -169,14 +169,25 @@ pub fn fill_minimizer_hashes(
         })
         .collect();
 
-    hashes.extend(
-        simd_minimizers::iter_canonical_minimizer_values_u128(
-            AsciiSeq(&canonical_seq),
-            kmer_length as usize,
-            &valid_positions,
-        )
-        .map(|kmer| xxh3::xxh3_64(&kmer.to_le_bytes())),
-    );
+    if kmer_length > 32 {
+        hashes.extend(
+            simd_minimizers::iter_canonical_minimizer_values_u128(
+                AsciiSeq(&canonical_seq),
+                kmer_length as usize,
+                &valid_positions,
+            )
+            .map(|kmer| xxh3::xxh3_64(&kmer.to_le_bytes())),
+        );
+    } else {
+        hashes.extend(
+            simd_minimizers::iter_canonical_minimizer_values(
+                AsciiSeq(&canonical_seq),
+                kmer_length as usize,
+                &valid_positions,
+            )
+            .map(|kmer| xxh3::xxh3_64(&kmer.to_le_bytes())),
+        );
+    }
 }
 
 #[cfg(test)]

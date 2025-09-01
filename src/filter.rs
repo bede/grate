@@ -359,15 +359,26 @@ impl FilterProcessor {
             x == 0
         });
 
-        // Get hash values for valid positions
-        minimizer_values.extend(
-            simd_minimizers::iter_canonical_minimizer_values_u128(
-                packed_seq.as_slice(),
-                self.kmer_length as usize,
-                positions,
-            )
-            .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes())),
-        );
+        // Hash valid positions
+        if self.kmer_length > 32 {
+            minimizer_values.extend(
+                simd_minimizers::iter_canonical_minimizer_values_u128(
+                    packed_seq.as_slice(),
+                    self.kmer_length as usize,
+                    positions,
+                )
+                .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes())),
+            );
+        } else {
+            minimizer_values.extend(
+                simd_minimizers::iter_canonical_minimizer_values(
+                    packed_seq.as_slice(),
+                    self.kmer_length as usize,
+                    positions,
+                )
+                .map(|kmer| xxhash_rust::xxh3::xxh3_64(&kmer.to_le_bytes())),
+            );
+        }
 
         let num_minimizers = minimizer_values.len();
 
@@ -397,7 +408,7 @@ impl FilterProcessor {
     }
 
     fn get_minimizer_hashes_and_positions(&self, seq: &[u8]) -> (Vec<u64>, Vec<u32>) {
-        // Canonicalize sequence
+        // Canonicalise sequence
         let canonical_seq = seq
             .iter()
             .map(|&b| match b {
@@ -433,7 +444,7 @@ impl FilterProcessor {
             })
             .collect();
 
-        // Get hash values
+        // Get hashes
         let hashes: Vec<u64> = simd_minimizers::iter_canonical_minimizer_values(
             packed_seq::AsciiSeq(&canonical_seq),
             self.kmer_length as usize,
@@ -603,7 +614,7 @@ impl ParallelProcessor for FilterProcessor {
             global_writer.flush()?;
         }
 
-        // Clear buffer after releasing the lock for better performance
+        // Clear buffer after releasing the lock
         self.local_buffer.clear();
 
         // Update global stats
@@ -799,7 +810,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
     let version: String = env!("CARGO_PKG_VERSION").to_string();
     let tool_version = format!("deacon {}", version);
 
-    // Enable quiet mode when debug is on to avoid mixed output
+    // Enable quiet mode when debug enabled
     let quiet = config.quiet || config.debug;
 
     // Configure thread pool if nonzero
@@ -848,7 +859,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         );
     }
 
-    // Load minimizers hashes and parse header
+    // Load minimizer hashes and parse header
     let (minimizer_hashes, header) = load_minimizer_hashes(&config.minimizers_path)?;
     let minimizer_hashes = Arc::new(minimizer_hashes);
 
@@ -863,7 +874,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         );
     }
 
-    // Create the appropriate writer(s) based on the output path(s)
+    // Create appropriate writer(s) based on output path(s)
     let writer = get_writer(config.output_path, config.compression_level)?;
     let writer2 = if let (Some(output2), Some(_)) = (config.output2_path, config.input2_path) {
         Some(get_writer(output2, config.compression_level)?)
@@ -871,7 +882,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         None
     };
 
-    // Progress bar setup (only if not quiet)
+    // Progress bar setup if not quiet
     let spinner = if !quiet {
         let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
         pb.set_style(
@@ -885,7 +896,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         None
     };
 
-    // Start timer for filtering rate calculation
+    // Start timer for rate calculation
     let filtering_start_time = Instant::now();
 
     // Create processor
@@ -930,7 +941,6 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         reader.process_parallel(processor.clone(), num_threads)?;
     }
 
-    // Get final stats
     let final_stats = processor.global_stats.lock();
     let total_seqs = final_stats.total_seqs;
     let filtered_seqs = final_stats.filtered_seqs;
