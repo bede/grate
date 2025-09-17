@@ -721,17 +721,19 @@ dependencies = [
 
 [[package]]
 name = "paraseq"
-version = "0.3.9"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8edb6f120c1803e1199d2c5360443882ee9d7bacc7b41a0805c842c4db7590e2"
+checksum = "0b9266821364e175862f125d720ff295ed217de37dc6c8f47ca70ee7e122f161"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
+ "either",
+ "itertools",
  "memchr",
  "niffler",
  "parking_lot",
+ "smallvec",
  "thiserror 2.0.14",
- "tinyvec",
 ]
 
 [[package]]
@@ -1167,21 +1169,6 @@ dependencies = [
  "quote",
  "syn",
 ]
-
-[[package]]
-name = "tinyvec"
-version = "1.9.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09b3661f17e86524eccd4371ab0429194e0d7c008abb45f7a7495b1719463c71"
-dependencies = [
- "tinyvec_macros",
-]
-
-[[package]]
-name = "tinyvec_macros"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 
 [[package]]
 name = "toml_datetime"

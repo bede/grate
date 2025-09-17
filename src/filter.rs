@@ -1,15 +1,12 @@
-use crate::{FilterConfig, index::load_minimizer_hashes};
+use crate::{index::load_minimizer_hashes, FilterConfig};
 use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use liblzma::write::XzEncoder;
 use packed_seq::SeqVec;
-use paraseq::Record;
 use paraseq::fastx::Reader;
-use paraseq::parallel::{
-    InterleavedParallelProcessor, InterleavedParallelReader, PairedParallelProcessor,
-    PairedParallelReader, ParallelProcessor, ParallelReader,
-};
+use paraseq::parallel::{PairedParallelProcessor, ParallelProcessor, ParallelReader};
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -575,8 +572,8 @@ impl FilterProcessor {
     }
 }
 
-impl ParallelProcessor for FilterProcessor {
-    fn process_record<Rf: Record>(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
+impl<Rf: Record> ParallelProcessor<Rf> for FilterProcessor {
+    fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
         let seq = record.seq();
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq.len() as u64;
@@ -638,12 +635,8 @@ impl ParallelProcessor for FilterProcessor {
     }
 }
 
-impl InterleavedParallelProcessor for FilterProcessor {
-    fn process_interleaved_pair<Rf: Record>(
-        &mut self,
-        record1: Rf,
-        record2: Rf,
-    ) -> paraseq::parallel::Result<()> {
+impl<Rf: Record> PairedParallelProcessor<Rf> for FilterProcessor {
+    fn process_record_pair(&mut self, record1: Rf, record2: Rf) -> paraseq::parallel::Result<()> {
         let seq1 = record1.seq();
         let seq2 = record2.seq();
 
@@ -654,79 +647,6 @@ impl InterleavedParallelProcessor for FilterProcessor {
             self.should_keep_pair(&seq1, &seq2);
 
         // Debug info for interleaved pairs
-        if self.debug && hit_count > 0 {
-            eprintln!(
-                "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
-                String::from_utf8_lossy(record1.id()),
-                String::from_utf8_lossy(record2.id()),
-                hit_count,
-                total_minimizers,
-                should_keep,
-                hit_kmers.join(",")
-            );
-        }
-
-        if should_keep {
-            self.local_stats.output_bp += (seq1.len() + seq2.len()) as u64;
-
-            // Write both records to output
-            self.write_record(&record1, &seq1)?;
-            self.write_record(&record2, &seq2)?;
-        } else {
-            self.local_stats.filtered_seqs += 2;
-            self.local_stats.filtered_bp += (seq1.len() + seq2.len()) as u64;
-        }
-
-        Ok(())
-    }
-
-    fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
-        // Write buffer to output
-        if !self.local_buffer.is_empty() {
-            let mut global_writer = self.global_writer.lock();
-            global_writer.write_all(&self.local_buffer)?;
-            global_writer.flush()?;
-        }
-
-        // Clear buffer after releasing the lock for better performance
-        self.local_buffer.clear();
-
-        // Update global stats
-        {
-            let mut stats = self.global_stats.lock();
-            stats.total_seqs += self.local_stats.total_seqs;
-            stats.filtered_seqs += self.local_stats.filtered_seqs;
-            stats.total_bp += self.local_stats.total_bp;
-            stats.output_bp += self.local_stats.output_bp;
-            stats.filtered_bp += self.local_stats.filtered_bp;
-            stats.output_seq_counter += self.local_stats.output_seq_counter;
-        }
-
-        // Update spinner
-        self.update_spinner();
-
-        // Reset local stats
-        self.local_stats = ProcessingStats::default();
-
-        Ok(())
-    }
-}
-
-impl PairedParallelProcessor for FilterProcessor {
-    fn process_record_pair<Rf: Record>(
-        &mut self,
-        record1: Rf,
-        record2: Rf,
-    ) -> paraseq::parallel::Result<()> {
-        let seq1 = record1.seq();
-        let seq2 = record2.seq();
-        self.local_stats.total_seqs += 2;
-        self.local_stats.total_bp += (seq1.len() + seq2.len()) as u64;
-
-        let (should_keep, hit_count, total_minimizers, hit_kmers) =
-            self.should_keep_pair(&seq1, &seq2);
-
-        // Debug info for paired reads
         if self.debug && hit_count > 0 {
             eprintln!(
                 "DEBUG: {}/{} hits={}/{} keep={} kmers=[{}]",
@@ -781,6 +701,7 @@ impl PairedParallelProcessor for FilterProcessor {
             }
         }
 
+        // Clear buffer after releasing the lock for better performance
         self.local_buffer.clear();
         self.local_buffer2.clear();
 
@@ -908,7 +829,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         rename: config.rename,
         debug: config.debug,
     };
-    let processor = FilterProcessor::new(
+    let mut processor = FilterProcessor::new(
         minimizer_hashes,
         kmer_length,
         window_size,
@@ -929,16 +850,16 @@ pub fn run(config: &FilterConfig) -> Result<()> {
     if paired_stdin {
         // Interleaved paired from stdin - use native interleaved processor
         let reader = create_paraseq_reader(Some("-"))?;
-        reader.process_parallel_interleaved(processor.clone(), num_threads)?;
+        reader.process_parallel_interleaved(&mut processor, num_threads)?;
     } else if let Some(input2_path) = config.input2_path {
         // Paired files
         let r1_reader = create_paraseq_reader(Some(config.input_path))?;
         let r2_reader = create_paraseq_reader(Some(input2_path))?;
-        r1_reader.process_parallel_paired(r2_reader, processor.clone(), num_threads)?;
+        r1_reader.process_parallel_paired(r2_reader, &mut processor, num_threads)?;
     } else {
         // Single file or stdin
         let reader = create_paraseq_reader(Some(config.input_path))?;
-        reader.process_parallel(processor.clone(), num_threads)?;
+        reader.process_parallel(&mut processor, num_threads)?;
     }
 
     let final_stats = processor.global_stats.lock();
