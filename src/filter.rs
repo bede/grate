@@ -1,12 +1,12 @@
-use crate::{index::load_minimizer_hashes, FilterConfig};
+use crate::{FilterConfig, index::load_minimizer_hashes};
 use anyhow::{Context, Result};
 use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use liblzma::write::XzEncoder;
 use packed_seq::SeqVec;
+use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{PairedParallelProcessor, ParallelProcessor, ParallelReader};
-use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
