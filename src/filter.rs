@@ -251,7 +251,7 @@ struct ProcessingStats {
 #[derive(Default, Clone)]
 struct FilterBuffers {
     packed_seq: packed_seq::PackedSeqVec,
-    invalid_mask: Vec<u64>,
+    ambiguous: packed_seq::BitSeqVec,
     positions: Vec<u32>,
     minimizer_values: Vec<u64>,
 }
@@ -327,7 +327,7 @@ impl FilterProcessor {
 
         let FilterBuffers {
             packed_seq,
-            invalid_mask,
+            ambiguous,
             positions,
             minimizer_values,
         } = &mut self.filter_buffers;
@@ -335,86 +335,30 @@ impl FilterProcessor {
         packed_seq.clear();
         minimizer_values.clear();
         positions.clear();
-        invalid_mask.clear();
+        ambiguous.clear();
 
         // Pack the sequence into 2-bit representation.
-        // Any non-ACGT characters are silently converted to 2-bit ACGT as well.
         packed_seq.push_ascii(effective_seq);
-        // let packed_seq = packed_seq::PackedSeqVec::from_ascii(effective_seq);
-
-        // TODO: Extract this to some nicer helper function in packed_seq?
-        // TODO: Use SIMD?
-        // TODO: Should probably add some test for this.
-        // +2: one to round up, and one buffer.
-        invalid_mask.resize(packed_seq.len() / 64 + 2, 0);
-        // let mut invalid_mask = vec![0u64; packed_seq.len() / 64 + 2];
-        for i in (0..effective_seq.len()).step_by(64) {
-            let mut mask = 0;
-            for (j, b) in effective_seq[i..(i + 64).min(effective_seq.len())]
-                .iter()
-                .enumerate()
-            {
-                mask |= ((!matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'))
-                    as u64)
-                    << j;
-            }
-
-            invalid_mask[i / 64] = mask;
-        }
+        ambiguous.push_ascii(effective_seq);
 
         // let mut positions = Vec::new();
-        let out = simd_minimizers::canonical_minimizers(
-            self.kmer_length as usize,
-            self.window_size as usize,
-        )
-        .hasher(&self.hasher)
-        .run(packed_seq.as_slice(), positions);
-
-        assert!(
-            self.kmer_length <= 57,
-            "Indexing the bitmask of invalid characters requires k<=57, but it is {}",
-            self.kmer_length
-        );
-
-        // Filter positions to only include k-mers with ACGT bases
+        let k = self.kmer_length as usize;
+        let w = self.window_size as usize;
+        let m = simd_minimizers::canonical_minimizers(k, w)
+            .hasher(&self.hasher)
+            .run(packed_seq.as_slice(), positions);
 
         // Hash valid positions
         if self.kmer_length <= 32 {
             minimizer_values.extend(
-                out.pos_and_values_u64()
-                    .filter(|&(pos, _val)| {
-                        // Extract bits pos .. pos+k from the bitmask.
-
-                        // mask of k ones in low positions.
-                        let mask = u64::MAX >> (64 - self.kmer_length);
-                        let byte = pos as usize / 8;
-                        let offset = pos as usize % 8;
-                        // The unaligned u64 read is OK, because we ensure that the underlying `Vec` always
-                        // has at least 8 bytes of padding at the end.
-                        let x = (unsafe { invalid_mask.as_ptr().byte_add(byte).read_unaligned() }
-                            >> offset)
-                            & mask;
-                        x == 0
-                    })
+                m.pos_and_values_u64()
+                    .filter(|&(pos, _val)| ambiguous.read_kmer(k, pos as usize) == 0)
                     .map(|(_pos, val)| xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())),
             );
         } else {
             minimizer_values.extend(
-                out.pos_and_values_u128()
-                    .filter(|&(pos, _val)| {
-                        // Extract bits pos .. pos+k from the bitmask.
-
-                        // mask of k ones in low positions.
-                        let mask = u64::MAX >> (64 - self.kmer_length);
-                        let byte = pos as usize / 8;
-                        let offset = pos as usize % 8;
-                        // The unaligned u64 read is OK, because we ensure that the underlying `Vec` always
-                        // has at least 8 bytes of padding at the end.
-                        let x = (unsafe { invalid_mask.as_ptr().byte_add(byte).read_unaligned() }
-                            >> offset)
-                            & mask;
-                        x == 0
-                    })
+                m.pos_and_values_u128()
+                    .filter(|&(pos, _val)| ambiguous.read_kmer(k, pos as usize) == 0)
                     .map(|(_pos, val)| xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())),
             );
         }
