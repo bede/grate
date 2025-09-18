@@ -346,19 +346,17 @@ impl FilterProcessor {
         let w = self.window_size as usize;
         let m = simd_minimizers::canonical_minimizers(k, w)
             .hasher(&self.hasher)
-            .run(packed_seq.as_slice(), positions);
+            .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), positions);
 
         // Hash valid positions
         if self.kmer_length <= 32 {
             minimizer_values.extend(
                 m.pos_and_values_u64()
-                    .filter(|&(pos, _val)| ambiguous.read_kmer(k, pos as usize) == 0)
                     .map(|(_pos, val)| xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())),
             );
         } else {
             minimizer_values.extend(
                 m.pos_and_values_u128()
-                    .filter(|&(pos, _val)| ambiguous.read_kmer(k, pos as usize) == 0)
                     .map(|(_pos, val)| xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())),
             );
         }
