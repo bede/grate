@@ -175,6 +175,8 @@ pub struct FilterSummary {
     time: f64,
     seqs_per_second: u64,
     bp_per_second: u64,
+    seqs_per_second_total: u64,
+    bp_per_second_total: u64,
 }
 
 #[derive(Clone)]
@@ -878,9 +880,16 @@ pub fn run(config: &FilterConfig) -> Result<()> {
     }
 
     let total_time = start_time.elapsed();
-    let seqs_per_sec = total_seqs as f64 / total_time.as_secs_f64();
-    let bp_per_sec = total_bp as f64 / total_time.as_secs_f64();
+    let filtering_time = filtering_start_time.elapsed();
+
+    // Based on filtering time excluding index loading
+    let seqs_per_sec = total_seqs as f64 / filtering_time.as_secs_f64();
+    let bp_per_sec = total_bp as f64 / filtering_time.as_secs_f64();
     let mbp_per_sec = bp_per_sec / 1_000_000.0;
+
+    // Based on total time, including index loading
+    let seqs_per_sec_total = total_seqs as f64 / total_time.as_secs_f64();
+    let bp_per_sec_total = total_bp as f64 / total_time.as_secs_f64();
 
     // Calculate proportions
     let filtered_proportion = if total_seqs > 0 {
@@ -917,7 +926,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
 
     if !quiet {
         eprintln!(
-            "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%) in {:.2?}. Speed: {:.0} seqs/s ({:.1} Mbp/s)",
+            "Retained {}/{} sequences ({:.3}%), {}/{} bp ({:.3}%) in {:.2?}. {:.0} seqs/s ({:.1} Mbp/s)",
             output_seqs,
             total_seqs,
             output_seq_proportion * 100.0,
@@ -961,6 +970,8 @@ pub fn run(config: &FilterConfig) -> Result<()> {
             time: total_time.as_secs_f64(),
             seqs_per_second: seqs_per_sec as u64,
             bp_per_second: bp_per_sec as u64,
+            seqs_per_second_total: seqs_per_sec_total as u64,
+            bp_per_second_total: bp_per_sec_total as u64,
         };
 
         let file = File::create(summary_file)
@@ -1010,6 +1021,8 @@ mod tests {
             time: 1.5,
             seqs_per_second: 66,
             bp_per_second: 6666,
+            seqs_per_second_total: 60,
+            bp_per_second_total: 6000,
         };
 
         let json = serde_json::to_string(&summary).unwrap();
