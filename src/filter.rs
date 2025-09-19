@@ -33,6 +33,35 @@ struct FilterProcessorConfig {
     debug: bool,
 }
 
+/// Check input file path(s) exist
+fn check_input_paths(config: &FilterConfig) -> Result<()> {
+    if !config.minimizers_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Index file does not exist: {}",
+            config.minimizers_path.display()
+        ));
+    }
+
+    // Skip stdin case
+    if config.input_path != "-" && !std::path::Path::new(config.input_path).exists() {
+        return Err(anyhow::anyhow!(
+            "Input file does not exist: {}",
+            config.input_path
+        ));
+    }
+
+    if let Some(input2_path) = config.input2_path {
+        if input2_path != "-" && !std::path::Path::new(input2_path).exists() {
+            return Err(anyhow::anyhow!(
+                "Second input file does not exist: {}",
+                input2_path
+            ));
+        }
+    }
+
+    Ok(())
+}
+
 /// Create a paraseq reader from optional path (stdin if None or "-")
 fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::Read + Send>>> {
     match path {
@@ -781,6 +810,9 @@ pub fn run(config: &FilterConfig) -> Result<()> {
             options.join(", ")
         );
     }
+
+    // Check input files exist before making user wait for index loading
+    check_input_paths(config)?;
 
     // Load minimizer hashes and parse header
     let (minimizer_hashes, header) = load_minimizer_hashes(&config.minimizers_path)?;
