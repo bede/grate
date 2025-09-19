@@ -920,8 +920,8 @@ pub fn run(config: &FilterConfig) -> Result<()> {
     // Finish and clear spinner - disable it completely
     if let Some(ref spinner) = spinner {
         let pb = spinner.lock();
+        pb.finish_with_message("");
         pb.set_draw_target(ProgressDrawTarget::hidden());
-        pb.finish_and_clear();
     }
 
     if !quiet {
