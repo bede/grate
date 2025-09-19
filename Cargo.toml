@@ -45,6 +45,11 @@ predicates = "3.0"
 tempfile = "3.20"
 rstest = "0.25"
 
+[features]
+# `deacon server` feature.
+server = []
+default = []
+
 [[test]]
 name = "cli_tests"
 path = "tests/cli_tests.rs"

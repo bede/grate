@@ -5,11 +5,11 @@ use deacon::{
     union_index,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    io::{Read, Write},
-    os::unix::net::{UnixListener, UnixStream},
-    path::PathBuf,
-};
+use std::path::PathBuf;
+#[cfg(feature = "server")]
+use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(feature = "server")]
+use std::io::{Read, Write};
 
 #[derive(Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None)]
@@ -22,7 +22,9 @@ struct Cli {
 
 #[derive(Subcommand, Serialize, Deserialize)]
 enum Commands {
+    #[cfg(feature = "server")]
     Server,
+    #[cfg(feature = "server")]
     Exit,
     /// Build and compose minimizer indexes
     Index {
@@ -169,6 +171,7 @@ enum IndexCommands {
     },
 }
 
+#[cfg(feature = "server")]
 #[derive(Serialize, Deserialize)]
 enum Message {
     /// client -> server
@@ -188,6 +191,7 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
+    #[cfg(feature = "server")]
     if matches!(cli.command, Commands::Server) {
         assert!(
             !cli.use_server,
@@ -221,28 +225,35 @@ fn main() -> Result<()> {
                 Message::Done => unreachable!("Server should not receive `Done` messages."),
             }
         }
-    } else {
-        if cli.use_server {
-            let mut stream = UnixStream::connect("deacon_server_socket")?;
-            serde_json::to_writer(&stream, &Message::Command(cli.command))?;
-            stream.write(b"\0")?;
-            stream.flush()?;
-            let message: Message = serde_json::from_reader(stream).unwrap();
-            match message {
-                Message::Done => {}
-                _ => unreachable!("The client only expects to receive `Done` messages."),
-            }
-        } else {
-            process_command(&cli.command)?;
-        }
+
+        return Ok(());
     }
+
+    #[cfg(feature = "server")]
+    if cli.use_server {
+        let mut stream = UnixStream::connect("deacon_server_socket")?;
+        serde_json::to_writer(&stream, &Message::Command(cli.command))?;
+        stream.write(b"\0")?;
+        stream.flush()?;
+        let message: Message = serde_json::from_reader(stream).unwrap();
+        match message {
+            Message::Done => {}
+            _ => unreachable!("The client only expects to receive `Done` messages."),
+        }
+
+        return Ok(());
+    }
+
+    process_command(&cli.command)?;
 
     Ok(())
 }
 
 fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
     match &command {
+    #[cfg(feature = "server")]
         Commands::Server => unreachable!(),
+    #[cfg(feature = "server")]
         Commands::Exit => panic!("Use `deacon --use-server Exit` to stop the server."),
         Commands::Index { command } => match command {
             IndexCommands::Build {
