@@ -24,7 +24,7 @@ pub struct IndexHeader {
 impl IndexHeader {
     pub fn new(kmer_length: u8, window_size: u8) -> Self {
         IndexHeader {
-            format_version: 2,
+            format_version: 3,
             kmer_length,
             window_size,
         }
@@ -32,7 +32,7 @@ impl IndexHeader {
 
     /// Validate header
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.format_version != 2 {
+        if self.format_version != 2 && self.format_version != 3 {
             return Err(anyhow::anyhow!(
                 "Unsupported index format version: {}",
                 self.format_version
@@ -90,29 +90,57 @@ pub fn load_minimizer_hashes_cached<P: AsRef<Path>>(
 }
 
 /// Load the hashes without spiking memory usage with an extra vec
+/// This older version uses variable-width integer encoding.
+/// Use `deacon index convert` for the new format.
+fn load_minimizer_hashes_varint(mut reader: impl std::io::Read) -> Result<FxHashSet<u64>> {
+    let config = bincode::config::standard();
+
+    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
+    let count: usize = decode_from_std_read(&mut reader, config)
+        .context("Failed to deserialise minimizer count")?;
+
+    // Populate FxHashSet
+    let minimizers: FxHashSet<u64> = (0..count)
+        .map(|_| decode_from_std_read(&mut reader, config).unwrap())
+        .collect();
+
+    Ok(minimizers)
+}
+
+fn load_minimizer_hashes_fixedint(mut reader: impl std::io::Read) -> Result<FxHashSet<u64>> {
+    let config = bincode::config::standard().with_fixed_int_encoding();
+
+    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
+    let count: usize = decode_from_std_read(&mut reader, config)
+        .context("Failed to deserialise minimizer count")?;
+
+    // Populate FxHashSet
+    let minimizers: FxHashSet<u64> = (0..count)
+        .map(|_| decode_from_std_read(&mut reader, config).unwrap())
+        .collect();
+
+    Ok(minimizers)
+}
+
+/// Load the hashes without spiking memory usage with an extra vec
+/// This new version uses fixed-width integer encoding.
+/// Use `deacon index convert` to convert from the old format.
 pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>, IndexHeader)> {
     let file =
         File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let config = bincode::config::standard().with_fixed_int_encoding();
 
     // Deserialise header
-    let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialise index header")?;
+    let header: IndexHeader =
+        decode_from_std_read(&mut reader, config).context("Failed to deserialise index header")?;
     header.validate()?;
 
-    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
-    let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialise minimizer count")?;
-
-    // Pre-allocate FxHashSet with correct capacity
-    let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
-
-    // Populate FxHashSet
-    for _ in 0..count {
-        let hash: u64 = decode_from_std_read(&mut reader, bincode::config::standard())
-            .context("Failed to deserialise minimizer hash")?;
-        minimizers.insert(hash);
-    }
+    let minimizers = match header.format_version {
+        2 => load_minimizer_hashes_varint(reader)?,
+        3 => load_minimizer_hashes_fixedint(reader)?,
+        _ => unreachable!(),
+    };
 
     Ok((minimizers, header))
 }
@@ -138,17 +166,19 @@ pub fn write_minimizers(
 
     // Serialise header and minimizers
     let mut writer = BufWriter::new(writer);
-    encode_into_std_write(header, &mut writer, bincode::config::standard())
+    // Use fixed-width little-endian encoding for all values.
+    let config = bincode::config::standard().with_fixed_int_encoding();
+    encode_into_std_write(header, &mut writer, config)
         .context("Failed to serialise index header")?;
 
     // Serialise the count of minimizers first
     let count = minimizers.len();
-    encode_into_std_write(count, &mut writer, bincode::config::standard())
+    encode_into_std_write(count, &mut writer, config)
         .context("Failed to serialise minimizer count")?;
 
     // Serialise each minimizer directly
     for &hash in minimizers {
-        encode_into_std_write(hash, &mut writer, bincode::config::standard())
+        encode_into_std_write(hash, &mut writer, config)
             .context("Failed to serialise minimizer hash")?;
     }
     Ok(())
@@ -558,6 +588,24 @@ pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
     Ok(())
 }
 
+pub fn convert_index<P: AsRef<Path>>(from: P, to: P) -> Result<()> {
+    let start_time = Instant::now();
+    let (minimizers, mut header) = load_minimizer_hashes(&from)?;
+    let load_time = start_time.elapsed();
+    eprintln!(
+        "Loaded index (k={}, w={}) in {:.2?}",
+        header.kmer_length, header.window_size, load_time
+    );
+    assert_eq!(header.format_version, 2);
+    header.format_version = 3;
+    let start_time = Instant::now();
+    write_minimizers(&minimizers, &header, Some(&to.as_ref().to_owned()))?;
+    let write_time = start_time.elapsed();
+    eprintln!("Wrote index in {:.2?}", write_time);
+
+    Ok(())
+}
+
 /// Combine minimizer indexes (set union)
 pub fn union<P: AsRef<Path>>(
     inputs: &[P],
@@ -669,7 +717,7 @@ mod tests {
     fn test_header_creation() {
         let header = IndexHeader::new(31, 21);
 
-        assert_eq!(header.format_version, 2);
+        assert_eq!(header.format_version, 3);
         assert_eq!(header.kmer_length(), 31);
         assert_eq!(header.window_size(), 21);
     }
@@ -678,7 +726,7 @@ mod tests {
     fn test_header_validation() {
         // Valid header
         let valid_header = IndexHeader {
-            format_version: 2,
+            format_version: 3,
             kmer_length: 31,
             window_size: 21,
         };
