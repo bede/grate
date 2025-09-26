@@ -1296,3 +1296,29 @@ fn test_large_kmer_filter() {
     let num_sequences = stdout.lines().filter(|line| line.starts_with('@')).count();
     assert_eq!(num_sequences, 2, "Should retain both sequences");
 }
+
+#[test]
+fn test_filter_empty_file() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let empty_fastq_path = temp_dir.path().join("empty.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path = temp_dir.path().join("filtered.fastq");
+
+    create_test_fasta(&fasta_path);
+    fs::write(&empty_fastq_path, "").unwrap(); // Create empty file
+    build_index(&fasta_path, &bin_path);
+
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg(&bin_path)
+        .arg(&empty_fastq_path)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success();
+
+    assert!(output_path.exists(), "Output file should be created");
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(output_content.is_empty(), "Output should be empty for empty input");
+}
