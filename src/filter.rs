@@ -14,6 +14,7 @@ use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufWriter, Write};
+use std::iter::zip;
 use std::sync::Arc;
 use std::time::Instant;
 use xxhash_rust;
@@ -228,7 +229,7 @@ struct FilterProcessor {
     local_buffer: Vec<u8>,
     local_buffer2: Vec<u8>, // Second buffer for paired output
     local_stats: ProcessingStats,
-    filter_buffers: FilterBuffers,
+    buffers: Buffers,
 
     // Global state
     global_writer: Arc<Mutex<BoxedWriter>>,
@@ -249,11 +250,11 @@ struct ProcessingStats {
 }
 
 #[derive(Default, Clone)]
-struct FilterBuffers {
-    packed_seq: packed_seq::PackedSeqVec,
-    ambiguous: packed_seq::BitSeqVec,
-    positions: Vec<u32>,
-    minimizer_values: Vec<u64>,
+pub(crate) struct Buffers {
+    pub packed_seq: packed_seq::PackedSeqVec,
+    pub ambiguous: packed_seq::BitSeqVec,
+    pub positions: Vec<u32>,
+    pub hashes: Vec<u64>,
 }
 
 impl FilterProcessor {
@@ -301,7 +302,7 @@ impl FilterProcessor {
             local_buffer: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_buffer2: Vec::with_capacity(DEFAULT_BUFFER_SIZE),
             local_stats: ProcessingStats::default(),
-            filter_buffers: FilterBuffers::default(),
+            buffers: Buffers::default(),
             global_writer: Arc::new(Mutex::new(writer)),
             global_writer2: writer2.map(|w| Arc::new(Mutex::new(w))),
             global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
@@ -315,31 +316,60 @@ impl FilterProcessor {
             return (self.deplete, 0, 0, Vec::new()); // If too short, keep if in deplete mode
         }
 
-        // Apply prefix length limit if specified
-        let effective_seq = if self.prefix_length > 0 && seq.len() > self.prefix_length {
+        let seq = self.get_minimizer_positions_and_hashes(seq);
+        let positions = &self.buffers.positions;
+        let hashes = &self.buffers.hashes;
+
+        let num_minimizers = positions.len();
+
+        // Count distinct minimizer hits and collect matching k-mers
+        let mut seen_hits = FxHashSet::default();
+        let mut hit_kmers = Vec::new();
+
+        for (&pos, &hash) in zip(positions, hashes) {
+            if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
+                // Extract the k-mer sequence at this position
+                if self.debug {
+                    let pos = pos as usize;
+                    let kmer = &seq[pos..pos + self.kmer_length as usize];
+                    hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
+                }
+            }
+        }
+
+        (
+            self.meets_filtering_criteria(seen_hits.len(), num_minimizers),
+            seen_hits.len(),
+            num_minimizers,
+            hit_kmers,
+        )
+    }
+
+    fn get_minimizer_positions_and_hashes<'s>(&mut self, seq: &'s [u8]) -> &'s [u8] {
+        // Apply prefix length limit if specified.
+        let seq = if self.prefix_length > 0 && seq.len() > self.prefix_length {
             &seq[..self.prefix_length]
         } else {
             seq
         };
+        // Drop trailing newline if present.
+        let seq = seq.strip_suffix(b"\n").unwrap_or(seq);
 
-        // Trim the last newline character from `effective_seq` if it has one.
-        let effective_seq = effective_seq.strip_suffix(b"\n").unwrap_or(effective_seq);
-
-        let FilterBuffers {
+        let Buffers {
             packed_seq,
             ambiguous,
             positions,
-            minimizer_values,
-        } = &mut self.filter_buffers;
+            hashes,
+        } = &mut self.buffers;
 
         packed_seq.clear();
-        minimizer_values.clear();
+        hashes.clear();
         positions.clear();
         ambiguous.clear();
 
         // Pack the sequence into 2-bit representation.
-        packed_seq.push_ascii(effective_seq);
-        ambiguous.push_ascii(effective_seq);
+        packed_seq.push_ascii(seq);
+        ambiguous.push_ascii(seq);
 
         // let mut positions = Vec::new();
         let k = self.kmer_length as usize;
@@ -350,119 +380,38 @@ impl FilterProcessor {
 
         // Hash valid positions
         if self.kmer_length <= 32 {
-            minimizer_values.extend(
+            hashes.extend(
                 m.pos_and_values_u64()
                     .map(|(_pos, val)| xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())),
             );
         } else {
-            minimizer_values.extend(
+            hashes.extend(
                 m.pos_and_values_u128()
                     .map(|(_pos, val)| xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())),
             );
         }
 
-        let num_minimizers = minimizer_values.len();
+        seq
+    }
 
+    fn should_keep_pair(&mut self, seq1: &[u8], seq2: &[u8]) -> (bool, usize, usize, Vec<String>) {
         // Count distinct minimizer hits and collect matching k-mers
         let mut seen_hits = FxHashSet::default();
-        let mut hit_count = 0;
         let mut hit_kmers = Vec::new();
+        let mut num_minimizers = 0;
 
-        for (i, &hash) in minimizer_values.iter().enumerate() {
-            if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
-                hit_count += 1;
-                // Extract the k-mer sequence at this position
-                if self.debug && i < positions.len() {
-                    let pos = positions[i] as usize;
-                    let kmer = &effective_seq[pos..pos + self.kmer_length as usize];
-                    hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
-                }
-            }
-        }
+        for seq in [seq1, seq2] {
+            let seq = self.get_minimizer_positions_and_hashes(seq);
+            let positions = &self.buffers.positions;
+            let hashes = &self.buffers.hashes;
 
-        (
-            self.meets_filtering_criteria(hit_count, num_minimizers),
-            hit_count,
-            num_minimizers,
-            hit_kmers,
-        )
-    }
+            num_minimizers += positions.len();
 
-    fn get_minimizer_hashes_and_positions(&self, seq: &[u8]) -> (Vec<u64>, Vec<u32>) {
-        let mut positions = Vec::new();
-        let packed_seq = packed_seq::PackedSeqVec::from_ascii(seq);
-        let out = simd_minimizers::canonical_minimizers(
-            self.kmer_length as usize,
-            self.window_size as usize,
-        )
-        .hasher(&self.hasher)
-        .run(packed_seq.as_slice(), &mut positions);
-
-        // Filter to valid positions
-        let (valid_positions, hashes) = out
-            .pos_and_values_u64()
-            .filter(|&(pos, _)| {
-                let pos_usize = pos as usize;
-                if pos_usize + self.kmer_length as usize <= seq.len() {
-                    let kmer = &seq[pos_usize..pos_usize + self.kmer_length as usize];
-                    kmer.iter().all(|&b| {
-                        matches!(b, b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't')
-                    })
-                } else {
-                    false
-                }
-            })
-            .map(|(pos, val): (u32, u64)| (pos, xxhash_rust::xxh3::xxh3_64(&val.to_le_bytes())))
-            .unzip();
-
-        (hashes, valid_positions)
-    }
-
-    fn should_keep_pair(&self, seq1: &[u8], seq2: &[u8]) -> (bool, usize, usize, Vec<String>) {
-        let mut all_hashes = Vec::new();
-        let mut all_positions = Vec::new();
-        let mut all_sequences = Vec::new();
-        let mut seen_hits_pair = FxHashSet::default();
-        let mut pair_hit_count = 0;
-        let mut hit_kmers = Vec::new();
-
-        // Process read 1
-        if seq1.len() >= self.kmer_length as usize {
-            let effective_seq = if self.prefix_length > 0 && seq1.len() > self.prefix_length {
-                &seq1[..self.prefix_length]
-            } else {
-                seq1
-            };
-
-            let (hashes, positions) = self.get_minimizer_hashes_and_positions(effective_seq);
-            all_hashes.extend(hashes);
-            all_positions.extend(positions);
-            all_sequences.extend(vec![effective_seq; all_hashes.len()]);
-        }
-
-        // Process read 2
-        if seq2.len() >= self.kmer_length as usize {
-            let effective_seq = if self.prefix_length > 0 && seq2.len() > self.prefix_length {
-                &seq2[..self.prefix_length]
-            } else {
-                seq2
-            };
-
-            let (hashes, positions) = self.get_minimizer_hashes_and_positions(effective_seq);
-            let start_idx = all_hashes.len();
-            all_hashes.extend(hashes);
-            all_positions.extend(positions);
-            all_sequences.extend(vec![effective_seq; all_hashes.len() - start_idx]);
-        }
-
-        // Count hits and collect k-mers
-        for (i, &hash) in all_hashes.iter().enumerate() {
-            if self.minimizer_hashes.contains(&hash) && seen_hits_pair.insert(hash) {
-                pair_hit_count += 1;
-                if self.debug && i < all_positions.len() && i < all_sequences.len() {
-                    let pos = all_positions[i] as usize;
-                    let seq = all_sequences[i];
-                    if pos + self.kmer_length as usize <= seq.len() {
+            for (&pos, &hash) in zip(positions, hashes) {
+                if self.minimizer_hashes.contains(&hash) && seen_hits.insert(hash) {
+                    // Extract the k-mer sequence at this position
+                    if self.debug {
+                        let pos = pos as usize;
                         let kmer = &seq[pos..pos + self.kmer_length as usize];
                         hit_kmers.push(String::from_utf8_lossy(kmer).to_string());
                     }
@@ -470,11 +419,10 @@ impl FilterProcessor {
             }
         }
 
-        let total_minimizers = all_hashes.len();
         (
-            self.meets_filtering_criteria(pair_hit_count, total_minimizers),
-            pair_hit_count,
-            total_minimizers,
+            self.meets_filtering_criteria(seen_hits.len(), num_minimizers),
+            seen_hits.len(),
+            num_minimizers,
             hit_kmers,
         )
     }

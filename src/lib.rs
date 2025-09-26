@@ -17,9 +17,7 @@ pub use filter::{FilterSummary, run as run_filter};
 pub use index::{
     IndexHeader, build as build_index, diff as diff_index, info as index_info, union as union_index,
 };
-pub use minimizers::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, compute_minimizer_hashes, fill_minimizer_hashes,
-};
+pub use minimizers::{DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, compute_minimizer_hashes};
 
 use anyhow::Result;
 use rustc_hash::FxHashSet;

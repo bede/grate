@@ -1,5 +1,7 @@
-use packed_seq::{BitSeqVec, PackedSeqVec, SeqVec};
+use packed_seq::SeqVec;
 use xxhash_rust::xxh3;
+
+use crate::filter::Buffers;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
 pub const DEFAULT_WINDOW_SIZE: u8 = 15;
@@ -15,16 +17,16 @@ pub fn compute_minimizer_hashes(
     window_size: u8,
     entropy_threshold: f32,
 ) -> Vec<u64> {
-    let mut hashes = Vec::new();
+    let mut buffers = Buffers::default();
     fill_minimizer_hashes(
         seq,
         hasher,
         kmer_length,
         window_size,
-        &mut hashes,
         entropy_threshold,
+        &mut buffers,
     );
-    hashes
+    buffers.hashes
 }
 
 /// Calculate scaled entropy using character frequency analysis
@@ -82,29 +84,39 @@ fn calculate_scaled_entropy(kmer: &[u8], kmer_length: u8) -> f32 {
 
 /// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
 /// and optionally filtering by scaled entropy
-pub fn fill_minimizer_hashes(
+pub(crate) fn fill_minimizer_hashes(
     seq: &[u8],
     hasher: &KmerHasher,
     kmer_length: u8,
     window_size: u8,
-    hashes: &mut Vec<u64>,
     entropy_threshold: f32,
+    buffers: &mut Buffers,
 ) {
+    let Buffers {
+        packed_seq,
+        ambiguous,
+        positions,
+        hashes,
+    } = buffers;
+
+    packed_seq.clear();
     hashes.clear();
+    positions.clear();
+    ambiguous.clear();
 
     // Skip if sequence is too short
     if seq.len() < kmer_length as usize {
         return;
     }
 
-    let packed_seq = PackedSeqVec::from_ascii(&seq);
-    let ambiguous = BitSeqVec::from_ascii(&seq);
+    // Pack the sequence into 2-bit representation.
+    packed_seq.push_ascii(seq);
+    ambiguous.push_ascii(seq);
 
     // Get minimizer positions using simd-minimizers
-    let mut positions = Vec::new();
     let out = simd_minimizers::canonical_minimizers(kmer_length as usize, window_size as usize)
         .hasher(hasher)
-        .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), &mut positions);
+        .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), positions);
 
     // Filter positions to only include k-mers with ACGT bases and sufficient entropy
     if kmer_length <= 32 {
