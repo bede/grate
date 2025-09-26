@@ -460,12 +460,13 @@ impl FilterProcessor {
             .collect::<Vec<u8>>();
 
         let mut positions = Vec::new();
+        let packed_seq = packed_seq::PackedSeqVec::from_ascii(&canonical_seq);
         let out = simd_minimizers::canonical_minimizers(
             self.kmer_length as usize,
             self.window_size as usize,
         )
         .hasher(&self.hasher)
-        .run(packed_seq::AsciiSeq(&canonical_seq), &mut positions);
+        .run(packed_seq.as_slice(), &mut positions);
 
         // Filter to valid positions
         let (valid_positions, hashes) = out

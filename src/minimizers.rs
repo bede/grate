@@ -1,4 +1,4 @@
-use packed_seq::AsciiSeq;
+use packed_seq::{PackedSeqVec, SeqVec};
 use xxhash_rust::xxh3;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
@@ -143,12 +143,13 @@ pub fn fill_minimizer_hashes(
     }
 
     let canonical_seq = canonicalise_sequence(seq);
+    let packed_seq = PackedSeqVec::from_ascii(&canonical_seq);
 
     // Get minimizer positions using simd-minimizers
     let mut positions = Vec::new();
     let out = simd_minimizers::canonical_minimizers(kmer_length as usize, window_size as usize)
         .hasher(hasher)
-        .run(AsciiSeq(&canonical_seq), &mut positions);
+        .run(packed_seq.as_slice(), &mut positions);
 
     // Filter positions to only include k-mers with ACGT bases and sufficient entropy
     if kmer_length <= 32 {
