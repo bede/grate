@@ -5,11 +5,11 @@ use deacon::{
     union_index,
 };
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
-#[cfg(feature = "server")]
-use std::os::unix::net::{UnixListener, UnixStream};
 #[cfg(feature = "server")]
 use std::io::{Read, Write};
+#[cfg(feature = "server")]
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::PathBuf;
 
 #[derive(Parser, Serialize, Deserialize)]
 #[command(author, version, about, long_about = None)]
@@ -251,9 +251,9 @@ fn main() -> Result<()> {
 
 fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
     match &command {
-    #[cfg(feature = "server")]
+        #[cfg(feature = "server")]
         Commands::Server => unreachable!(),
-    #[cfg(feature = "server")]
+        #[cfg(feature = "server")]
         Commands::Exit => panic!("Use `deacon --use-server Exit` to stop the server."),
         Commands::Index { command } => match command {
             IndexCommands::Build {
