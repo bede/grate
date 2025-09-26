@@ -115,9 +115,18 @@ fn load_minimizer_hashes_fixedint(mut reader: impl std::io::Read) -> Result<FxHa
         .context("Failed to deserialise minimizer count")?;
 
     // Populate FxHashSet
-    let minimizers: FxHashSet<u64> = (0..count)
-        .map(|_| decode_from_std_read(&mut reader, config).unwrap())
-        .collect();
+    let mut minimizers = FxHashSet::<u64>::with_capacity_and_hasher(count, Default::default());
+    const B: usize = 16 * 1024;
+    let mut hashes = vec![0u8; 8 * B];
+    for i in (0..count).step_by(B) {
+        let batch_count = B.min(count - i);
+        let batch = &mut hashes[..8 * batch_count];
+        reader.read_exact(batch).unwrap();
+        for h in batch.as_chunks::<8>().0 {
+            // Read as little-endian.
+            minimizers.insert(u64::from_le_bytes(*h));
+        }
+    }
 
     Ok(minimizers)
 }
