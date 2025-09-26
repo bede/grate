@@ -1,4 +1,5 @@
 use crate::IndexConfig;
+use crate::minimizers::KmerHasher;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
 use rayon::prelude::*;
@@ -214,6 +215,8 @@ pub fn build(config: &IndexConfig) -> Result<()> {
     // Process sequences in batches for parallelization
     let batch_size = 10000;
 
+    let hasher = KmerHasher::new(config.kmer_length as usize);
+
     loop {
         // Collect a batch of sequences
         let mut batch = Vec::with_capacity(batch_size);
@@ -246,6 +249,7 @@ pub fn build(config: &IndexConfig) -> Result<()> {
                 // Compute minimizer hashes for this sequence
                 crate::minimizers::compute_minimizer_hashes(
                     seq_data,
+                    &hasher,
                     config.kmer_length,
                     config.window_size,
                     config.entropy_threshold,
@@ -345,6 +349,8 @@ fn stream_diff_fastx<P: AsRef<Path>>(
     // Process sequences in batches for parallelization
     let batch_size = 1000;
 
+    let hasher = KmerHasher::new(kmer_length as usize);
+
     loop {
         // Collect a batch of sequences
         let mut batch = Vec::with_capacity(batch_size);
@@ -375,7 +381,13 @@ fn stream_diff_fastx<P: AsRef<Path>>(
             .par_iter()
             .map(|(seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(seq_data, kmer_length, window_size, 0.0)
+                crate::minimizers::compute_minimizer_hashes(
+                    seq_data,
+                    &hasher,
+                    kmer_length,
+                    window_size,
+                    0.0,
+                )
             })
             .collect();
 
