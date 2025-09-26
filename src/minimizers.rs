@@ -4,6 +4,9 @@ use xxhash_rust::xxh3;
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
 pub const DEFAULT_WINDOW_SIZE: u8 = 15;
 
+/// Canonical NtHash, with 1-bit rotations for backwards compatibility.
+pub type KmerHasher = simd_minimizers::seq_hash::NtHasher<true, 1>;
+
 /// Check if nucleotide is valid ACGT (case insensitive)
 #[inline]
 fn is_valid_acgt(nucleotide: u8) -> bool {
