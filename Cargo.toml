@@ -48,7 +48,7 @@ rstest = "0.25"
 [features]
 # `deacon server` feature.
 server = []
-default = []
+default = ["server"]
 
 [[test]]
 name = "cli_tests"
