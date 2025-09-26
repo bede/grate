@@ -1,4 +1,4 @@
-use packed_seq::{PackedSeqVec, SeqVec};
+use packed_seq::{BitSeqVec, PackedSeqVec, SeqVec};
 use xxhash_rust::xxh3;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
@@ -6,21 +6,6 @@ pub const DEFAULT_WINDOW_SIZE: u8 = 15;
 
 /// Canonical NtHash, with 1-bit rotations for backwards compatibility.
 pub type KmerHasher = simd_minimizers::seq_hash::NtHasher<true, 1>;
-
-/// Check if nucleotide is valid ACGT (case insensitive)
-#[inline]
-fn is_valid_acgt(nucleotide: u8) -> bool {
-    matches!(
-        nucleotide,
-        b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'
-    )
-}
-
-/// Check if k-mer contains only ACGT nucleotides
-#[inline]
-fn kmer_contains_only_acgt(kmer: &[u8]) -> bool {
-    kmer.iter().all(|&b| is_valid_acgt(b))
-}
 
 /// Returns vector of all minimizer hashes for a sequence
 pub fn compute_minimizer_hashes(
@@ -113,12 +98,13 @@ pub fn fill_minimizer_hashes(
     }
 
     let packed_seq = PackedSeqVec::from_ascii(&seq);
+    let ambiguous = BitSeqVec::from_ascii(&seq);
 
     // Get minimizer positions using simd-minimizers
     let mut positions = Vec::new();
     let out = simd_minimizers::canonical_minimizers(kmer_length as usize, window_size as usize)
         .hasher(hasher)
-        .run(packed_seq.as_slice(), &mut positions);
+        .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), &mut positions);
 
     // Filter positions to only include k-mers with ACGT bases and sufficient entropy
     if kmer_length <= 32 {
@@ -127,11 +113,6 @@ pub fn fill_minimizer_hashes(
                 .filter(|&(pos, _val)| {
                     let pos_usize = pos as usize;
                     let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
-
-                    // Check ACGT constraint
-                    if !kmer_contains_only_acgt(kmer) {
-                        return false;
-                    }
 
                     // Check scaled entropy constraint if threshold specified
                     if entropy_threshold == 0.0 {
@@ -149,11 +130,6 @@ pub fn fill_minimizer_hashes(
                 .filter(|&(pos, _val)| {
                     let pos_usize = pos as usize;
                     let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
-
-                    // Check ACGT constraint
-                    if !kmer_contains_only_acgt(kmer) {
-                        return false;
-                    }
 
                     // Check scaled entropy constraint if threshold specified
                     if entropy_threshold == 0.0 {
