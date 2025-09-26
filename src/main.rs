@@ -23,7 +23,11 @@ struct Cli {
 #[derive(Subcommand, Serialize, Deserialize)]
 enum Commands {
     #[cfg(feature = "server")]
-    Server,
+    Server {
+        /// Number of execution threads (0 = auto)
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
+        threads: usize,
+    },
     #[cfg(feature = "server")]
     Exit,
     /// Build and compose minimizer indexes
@@ -192,11 +196,17 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     #[cfg(feature = "server")]
-    if matches!(cli.command, Commands::Server) {
+    if let Commands::Server { threads } = cli.command {
         assert!(
             !cli.use_server,
             "`deacon --use server Server` does not make sense."
         );
+
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .context("Failed to initialize thread pool")?;
+
         let listener = UnixListener::bind("deacon_server_socket")?;
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
@@ -252,7 +262,7 @@ fn main() -> Result<()> {
 fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
     match &command {
         #[cfg(feature = "server")]
-        Commands::Server => unreachable!(),
+        Commands::Server { .. } => unreachable!(),
         #[cfg(feature = "server")]
         Commands::Exit => panic!("Use `deacon --use-server Exit` to stop the server."),
         Commands::Index { command } => match command {
