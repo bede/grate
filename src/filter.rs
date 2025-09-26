@@ -389,20 +389,8 @@ impl FilterProcessor {
     }
 
     fn get_minimizer_hashes_and_positions(&self, seq: &[u8]) -> (Vec<u64>, Vec<u32>) {
-        // Canonicalise sequence
-        let canonical_seq = seq
-            .iter()
-            .map(|&b| match b {
-                b'A' | b'a' => b'A',
-                b'C' | b'c' => b'C',
-                b'G' | b'g' => b'G',
-                b'T' | b't' => b'T',
-                _ => b'C',
-            })
-            .collect::<Vec<u8>>();
-
         let mut positions = Vec::new();
-        let packed_seq = packed_seq::PackedSeqVec::from_ascii(&canonical_seq);
+        let packed_seq = packed_seq::PackedSeqVec::from_ascii(seq);
         let out = simd_minimizers::canonical_minimizers(
             self.kmer_length as usize,
             self.window_size as usize,

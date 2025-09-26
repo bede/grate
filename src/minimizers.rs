@@ -22,36 +22,6 @@ fn kmer_contains_only_acgt(kmer: &[u8]) -> bool {
     kmer.iter().all(|&b| is_valid_acgt(b))
 }
 
-/// Canonicalise IUPAC ambiguous nucleotides to ACGT
-#[inline]
-fn canonicalise_nucleotide(nucleotide: u8) -> u8 {
-    match nucleotide {
-        b'A' | b'a' => b'A',
-        b'C' | b'c' => b'C',
-        b'G' | b'g' => b'G',
-        b'T' | b't' => b'T',
-        b'R' | b'r' => b'G',
-        b'Y' | b'y' => b'C',
-        b'S' | b's' => b'G',
-        b'W' | b'w' => b'A',
-        b'K' | b'k' => b'G',
-        b'M' | b'm' => b'C',
-        b'B' | b'b' => b'C',
-        b'D' | b'd' => b'G',
-        b'H' | b'h' => b'C',
-        b'V' | b'v' => b'G',
-        b'N' | b'n' => b'C',
-        _ => b'C',
-    }
-}
-
-/// Canonicalise a sequence
-fn canonicalise_sequence(seq: &[u8]) -> Vec<u8> {
-    seq.iter()
-        .map(|&nucleotide| canonicalise_nucleotide(nucleotide))
-        .collect()
-}
-
 /// Returns vector of all minimizer hashes for a sequence
 pub fn compute_minimizer_hashes(
     seq: &[u8],
@@ -142,8 +112,7 @@ pub fn fill_minimizer_hashes(
         return;
     }
 
-    let canonical_seq = canonicalise_sequence(seq);
-    let packed_seq = PackedSeqVec::from_ascii(&canonical_seq);
+    let packed_seq = PackedSeqVec::from_ascii(&seq);
 
     // Get minimizer positions using simd-minimizers
     let mut positions = Vec::new();
@@ -202,43 +171,6 @@ pub fn fill_minimizer_hashes(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_canonicalise_nucleotide() {
-        // Test basic nucleotides
-        assert_eq!(canonicalise_nucleotide(b'A'), b'A');
-        assert_eq!(canonicalise_nucleotide(b'C'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'G'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'T'), b'T');
-
-        // Test lowercase
-        assert_eq!(canonicalise_nucleotide(b'a'), b'A');
-        assert_eq!(canonicalise_nucleotide(b'c'), b'C');
-
-        // Test ambiguous nucleotides
-        assert_eq!(canonicalise_nucleotide(b'R'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'Y'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'S'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'W'), b'A');
-        assert_eq!(canonicalise_nucleotide(b'K'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'M'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'B'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'D'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'H'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'V'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'N'), b'C');
-    }
-
-    #[test]
-    fn test_canonicalise_sequence() {
-        let seq = b"ACGTN";
-        let canonical = canonicalise_sequence(seq);
-        assert_eq!(canonical, b"ACGTC");
-
-        let seq = b"RYMKWS";
-        let canonical = canonicalise_sequence(seq);
-        assert_eq!(canonical, b"GCCGAG");
-    }
 
     #[test]
     fn test_compute_minimizer_hashes() {
