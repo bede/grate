@@ -627,16 +627,11 @@ pub fn union(inputs: &[PathBuf], output: Option<&Path>) -> Result<()> {
 
     // Read all headers first to determine total capacity needed
     let mut headers_and_counts = Vec::new();
-    let mut sum_capacity = 0;
 
     for path in inputs {
         let (header, count) = load_header_and_count(path)?;
-        sum_capacity += count;
         headers_and_counts.push((header, count));
     }
-
-    // Use provided capacity or fall back to sum of all index counts
-    let total_capacity = sum_capacity;
 
     // Get header from first file for output
     let header = &headers_and_counts[0].0;
@@ -645,11 +640,6 @@ pub fn union(inputs: &[PathBuf], output: Option<&Path>) -> Result<()> {
         "Performing union of indexes (k={}, w={})",
         header.kmer_length(),
         header.window_size()
-    );
-    eprintln!(
-        "Pre-allocating worst-case capacity for {} minimizers from {} indexes",
-        total_capacity,
-        inputs.len()
     );
 
     // Verify all headers are compatible
@@ -669,8 +659,7 @@ pub fn union(inputs: &[PathBuf], output: Option<&Path>) -> Result<()> {
     }
 
     // Pre-allocate hash set with total capacity to avoid resizing
-    let mut all_minimizers: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(total_capacity, Default::default());
+    let mut all_minimizers = FxHashSet::<u64>::default();
 
     // Now load and merge all indexes
     for (i, path) in inputs.iter().enumerate() {
