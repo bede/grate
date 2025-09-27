@@ -134,24 +134,24 @@ fn validate_compression_level(level: u8, min: u8, max: u8, format: &str) -> Resu
 }
 
 // Return a file writer appropriate for the output path extension
-fn get_writer(output_path: &str, compression_level: u8) -> Result<BoxedWriter> {
-    if output_path == "-" {
+fn get_writer(output_path: Option<&std::path::Path>, compression_level: u8) -> Result<BoxedWriter> {
+    let Some(path) = output_path else {
         return Ok(Box::new(BufWriter::with_capacity(
             OUTPUT_BUFFER_SIZE,
             io::stdout(),
         )));
-    }
+    };
 
     let file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(output_path)
-        .context(format!("Failed to create output file: {}", output_path))?;
+        .open(path)
+        .context(format!("Failed to create output file: {}", path.display()))?;
 
     let buffered_file = BufWriter::with_capacity(OUTPUT_BUFFER_SIZE, file);
 
-    match output_path {
+    match path.to_string_lossy().as_ref() {
         p if p.ends_with(".gz") => {
             validate_compression_level(compression_level, 1, 9, "gzip")?;
             Ok(Box::new(GzEncoder::new(
@@ -714,7 +714,10 @@ pub fn run(config: &FilterConfig) -> Result<()> {
     // Create appropriate writer(s) based on output path(s)
     let writer = get_writer(config.output_path, config.compression_level)?;
     let writer2 = if let (Some(output2), Some(_)) = (config.output2_path, config.input2_path) {
-        Some(get_writer(output2, config.compression_level)?)
+        Some(get_writer(
+            Some(std::path::Path::new(output2)),
+            config.compression_level,
+        )?)
     } else {
         None
     };
@@ -862,7 +865,9 @@ pub fn run(config: &FilterConfig) -> Result<()> {
             index: config.minimizers_path.to_string_lossy().to_string(),
             input: config.input_path.to_string(),
             input2: config.input2_path.map(|s| s.to_string()),
-            output: config.output_path.to_string(),
+            output: config
+                .output_path
+                .map_or("-".to_string(), |p| p.display().to_string()),
             output2: config.output2_path.map(|s| s.to_string()),
             k: kmer_length,
             w: window_size,
