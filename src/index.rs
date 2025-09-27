@@ -82,8 +82,7 @@ pub fn load_minimizer_hashes_cached(
         (path.to_owned(), m, h)
     });
     assert_eq!(
-        p,
-        path,
+        p, path,
         "Currently, the server can only have one index loaded."
     );
 
@@ -136,8 +135,7 @@ fn load_minimizer_hashes_fixedint(mut reader: impl std::io::Read) -> Result<FxHa
 /// This new version uses fixed-width integer encoding.
 /// Use `deacon index convert` to convert from the old format.
 pub fn load_minimizer_hashes(path: &Path) -> Result<(FxHashSet<u64>, IndexHeader)> {
-    let file =
-        File::open(path).context(format!("Failed to open index file {:?}", path))?;
+    let file = File::open(path).context(format!("Failed to open index file {:?}", path))?;
     let mut reader = BufReader::with_capacity(1 << 20, file);
     let config = bincode::config::standard().with_fixed_int_encoding();
 
@@ -203,7 +201,6 @@ pub fn build(config: &IndexConfig) -> Result<()> {
 
     // Build options string similar to filter
     let mut options = Vec::<String>::new();
-    options.push(format!("capacity={}M", config.capacity_millions));
     if config.threads > 0 {
         options.push(format!("threads={}", config.threads));
     }
@@ -240,9 +237,7 @@ pub fn build(config: &IndexConfig) -> Result<()> {
     };
 
     // Init FxHashSet with user-specified capacity
-    let capacity = config.capacity_millions * 1_000_000;
-    let mut all_minimizers: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(capacity, Default::default());
+    let mut all_minimizers = FxHashSet::<u64>::default();
 
     eprintln!(
         "Building index (k={}, w={})",
@@ -621,11 +616,7 @@ pub fn convert_index(from: &Path, to: Option<&Path>) -> Result<()> {
 }
 
 /// Combine minimizer indexes (set union)
-pub fn union(
-    inputs: &[PathBuf],
-    output: Option<&Path>,
-    capacity_millions: Option<usize>,
-) -> Result<()> {
+pub fn union(inputs: &[PathBuf], output: Option<&Path>) -> Result<()> {
     let start_time = Instant::now();
     // Check input files
     if inputs.is_empty() {
@@ -645,11 +636,7 @@ pub fn union(
     }
 
     // Use provided capacity or fall back to sum of all index counts
-    let total_capacity = if let Some(capacity_millions) = capacity_millions {
-        capacity_millions * 1_000_000
-    } else {
-        sum_capacity
-    };
+    let total_capacity = sum_capacity;
 
     // Get header from first file for output
     let header = &headers_and_counts[0].0;
@@ -659,18 +646,11 @@ pub fn union(
         header.kmer_length(),
         header.window_size()
     );
-    if capacity_millions.is_some() {
-        eprintln!(
-            "Pre-allocating user-specified capacity for {} minimizers",
-            total_capacity
-        );
-    } else {
-        eprintln!(
-            "No capacity specified, pre-allocating worst-case capacity for {} minimizers from {} indexes",
-            total_capacity,
-            inputs.len()
-        );
-    }
+    eprintln!(
+        "Pre-allocating worst-case capacity for {} minimizers from {} indexes",
+        total_capacity,
+        inputs.len()
+    );
 
     // Verify all headers are compatible
     for (i, (file_header, _)) in headers_and_counts.iter().enumerate() {

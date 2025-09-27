@@ -179,8 +179,6 @@ Options:
           Minimizer window size used for indexing [default: 15]
   -o, --output <OUTPUT>
           Path to output file (- for stdout) [default: -]
-  -c, --capacity <CAPACITY_MILLIONS>
-          Preallocated index capacity in millions of minimizers [default: 400]
   -t, --threads <THREADS>
           Number of execution threads (0 = auto) [default: 8]
   -q, --quiet
