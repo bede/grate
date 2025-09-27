@@ -592,12 +592,12 @@ pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
     eprintln!("  Distinct minimizer count: {}", minimizers.len());
 
     let total_time = start_time.elapsed();
-    eprintln!("Retrieved index info in {:.2?}", total_time);
+    eprintln!("Loaded index info in {:.2?}", total_time);
 
     Ok(())
 }
 
-pub fn convert_index<P: AsRef<Path>>(from: P, to: P) -> Result<()> {
+pub fn convert_index<P: AsRef<Path>>(from: P, to: Option<PathBuf>) -> Result<()> {
     let start_time = Instant::now();
     let (minimizers, mut header) = load_minimizer_hashes(&from)?;
     let load_time = start_time.elapsed();
@@ -608,9 +608,9 @@ pub fn convert_index<P: AsRef<Path>>(from: P, to: P) -> Result<()> {
     assert_eq!(header.format_version, 2);
     header.format_version = 3;
     let start_time = Instant::now();
-    write_minimizers(&minimizers, &header, Some(&to.as_ref().to_owned()))?;
+    write_minimizers(&minimizers, &header, to.as_ref())?;
     let write_time = start_time.elapsed();
-    eprintln!("Wrote index in {:.2?}", write_time);
+    eprintln!("Converted index in {:.2?}", write_time);
 
     Ok(())
 }
