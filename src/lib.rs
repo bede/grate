@@ -17,9 +17,7 @@ pub use filter::{FilterSummary, run as run_filter};
 pub use index::{
     IndexHeader, build as build_index, diff as diff_index, info as index_info, union as union_index,
 };
-pub use minimizers::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, compute_minimizer_hashes, fill_minimizer_hashes,
-};
+pub use minimizers::{DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, compute_minimizer_hashes};
 
 use anyhow::Result;
 use rustc_hash::FxHashSet;
@@ -35,8 +33,8 @@ pub struct FilterConfig<'a> {
     /// Path to optional second paired fastx file (or - for interleaved stdin)
     pub input2_path: Option<&'a str>,
 
-    /// Path to output fastx file (or - for stdout; detects .gz and .zst)
-    pub output_path: &'a str,
+    /// Path to output fastx file (None for stdout; detects .gz and .zst)
+    pub output_path: Option<&'a Path>,
 
     /// Path to optional second output fastx file for paired reads (detects .gz and .zst)
     pub output2_path: Option<&'a str>,
@@ -78,7 +76,7 @@ impl<'a> FilterConfig<'a> {
             minimizers_path,
             input_path: "-",
             input2_path: None,
-            output_path: "-",
+            output_path: None,
             output2_path: None,
             abs_threshold: 2,
             rel_threshold: 0.01,
@@ -103,8 +101,8 @@ impl<'a> FilterConfig<'a> {
         self
     }
 
-    pub fn with_output(mut self, output_path: &'a str) -> Self {
-        self.output_path = output_path;
+    pub fn with_output(mut self, output_path: &'a Path) -> Self {
+        self.output_path = Some(output_path);
         self
     }
 

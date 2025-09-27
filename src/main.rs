@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use deacon::index::convert_index;
 use deacon::{
     DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, FilterConfig, IndexConfig, diff_index, index_info,
     union_index,
@@ -23,7 +24,11 @@ struct Cli {
 #[derive(Subcommand, Serialize, Deserialize)]
 enum Commands {
     #[cfg(feature = "server")]
-    Server,
+    Server {
+        /// Number of execution threads (0 = auto)
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
+        threads: usize,
+    },
     #[cfg(feature = "server")]
     Exit,
     /// Build and compose minimizer indexes
@@ -43,9 +48,9 @@ enum Commands {
         /// Optional path to second paired fastx file (or - for interleaved stdin)
         input2: Option<String>,
 
-        /// Path to output fastx file (or - for stdout; detects .gz and .zst)
-        #[arg(short = 'o', long = "output", default_value = "-")]
-        output: String,
+        /// Path to output fastx file (stdout if not specified; detects .gz and .zst)
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
 
         /// Optional path to second paired output fastx file (detects .gz and .zst)
         #[arg(short = 'O', long = "output2")]
@@ -108,9 +113,9 @@ enum IndexCommands {
         #[arg(short = 'w', default_value_t = DEFAULT_WINDOW_SIZE)]
         window_size: u8,
 
-        /// Path to output file (- for stdout)
-        #[arg(short = 'o', long = "output", default_value = "-")]
-        output: String,
+        /// Path to output file (stdout if not specified)
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
 
         /// Preallocated index capacity in millions of minimizers
         #[arg(short = 'c', long = "capacity", default_value_t = 400)]
@@ -139,8 +144,8 @@ enum IndexCommands {
         #[arg(required = true)]
         inputs: Vec<PathBuf>,
 
-        /// Path to output file (- for stdout)
-        #[arg(short = 'o', long = "output", default_value = "-")]
+        /// Path to output file (stdout if not specified)
+        #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
 
         /// Preallocated index capacity in millions of minimizers (overrides sum-based allocation)
@@ -165,8 +170,17 @@ enum IndexCommands {
         #[arg(short = 'w', long = "window-size")]
         window_size: Option<u8>,
 
-        /// Path to output file (- for stdout)
-        #[arg(short = 'o', long = "output", default_value = "-")]
+        /// Path to output file (stdout if not specified)
+        #[arg(short = 'o', long = "output")]
+        output: Option<PathBuf>,
+    },
+    /// Convert v2 format indexes to smaller & faster v3 format
+    Convert {
+        /// Path to index file
+        input: PathBuf,
+
+        /// Path to output file (stdout if not specified)
+        #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
     },
 }
@@ -192,11 +206,17 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     #[cfg(feature = "server")]
-    if matches!(cli.command, Commands::Server) {
+    if let Commands::Server { threads } = cli.command {
         assert!(
             !cli.use_server,
             "`deacon --use server Server` does not make sense."
         );
+
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .context("Failed to initialize thread pool")?;
+
         let listener = UnixListener::bind("deacon_server_socket")?;
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
@@ -252,7 +272,7 @@ fn main() -> Result<()> {
 fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
     match &command {
         #[cfg(feature = "server")]
-        Commands::Server => unreachable!(),
+        Commands::Server { .. } => unreachable!(),
         #[cfg(feature = "server")]
         Commands::Exit => panic!("Use `deacon --use-server Exit` to stop the server."),
         Commands::Index { command } => match command {
@@ -266,18 +286,11 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 quiet,
                 entropy_threshold,
             } => {
-                // Convert output string to Option<PathBuf>
-                let output_path = if output == "-" {
-                    None
-                } else {
-                    Some(PathBuf::from(output))
-                };
-
                 let config = IndexConfig {
                     input_path: input.clone(),
                     kmer_length: *kmer_length,
                     window_size: *window_size,
-                    output_path,
+                    output_path: output.clone(),
                     capacity_millions: *capacity_millions,
                     threads: *threads,
                     quiet: *quiet,
@@ -308,6 +321,9 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 diff_index(first, second, *kmer_length, *window_size, output.as_ref())
                     .context("Failed to run index diff command")?;
             }
+            IndexCommands::Convert { input, output } => {
+                convert_index(input, output.clone())?;
+            }
         },
         Commands::Filter {
             index: minimizers,
@@ -337,7 +353,7 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 minimizers_path: minimizers,
                 input_path: input,
                 input2_path: input2.as_deref(),
-                output_path: output,
+                output_path: output.as_ref().map(|p| p.as_path()),
                 output2_path: output2.as_deref(),
                 abs_threshold: *abs_threshold as usize,
                 rel_threshold: *rel_threshold,

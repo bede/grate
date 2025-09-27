@@ -1,4 +1,5 @@
 use crate::IndexConfig;
+use crate::filter::Buffers;
 use crate::minimizers::KmerHasher;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
@@ -24,7 +25,7 @@ pub struct IndexHeader {
 impl IndexHeader {
     pub fn new(kmer_length: u8, window_size: u8) -> Self {
         IndexHeader {
-            format_version: 2,
+            format_version: 3,
             kmer_length,
             window_size,
         }
@@ -32,7 +33,7 @@ impl IndexHeader {
 
     /// Validate header
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.format_version != 2 {
+        if self.format_version != 2 && self.format_version != 3 {
             return Err(anyhow::anyhow!(
                 "Unsupported index format version: {}",
                 self.format_version
@@ -90,29 +91,66 @@ pub fn load_minimizer_hashes_cached<P: AsRef<Path>>(
 }
 
 /// Load the hashes without spiking memory usage with an extra vec
+/// This older version uses variable-width integer encoding.
+/// Use `deacon index convert` for the new format.
+fn load_minimizer_hashes_varint(mut reader: impl std::io::Read) -> Result<FxHashSet<u64>> {
+    let config = bincode::config::standard();
+
+    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
+    let count: usize = decode_from_std_read(&mut reader, config)
+        .context("Failed to deserialise minimizer count")?;
+
+    // Populate FxHashSet
+    let minimizers: FxHashSet<u64> = (0..count)
+        .map(|_| decode_from_std_read(&mut reader, config).unwrap())
+        .collect();
+
+    Ok(minimizers)
+}
+
+fn load_minimizer_hashes_fixedint(mut reader: impl std::io::Read) -> Result<FxHashSet<u64>> {
+    let config = bincode::config::standard().with_fixed_int_encoding();
+
+    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
+    let count: usize = decode_from_std_read(&mut reader, config)
+        .context("Failed to deserialise minimizer count")?;
+
+    // Populate FxHashSet
+    let mut minimizers = FxHashSet::<u64>::with_capacity_and_hasher(count, Default::default());
+    const B: usize = 16 * 1024;
+    let mut hashes = vec![0u8; 8 * B];
+    for i in (0..count).step_by(B) {
+        let batch_count = B.min(count - i);
+        let batch = &mut hashes[..8 * batch_count];
+        reader.read_exact(batch).unwrap();
+        for h in batch.as_chunks::<8>().0 {
+            // Read as little-endian.
+            minimizers.insert(u64::from_le_bytes(*h));
+        }
+    }
+
+    Ok(minimizers)
+}
+
+/// Load the hashes without spiking memory usage with an extra vec
+/// This new version uses fixed-width integer encoding.
+/// Use `deacon index convert` to convert from the old format.
 pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>, IndexHeader)> {
     let file =
         File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
-    let mut reader = BufReader::new(file);
+    let mut reader = BufReader::with_capacity(1 << 20, file);
+    let config = bincode::config::standard().with_fixed_int_encoding();
 
     // Deserialise header
-    let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialise index header")?;
+    let header: IndexHeader =
+        decode_from_std_read(&mut reader, config).context("Failed to deserialise index header")?;
     header.validate()?;
 
-    // Deserialise the count of minimizers so we can init a FxHashSet with the right capacity
-    let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialise minimizer count")?;
-
-    // Pre-allocate FxHashSet with correct capacity
-    let mut minimizers = FxHashSet::with_capacity_and_hasher(count, Default::default());
-
-    // Populate FxHashSet
-    for _ in 0..count {
-        let hash: u64 = decode_from_std_read(&mut reader, bincode::config::standard())
-            .context("Failed to deserialise minimizer hash")?;
-        minimizers.insert(hash);
-    }
+    let minimizers = match header.format_version {
+        2 => load_minimizer_hashes_varint(reader)?,
+        3 => load_minimizer_hashes_fixedint(reader)?,
+        _ => unreachable!(),
+    };
 
     Ok((minimizers, header))
 }
@@ -138,17 +176,19 @@ pub fn write_minimizers(
 
     // Serialise header and minimizers
     let mut writer = BufWriter::new(writer);
-    encode_into_std_write(header, &mut writer, bincode::config::standard())
+    // Use fixed-width little-endian encoding for all values.
+    let config = bincode::config::standard().with_fixed_int_encoding();
+    encode_into_std_write(header, &mut writer, config)
         .context("Failed to serialise index header")?;
 
     // Serialise the count of minimizers first
     let count = minimizers.len();
-    encode_into_std_write(count, &mut writer, bincode::config::standard())
+    encode_into_std_write(count, &mut writer, config)
         .context("Failed to serialise minimizer count")?;
 
     // Serialise each minimizer directly
     for &hash in minimizers {
-        encode_into_std_write(hash, &mut writer, bincode::config::standard())
+        encode_into_std_write(hash, &mut writer, config)
             .context("Failed to serialise minimizer hash")?;
     }
     Ok(())
@@ -245,15 +285,17 @@ pub fn build(config: &IndexConfig) -> Result<()> {
         // Process batch in parallel
         let batch_results: Vec<_> = batch
             .par_iter()
-            .map(|(seq_data, _id)| {
+            .map_with(Buffers::default(), |buffers, (seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(
+                crate::minimizers::fill_minimizer_hashes(
                     seq_data,
                     &hasher,
                     config.kmer_length,
                     config.window_size,
                     config.entropy_threshold,
-                )
+                    buffers,
+                );
+                std::mem::take(&mut buffers.hashes)
             })
             .collect();
 
@@ -379,15 +421,17 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         // Process batch in parallel
         let batch_results: Vec<_> = batch
             .par_iter()
-            .map(|(seq_data, _id)| {
+            .map_with(Buffers::default(), |buffers, (seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(
+                crate::minimizers::fill_minimizer_hashes(
                     seq_data,
                     &hasher,
                     kmer_length,
                     window_size,
                     0.0,
-                )
+                    buffers,
+                );
+                std::mem::take(&mut buffers.hashes)
             })
             .collect();
 
@@ -553,7 +597,25 @@ pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
     eprintln!("  Distinct minimizer count: {}", minimizers.len());
 
     let total_time = start_time.elapsed();
-    eprintln!("Retrieved index info in {:.2?}", total_time);
+    eprintln!("Loaded index info in {:.2?}", total_time);
+
+    Ok(())
+}
+
+pub fn convert_index<P: AsRef<Path>>(from: P, to: Option<PathBuf>) -> Result<()> {
+    let start_time = Instant::now();
+    let (minimizers, mut header) = load_minimizer_hashes(&from)?;
+    let load_time = start_time.elapsed();
+    eprintln!(
+        "Loaded index (k={}, w={}) in {:.2?}",
+        header.kmer_length, header.window_size, load_time
+    );
+    assert_eq!(header.format_version, 2);
+    header.format_version = 3;
+    let start_time = Instant::now();
+    write_minimizers(&minimizers, &header, to.as_ref())?;
+    let write_time = start_time.elapsed();
+    eprintln!("Converted index in {:.2?}", write_time);
 
     Ok(())
 }
@@ -669,7 +731,7 @@ mod tests {
     fn test_header_creation() {
         let header = IndexHeader::new(31, 21);
 
-        assert_eq!(header.format_version, 2);
+        assert_eq!(header.format_version, 3);
         assert_eq!(header.kmer_length(), 31);
         assert_eq!(header.window_size(), 21);
     }
@@ -678,7 +740,7 @@ mod tests {
     fn test_header_validation() {
         // Valid header
         let valid_header = IndexHeader {
-            format_version: 2,
+            format_version: 3,
             kmer_length: 31,
             window_size: 21,
         };

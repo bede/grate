@@ -1,56 +1,13 @@
-use packed_seq::{PackedSeqVec, SeqVec};
+use packed_seq::SeqVec;
 use xxhash_rust::xxh3;
+
+use crate::filter::Buffers;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
 pub const DEFAULT_WINDOW_SIZE: u8 = 15;
 
 /// Canonical NtHash, with 1-bit rotations for backwards compatibility.
 pub type KmerHasher = simd_minimizers::seq_hash::NtHasher<true, 1>;
-
-/// Check if nucleotide is valid ACGT (case insensitive)
-#[inline]
-fn is_valid_acgt(nucleotide: u8) -> bool {
-    matches!(
-        nucleotide,
-        b'A' | b'C' | b'G' | b'T' | b'a' | b'c' | b'g' | b't'
-    )
-}
-
-/// Check if k-mer contains only ACGT nucleotides
-#[inline]
-fn kmer_contains_only_acgt(kmer: &[u8]) -> bool {
-    kmer.iter().all(|&b| is_valid_acgt(b))
-}
-
-/// Canonicalise IUPAC ambiguous nucleotides to ACGT
-#[inline]
-fn canonicalise_nucleotide(nucleotide: u8) -> u8 {
-    match nucleotide {
-        b'A' | b'a' => b'A',
-        b'C' | b'c' => b'C',
-        b'G' | b'g' => b'G',
-        b'T' | b't' => b'T',
-        b'R' | b'r' => b'G',
-        b'Y' | b'y' => b'C',
-        b'S' | b's' => b'G',
-        b'W' | b'w' => b'A',
-        b'K' | b'k' => b'G',
-        b'M' | b'm' => b'C',
-        b'B' | b'b' => b'C',
-        b'D' | b'd' => b'G',
-        b'H' | b'h' => b'C',
-        b'V' | b'v' => b'G',
-        b'N' | b'n' => b'C',
-        _ => b'C',
-    }
-}
-
-/// Canonicalise a sequence
-fn canonicalise_sequence(seq: &[u8]) -> Vec<u8> {
-    seq.iter()
-        .map(|&nucleotide| canonicalise_nucleotide(nucleotide))
-        .collect()
-}
 
 /// Returns vector of all minimizer hashes for a sequence
 pub fn compute_minimizer_hashes(
@@ -60,16 +17,16 @@ pub fn compute_minimizer_hashes(
     window_size: u8,
     entropy_threshold: f32,
 ) -> Vec<u64> {
-    let mut hashes = Vec::new();
+    let mut buffers = Buffers::default();
     fill_minimizer_hashes(
         seq,
         hasher,
         kmer_length,
         window_size,
-        &mut hashes,
         entropy_threshold,
+        &mut buffers,
     );
-    hashes
+    buffers.hashes
 }
 
 /// Calculate scaled entropy using character frequency analysis
@@ -127,29 +84,39 @@ fn calculate_scaled_entropy(kmer: &[u8], kmer_length: u8) -> f32 {
 
 /// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
 /// and optionally filtering by scaled entropy
-pub fn fill_minimizer_hashes(
+pub(crate) fn fill_minimizer_hashes(
     seq: &[u8],
     hasher: &KmerHasher,
     kmer_length: u8,
     window_size: u8,
-    hashes: &mut Vec<u64>,
     entropy_threshold: f32,
+    buffers: &mut Buffers,
 ) {
+    let Buffers {
+        packed_seq,
+        ambiguous,
+        positions,
+        hashes,
+    } = buffers;
+
+    packed_seq.clear();
     hashes.clear();
+    positions.clear();
+    ambiguous.clear();
 
     // Skip if sequence is too short
     if seq.len() < kmer_length as usize {
         return;
     }
 
-    let canonical_seq = canonicalise_sequence(seq);
-    let packed_seq = PackedSeqVec::from_ascii(&canonical_seq);
+    // Pack the sequence into 2-bit representation.
+    packed_seq.push_ascii(seq);
+    ambiguous.push_ascii(seq);
 
     // Get minimizer positions using simd-minimizers
-    let mut positions = Vec::new();
     let out = simd_minimizers::canonical_minimizers(kmer_length as usize, window_size as usize)
         .hasher(hasher)
-        .run(packed_seq.as_slice(), &mut positions);
+        .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), positions);
 
     // Filter positions to only include k-mers with ACGT bases and sufficient entropy
     if kmer_length <= 32 {
@@ -158,11 +125,6 @@ pub fn fill_minimizer_hashes(
                 .filter(|&(pos, _val)| {
                     let pos_usize = pos as usize;
                     let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
-
-                    // Check ACGT constraint
-                    if !kmer_contains_only_acgt(kmer) {
-                        return false;
-                    }
 
                     // Check scaled entropy constraint if threshold specified
                     if entropy_threshold == 0.0 {
@@ -181,11 +143,6 @@ pub fn fill_minimizer_hashes(
                     let pos_usize = pos as usize;
                     let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
 
-                    // Check ACGT constraint
-                    if !kmer_contains_only_acgt(kmer) {
-                        return false;
-                    }
-
                     // Check scaled entropy constraint if threshold specified
                     if entropy_threshold == 0.0 {
                         true
@@ -202,43 +159,6 @@ pub fn fill_minimizer_hashes(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_canonicalise_nucleotide() {
-        // Test basic nucleotides
-        assert_eq!(canonicalise_nucleotide(b'A'), b'A');
-        assert_eq!(canonicalise_nucleotide(b'C'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'G'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'T'), b'T');
-
-        // Test lowercase
-        assert_eq!(canonicalise_nucleotide(b'a'), b'A');
-        assert_eq!(canonicalise_nucleotide(b'c'), b'C');
-
-        // Test ambiguous nucleotides
-        assert_eq!(canonicalise_nucleotide(b'R'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'Y'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'S'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'W'), b'A');
-        assert_eq!(canonicalise_nucleotide(b'K'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'M'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'B'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'D'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'H'), b'C');
-        assert_eq!(canonicalise_nucleotide(b'V'), b'G');
-        assert_eq!(canonicalise_nucleotide(b'N'), b'C');
-    }
-
-    #[test]
-    fn test_canonicalise_sequence() {
-        let seq = b"ACGTN";
-        let canonical = canonicalise_sequence(seq);
-        assert_eq!(canonical, b"ACGTC");
-
-        let seq = b"RYMKWS";
-        let canonical = canonicalise_sequence(seq);
-        assert_eq!(canonical, b"GCCGAG");
-    }
 
     #[test]
     fn test_compute_minimizer_hashes() {
