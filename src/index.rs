@@ -1,4 +1,5 @@
 use crate::IndexConfig;
+use crate::filter::Buffers;
 use crate::minimizers::KmerHasher;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
@@ -245,15 +246,17 @@ pub fn build(config: &IndexConfig) -> Result<()> {
         // Process batch in parallel
         let batch_results: Vec<_> = batch
             .par_iter()
-            .map(|(seq_data, _id)| {
+            .map_with(Buffers::default(), |buffers, (seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(
+                crate::minimizers::fill_minimizer_hashes(
                     seq_data,
                     &hasher,
                     config.kmer_length,
                     config.window_size,
                     config.entropy_threshold,
-                )
+                    buffers,
+                );
+                std::mem::take(&mut buffers.hashes)
             })
             .collect();
 
@@ -379,15 +382,17 @@ fn stream_diff_fastx<P: AsRef<Path>>(
         // Process batch in parallel
         let batch_results: Vec<_> = batch
             .par_iter()
-            .map(|(seq_data, _id)| {
+            .map_with(Buffers::default(), |buffers, (seq_data, _id)| {
                 // Compute minimizer hashes for this sequence
-                crate::minimizers::compute_minimizer_hashes(
+                crate::minimizers::fill_minimizer_hashes(
                     seq_data,
                     &hasher,
                     kmer_length,
                     window_size,
                     0.0,
-                )
+                    buffers,
+                );
+                std::mem::take(&mut buffers.hashes)
             })
             .collect();
 
