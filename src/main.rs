@@ -308,7 +308,7 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 output,
                 capacity_millions,
             } => {
-                union_index(inputs, output.as_ref(), *capacity_millions)
+                union_index(inputs, output.as_deref(), *capacity_millions)
                     .context("Failed to run index union command")?;
             }
             IndexCommands::Diff {
@@ -318,11 +318,11 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 window_size,
                 output,
             } => {
-                diff_index(first, second, *kmer_length, *window_size, output.as_ref())
+                diff_index(first, second, *kmer_length, *window_size, output.as_deref())
                     .context("Failed to run index diff command")?;
             }
             IndexCommands::Convert { input, output } => {
-                convert_index(input, output.clone())?;
+                convert_index(input, output.as_deref())?;
             }
         },
         Commands::Filter {

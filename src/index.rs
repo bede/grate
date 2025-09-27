@@ -74,16 +74,16 @@ pub fn load_header_and_count<P: AsRef<Path>>(path: &P) -> Result<(IndexHeader, u
 
 static INDEX: OnceLock<(PathBuf, FxHashSet<u64>, IndexHeader)> = OnceLock::new();
 
-pub fn load_minimizer_hashes_cached<P: AsRef<Path>>(
-    path: &P,
+pub fn load_minimizer_hashes_cached(
+    path: &Path,
 ) -> Result<(&'static FxHashSet<u64>, &'static IndexHeader)> {
     let (p, minimizers, header) = INDEX.get_or_init(|| {
         let (m, h) = load_minimizer_hashes(path).unwrap();
-        (path.as_ref().to_owned(), m, h)
+        (path.to_owned(), m, h)
     });
     assert_eq!(
         p,
-        path.as_ref(),
+        path,
         "Currently, the server can only have one index loaded."
     );
 
@@ -135,9 +135,9 @@ fn load_minimizer_hashes_fixedint(mut reader: impl std::io::Read) -> Result<FxHa
 /// Load the hashes without spiking memory usage with an extra vec
 /// This new version uses fixed-width integer encoding.
 /// Use `deacon index convert` to convert from the old format.
-pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>, IndexHeader)> {
+pub fn load_minimizer_hashes(path: &Path) -> Result<(FxHashSet<u64>, IndexHeader)> {
     let file =
-        File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
+        File::open(path).context(format!("Failed to open index file {:?}", path))?;
     let mut reader = BufReader::with_capacity(1 << 20, file);
     let config = bincode::config::standard().with_fixed_int_encoding();
 
@@ -159,7 +159,7 @@ pub fn load_minimizer_hashes<P: AsRef<Path>>(path: &P) -> Result<(FxHashSet<u64>
 pub fn write_minimizers(
     minimizers: &FxHashSet<u64>,
     header: &IndexHeader,
-    output_path: Option<&PathBuf>,
+    output_path: Option<&Path>,
 ) -> Result<()> {
     // Create writer based on output path
     let writer: Box<dyn Write> = if let Some(path) = output_path {
@@ -335,7 +335,7 @@ pub fn build(config: &IndexConfig) -> Result<()> {
     let header = IndexHeader::new(config.kmer_length, config.window_size);
 
     // Write to output path or stdout
-    write_minimizers(&all_minimizers, &header, config.output_path.as_ref())?;
+    write_minimizers(&all_minimizers, &header, config.output_path.as_deref())?;
 
     let total_time = start_time.elapsed();
     eprintln!("Completed in {:.2?}", total_time);
@@ -344,14 +344,14 @@ pub fn build(config: &IndexConfig) -> Result<()> {
 }
 
 /// Stream minimizers from a FASTX file or stdin and remove those present in first_minimizers
-fn stream_diff_fastx<P: AsRef<Path>>(
-    fastx_path: P,
+fn stream_diff_fastx(
+    fastx_path: &Path,
     kmer_length: u8,
     window_size: u8,
     first_header: &IndexHeader,
     first_minimizers: &mut FxHashSet<u64>,
 ) -> Result<(usize, usize)> {
-    let path = fastx_path.as_ref();
+    let path = fastx_path;
 
     // Validate parameters match the first index
     if kmer_length != first_header.kmer_length() || window_size != first_header.window_size() {
@@ -474,17 +474,17 @@ fn stream_diff_fastx<P: AsRef<Path>>(
 }
 
 /// Compute the set difference between two minimizer indexes (A - B)
-pub fn diff<P: AsRef<Path>>(
-    first: P,
-    second: P,
+pub fn diff(
+    first: &Path,
+    second: &Path,
     kmer_length: Option<u8>,
     window_size: Option<u8>,
-    output: Option<&PathBuf>,
+    output: Option<&Path>,
 ) -> Result<()> {
     let start_time = Instant::now();
 
     // Load first file (always an index)
-    let (mut first_minimizers, header) = load_minimizer_hashes(&first)?;
+    let (mut first_minimizers, header) = load_minimizer_hashes(first)?;
     eprintln!("First index: loaded {} minimizers", first_minimizers.len());
 
     // Guess if second file is an index or FASTX file
@@ -492,7 +492,7 @@ pub fn diff<P: AsRef<Path>>(
         // Second file is a FASTX file - stream diff with provided k, w
         let before_count = first_minimizers.len();
         let (_seq_count, _total_bp) =
-            stream_diff_fastx(&second, k, w, &header, &mut first_minimizers)?;
+            stream_diff_fastx(second, k, w, &header, &mut first_minimizers)?;
 
         // Report results
         eprintln!(
@@ -583,11 +583,11 @@ pub fn diff<P: AsRef<Path>>(
 }
 
 /// Show info about an index
-pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
+pub fn info(index_path: &Path) -> Result<()> {
     let start_time = Instant::now();
 
     // Load index file
-    let (minimizers, header) = load_minimizer_hashes(&index_path)?;
+    let (minimizers, header) = load_minimizer_hashes(index_path)?;
 
     // Show index info
     eprintln!("Index information:");
@@ -602,9 +602,9 @@ pub fn info<P: AsRef<Path>>(index_path: P) -> Result<()> {
     Ok(())
 }
 
-pub fn convert_index<P: AsRef<Path>>(from: P, to: Option<PathBuf>) -> Result<()> {
+pub fn convert_index(from: &Path, to: Option<&Path>) -> Result<()> {
     let start_time = Instant::now();
-    let (minimizers, mut header) = load_minimizer_hashes(&from)?;
+    let (minimizers, mut header) = load_minimizer_hashes(from)?;
     let load_time = start_time.elapsed();
     eprintln!(
         "Loaded index (k={}, w={}) in {:.2?}",
@@ -613,7 +613,7 @@ pub fn convert_index<P: AsRef<Path>>(from: P, to: Option<PathBuf>) -> Result<()>
     assert_eq!(header.format_version, 2);
     header.format_version = 3;
     let start_time = Instant::now();
-    write_minimizers(&minimizers, &header, to.as_ref())?;
+    write_minimizers(&minimizers, &header, to)?;
     let write_time = start_time.elapsed();
     eprintln!("Converted index in {:.2?}", write_time);
 
@@ -621,9 +621,9 @@ pub fn convert_index<P: AsRef<Path>>(from: P, to: Option<PathBuf>) -> Result<()>
 }
 
 /// Combine minimizer indexes (set union)
-pub fn union<P: AsRef<Path>>(
-    inputs: &[P],
-    output: Option<&PathBuf>,
+pub fn union(
+    inputs: &[PathBuf],
+    output: Option<&Path>,
     capacity_millions: Option<usize>,
 ) -> Result<()> {
     let start_time = Instant::now();

@@ -195,9 +195,9 @@ pub struct IndexConfig {
 
 impl IndexConfig {
     /// Create a new index configuration with the specified input path
-    pub fn new<P: AsRef<Path>>(input_path: P) -> Self {
+    pub fn new(input_path: PathBuf) -> Self {
         Self {
-            input_path: input_path.as_ref().to_path_buf(),
+            input_path: input_path,
             kmer_length: DEFAULT_KMER_LENGTH,
             window_size: DEFAULT_WINDOW_SIZE,
             output_path: None,
@@ -221,8 +221,8 @@ impl IndexConfig {
     }
 
     /// Set output path
-    pub fn with_output<P: AsRef<Path>>(mut self, output_path: P) -> Self {
-        self.output_path = Some(output_path.as_ref().to_path_buf());
+    pub fn with_output(mut self, output_path: PathBuf) -> Self {
+        self.output_path = Some(output_path);
         self
     }
 
@@ -256,14 +256,14 @@ impl IndexConfig {
     }
 }
 
-pub fn load_minimizers<P: AsRef<Path>>(path: P) -> Result<(FxHashSet<u64>, index::IndexHeader)> {
-    index::load_minimizer_hashes(&path)
+pub fn load_minimizers(path: &Path) -> Result<(FxHashSet<u64>, index::IndexHeader)> {
+    index::load_minimizer_hashes(path)
 }
 
 pub fn write_minimizers(
     minimizers: &FxHashSet<u64>,
     header: &index::IndexHeader,
-    output_path: Option<&PathBuf>,
+    output_path: Option<&Path>,
 ) -> Result<()> {
     index::write_minimizers(minimizers, header, output_path)
 }
