@@ -293,10 +293,7 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
             IndexCommands::Info { index } => {
                 index_info(index).context("Failed to run index info command")?;
             }
-            IndexCommands::Union {
-                inputs,
-                output,
-            } => {
+            IndexCommands::Union { inputs, output } => {
                 union_index(inputs, output.as_deref())
                     .context("Failed to run index union command")?;
             }
