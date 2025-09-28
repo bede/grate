@@ -332,7 +332,6 @@ dependencies = [
  "indicatif",
  "liblzma",
  "needletail",
- "niffler",
  "packed-seq",
  "paraseq",
  "parking_lot",

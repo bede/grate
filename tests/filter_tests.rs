@@ -1301,24 +1301,42 @@ fn test_large_kmer_filter() {
 fn test_filter_empty_file() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
-    let empty_fastq_path = temp_dir.path().join("empty.fastq");
     let bin_path = temp_dir.path().join("ref.bin");
-    let output_path = temp_dir.path().join("filtered.fastq");
 
     create_test_fasta(&fasta_path);
-    fs::write(&empty_fastq_path, "").unwrap(); // Create empty file
     build_index(&fasta_path, &bin_path);
 
-    let mut cmd = Command::cargo_bin("deacon").unwrap();
-    cmd.arg("filter")
-        .arg(&bin_path)
-        .arg(&empty_fastq_path)
-        .arg("--output")
-        .arg(&output_path)
-        .assert()
-        .success();
+    // Test files with 0-4 bytes (below niffler threshold)
+    for num_bytes in 0..=4 {
+        let test_file_path = temp_dir.path().join(format!("test_{}.fastq", num_bytes));
+        let output_path = temp_dir.path().join(format!("output_{}.fastq", num_bytes));
+        let summary_path = temp_dir.path().join(format!("summary_{}.json", num_bytes));
 
-    assert!(output_path.exists(), "Output file should be created");
-    let output_content = fs::read_to_string(&output_path).unwrap();
-    assert!(output_content.is_empty(), "Output should be empty for empty input");
+        fs::write(&test_file_path, "\n".repeat(num_bytes)).unwrap();
+
+        Command::cargo_bin("deacon").unwrap()
+            .arg("filter")
+            .arg(&bin_path)
+            .arg(&test_file_path)
+            .arg("--output")
+            .arg(&output_path)
+            .arg("--summary")
+            .arg(&summary_path)
+            .assert()
+            .success();
+
+        // Verify empty output
+        assert!(output_path.exists(), "Output file should be created for {} bytes", num_bytes);
+        let output_content = fs::read_to_string(&output_path).unwrap();
+        assert!(output_content.is_empty(), "Output should be empty for {} bytes", num_bytes);
+
+        // Verify JSON summary
+        let summary_content = fs::read_to_string(&summary_path).unwrap();
+        let summary: serde_json::Value = serde_json::from_str(&summary_content).unwrap();
+
+        assert_eq!(summary["bp_in"].as_u64().unwrap(), 0, "bp_in should be 0 for {} bytes", num_bytes);
+        assert_eq!(summary["seqs_in"].as_u64().unwrap(), 0, "seqs_in should be 0 for {} bytes", num_bytes);
+        assert_eq!(summary["bp_out"].as_u64().unwrap(), 0, "bp_out should be 0 for {} bytes", num_bytes);
+        assert_eq!(summary["seqs_out"].as_u64().unwrap(), 0, "seqs_out should be 0 for {} bytes", num_bytes);
+    }
 }

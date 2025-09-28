@@ -64,6 +64,16 @@ fn check_input_paths(config: &FilterConfig) -> Result<()> {
     Ok(())
 }
 
+/// Gracefully handle empty files and non-empty files shorter than 5 bytes (niffler threshold)
+fn is_empty_file(path: &str) -> Result<bool> {
+    if path == "-" {
+        return Ok(false); // stdin is not considered empty
+    }
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| anyhow::anyhow!("Failed to read file metadata {}: {}", path, e))?;
+    Ok(metadata.len() < 5) // Niffler requires >=5 bytes to work
+}
+
 /// Create a paraseq reader from optional path (stdin if None or "-")
 fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::Read + Send>>> {
     match path {
@@ -73,10 +83,9 @@ fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::R
                 .map_err(|e| anyhow::anyhow!("Failed to create stdin reader: {}", e))
         }
         Some(p) => {
-            let (reader, _format) = niffler::send::from_path(p)
-                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))?;
-            Reader::new(reader)
-                .map_err(|e| anyhow::anyhow!("Failed to create reader for {}: {}", p, e))
+            // Use paraseq's from_path for files (internally uses niffler for compression detection)
+            Reader::from_path(p)
+                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))
         }
     }
 }
@@ -759,26 +768,52 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         filtering_start_time,
     );
 
-    // Process based on input type
-    let num_threads = if config.threads == 0 {
-        rayon::current_num_threads()
-    } else {
-        config.threads
-    };
+    // Check for empty files and handle gracefully
+    let input1_empty = is_empty_file(config.input_path)?;
+    let input2_empty = config.input2_path.map(|p| is_empty_file(p)).transpose()?.unwrap_or(false);
 
-    if paired_stdin {
-        // Interleaved paired from stdin - use native interleaved processor
-        let reader = create_paraseq_reader(Some("-"))?;
-        reader.process_parallel_interleaved(&mut processor, num_threads)?;
-    } else if let Some(input2_path) = config.input2_path {
-        // Paired files
-        let r1_reader = create_paraseq_reader(Some(config.input_path))?;
-        let r2_reader = create_paraseq_reader(Some(input2_path))?;
-        r1_reader.process_parallel_paired(r2_reader, &mut processor, num_threads)?;
+    // If all input files are empty, skip processing entirely
+    if input1_empty && (config.input2_path.is_none() || input2_empty) {
+        if !quiet {
+            eprintln!("Input file(s) are empty, producing empty output");
+        }
+        // Skip the processing entirely - stats will remain at zero
     } else {
-        // Single file or stdin
-        let reader = create_paraseq_reader(Some(config.input_path))?;
-        reader.process_parallel(&mut processor, num_threads)?;
+        // Process based on input type
+        let num_threads = if config.threads == 0 {
+            rayon::current_num_threads()
+        } else {
+            config.threads
+        };
+
+        if paired_stdin {
+            // Interleaved paired stdin - use interleaved processor
+            let reader = create_paraseq_reader(Some("-"))?;
+            reader.process_parallel_interleaved(&mut processor, num_threads)?;
+        } else if let Some(input2_path) = config.input2_path {
+            // Paired files - handle empty files gracefully
+            if input1_empty || input2_empty {
+                if !quiet {
+                    eprintln!("One or both paired input files are empty, producing empty output");
+                }
+                // Skip processing when either paired file is empty
+            } else {
+                let r1_reader = create_paraseq_reader(Some(config.input_path))?;
+                let r2_reader = create_paraseq_reader(Some(input2_path))?;
+                r1_reader.process_parallel_paired(r2_reader, &mut processor, num_threads)?;
+            }
+        } else {
+            // Single file or stdin
+            if input1_empty {
+                if !quiet {
+                    eprintln!("Input file is empty, producing empty output");
+                }
+                // Skip processing for empty single file
+            } else {
+                let reader = create_paraseq_reader(Some(config.input_path))?;
+                reader.process_parallel(&mut processor, num_threads)?;
+            }
+        }
     }
 
     let final_stats = processor.global_stats.lock();
