@@ -117,10 +117,6 @@ enum IndexCommands {
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
 
-        /// Preallocated index capacity in millions of minimizers
-        #[arg(short = 'c', long = "capacity", default_value_t = 400)]
-        capacity_millions: usize,
-
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
@@ -147,10 +143,6 @@ enum IndexCommands {
         /// Path to output file (stdout if not specified)
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
-
-        /// Preallocated index capacity in millions of minimizers (overrides sum-based allocation)
-        #[arg(short = 'c', long = "capacity")]
-        capacity_millions: Option<usize>,
     },
     /// Subtract minimizers in one index from another (A - B)
     Diff {
@@ -281,7 +273,6 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 kmer_length,
                 window_size,
                 output,
-                capacity_millions,
                 threads,
                 quiet,
                 entropy_threshold,
@@ -291,7 +282,6 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                     kmer_length: *kmer_length,
                     window_size: *window_size,
                     output_path: output.clone(),
-                    capacity_millions: *capacity_millions,
                     threads: *threads,
                     quiet: *quiet,
                     entropy_threshold: *entropy_threshold,
@@ -303,12 +293,8 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
             IndexCommands::Info { index } => {
                 index_info(index).context("Failed to run index info command")?;
             }
-            IndexCommands::Union {
-                inputs,
-                output,
-                capacity_millions,
-            } => {
-                union_index(inputs, output.as_ref(), *capacity_millions)
+            IndexCommands::Union { inputs, output } => {
+                union_index(inputs, output.as_deref())
                     .context("Failed to run index union command")?;
             }
             IndexCommands::Diff {
@@ -318,11 +304,11 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 window_size,
                 output,
             } => {
-                diff_index(first, second, *kmer_length, *window_size, output.as_ref())
+                diff_index(first, second, *kmer_length, *window_size, output.as_deref())
                     .context("Failed to run index diff command")?;
             }
             IndexCommands::Convert { input, output } => {
-                convert_index(input, output.clone())?;
+                convert_index(input, output.as_deref())?;
             }
         },
         Commands::Filter {

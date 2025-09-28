@@ -180,9 +180,6 @@ pub struct IndexConfig {
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
 
-    /// Hash table pre-allocation capacity in millions
-    pub capacity_millions: usize,
-
     /// Number of execution threads (0 = auto)
     pub threads: usize,
 
@@ -195,13 +192,12 @@ pub struct IndexConfig {
 
 impl IndexConfig {
     /// Create a new index configuration with the specified input path
-    pub fn new<P: AsRef<Path>>(input_path: P) -> Self {
+    pub fn new(input_path: PathBuf) -> Self {
         Self {
-            input_path: input_path.as_ref().to_path_buf(),
+            input_path: input_path,
             kmer_length: DEFAULT_KMER_LENGTH,
             window_size: DEFAULT_WINDOW_SIZE,
             output_path: None,
-            capacity_millions: 400,
             threads: 8,
             quiet: false,
             entropy_threshold: 0.0,
@@ -221,14 +217,8 @@ impl IndexConfig {
     }
 
     /// Set output path
-    pub fn with_output<P: AsRef<Path>>(mut self, output_path: P) -> Self {
-        self.output_path = Some(output_path.as_ref().to_path_buf());
-        self
-    }
-
-    /// Set hash table capacity in millions
-    pub fn with_capacity_millions(mut self, capacity_millions: usize) -> Self {
-        self.capacity_millions = capacity_millions;
+    pub fn with_output(mut self, output_path: PathBuf) -> Self {
+        self.output_path = Some(output_path);
         self
     }
 
@@ -256,14 +246,14 @@ impl IndexConfig {
     }
 }
 
-pub fn load_minimizers<P: AsRef<Path>>(path: P) -> Result<(FxHashSet<u64>, index::IndexHeader)> {
-    index::load_minimizer_hashes(&path)
+pub fn load_minimizers(path: &Path) -> Result<(FxHashSet<u64>, index::IndexHeader)> {
+    index::load_minimizer_hashes(path)
 }
 
 pub fn write_minimizers(
     minimizers: &FxHashSet<u64>,
     header: &index::IndexHeader,
-    output_path: Option<&PathBuf>,
+    output_path: Option<&Path>,
 ) -> Result<()> {
     index::write_minimizers(minimizers, header, output_path)
 }
