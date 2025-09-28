@@ -201,7 +201,6 @@ pub fn build(config: &IndexConfig) -> Result<()> {
 
     // Build options string similar to filter
     let mut options = Vec::<String>::new();
-    options.push(format!("capacity={}M", config.capacity_millions));
     if config.threads > 0 {
         options.push(format!("threads={}", config.threads));
     }
@@ -238,9 +237,7 @@ pub fn build(config: &IndexConfig) -> Result<()> {
     };
 
     // Init FxHashSet with user-specified capacity
-    let capacity = config.capacity_millions * 1_000_000;
-    let mut all_minimizers: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(capacity, Default::default());
+    let mut all_minimizers = FxHashSet::<u64>::default();
 
     eprintln!(
         "Building index (k={}, w={})",
@@ -619,11 +616,7 @@ pub fn convert_index(from: &Path, to: Option<&Path>) -> Result<()> {
 }
 
 /// Combine minimizer indexes (set union)
-pub fn union(
-    inputs: &[PathBuf],
-    output: Option<&Path>,
-    capacity_millions: Option<usize>,
-) -> Result<()> {
+pub fn union(inputs: &[PathBuf], output: Option<&Path>) -> Result<()> {
     let start_time = Instant::now();
     // Check input files
     if inputs.is_empty() {
@@ -634,20 +627,11 @@ pub fn union(
 
     // Read all headers first to determine total capacity needed
     let mut headers_and_counts = Vec::new();
-    let mut sum_capacity = 0;
 
     for path in inputs {
         let (header, count) = load_header_and_count(path)?;
-        sum_capacity += count;
         headers_and_counts.push((header, count));
     }
-
-    // Use provided capacity or fall back to sum of all index counts
-    let total_capacity = if let Some(capacity_millions) = capacity_millions {
-        capacity_millions * 1_000_000
-    } else {
-        sum_capacity
-    };
 
     // Get header from first file for output
     let header = &headers_and_counts[0].0;
@@ -657,18 +641,6 @@ pub fn union(
         header.kmer_length(),
         header.window_size()
     );
-    if capacity_millions.is_some() {
-        eprintln!(
-            "Pre-allocating user-specified capacity for {} minimizers",
-            total_capacity
-        );
-    } else {
-        eprintln!(
-            "No capacity specified, pre-allocating worst-case capacity for {} minimizers from {} indexes",
-            total_capacity,
-            inputs.len()
-        );
-    }
 
     // Verify all headers are compatible
     for (i, (file_header, _)) in headers_and_counts.iter().enumerate() {
@@ -687,8 +659,7 @@ pub fn union(
     }
 
     // Pre-allocate hash set with total capacity to avoid resizing
-    let mut all_minimizers: FxHashSet<u64> =
-        FxHashSet::with_capacity_and_hasher(total_capacity, Default::default());
+    let mut all_minimizers = FxHashSet::<u64>::default();
 
     // Now load and merge all indexes
     for (i, path) in inputs.iter().enumerate() {

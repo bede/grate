@@ -180,9 +180,6 @@ pub struct IndexConfig {
     /// Path to output file (None for stdout)
     pub output_path: Option<PathBuf>,
 
-    /// Hash table pre-allocation capacity in millions
-    pub capacity_millions: usize,
-
     /// Number of execution threads (0 = auto)
     pub threads: usize,
 
@@ -201,7 +198,6 @@ impl IndexConfig {
             kmer_length: DEFAULT_KMER_LENGTH,
             window_size: DEFAULT_WINDOW_SIZE,
             output_path: None,
-            capacity_millions: 400,
             threads: 8,
             quiet: false,
             entropy_threshold: 0.0,
@@ -223,12 +219,6 @@ impl IndexConfig {
     /// Set output path
     pub fn with_output(mut self, output_path: PathBuf) -> Self {
         self.output_path = Some(output_path);
-        self
-    }
-
-    /// Set hash table capacity in millions
-    pub fn with_capacity_millions(mut self, capacity_millions: usize) -> Self {
-        self.capacity_millions = capacity_millions;
         self
     }
 
