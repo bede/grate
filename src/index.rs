@@ -82,8 +82,7 @@ pub fn load_minimizer_hashes_cached(
         (path.to_owned(), m, h)
     });
     assert_eq!(
-        p,
-        path,
+        p, path,
         "Currently, the server can only have one index loaded."
     );
 
@@ -136,8 +135,7 @@ fn load_minimizer_hashes_fixedint(mut reader: impl std::io::Read) -> Result<FxHa
 /// This new version uses fixed-width integer encoding.
 /// Use `deacon index convert` to convert from the old format.
 pub fn load_minimizer_hashes(path: &Path) -> Result<(FxHashSet<u64>, IndexHeader)> {
-    let file =
-        File::open(path).context(format!("Failed to open index file {:?}", path))?;
+    let file = File::open(path).context(format!("Failed to open index file {:?}", path))?;
     let mut reader = BufReader::with_capacity(1 << 20, file);
     let config = bincode::config::standard().with_fixed_int_encoding();
 
