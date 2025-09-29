@@ -1,14 +1,12 @@
-use crate::FilterConfig;
 use crate::index::load_minimizer_hashes_cached;
 use crate::minimizers::KmerHasher;
+use crate::FilterConfig;
 use anyhow::{Context, Result};
-use flate2::write::GzEncoder;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use liblzma::write::XzEncoder;
 use packed_seq::SeqVec;
-use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{PairedParallelProcessor, ParallelProcessor, ParallelReader};
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -18,7 +16,6 @@ use std::iter::zip;
 use std::sync::Arc;
 use std::time::Instant;
 use xxhash_rust;
-use zstd::stream::write::Encoder as ZstdEncoder;
 
 const OUTPUT_BUFFER_SIZE: usize = 8 * 1024 * 1024; // Opt: 8MB output buffer
 const DEFAULT_BUFFER_SIZE: usize = 64 * 1024;
@@ -84,8 +81,7 @@ fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::R
         }
         Some(p) => {
             // Use paraseq's from_path for files (internally uses niffler for compression detection)
-            Reader::from_path(p)
-                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))
+            Reader::from_path(p).map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))
         }
     }
 }
@@ -128,6 +124,7 @@ fn format_record_to_buffer<R: Record>(
 }
 
 /// Validate compression level for the given format
+#[cfg(feature = "compression")]
 fn validate_compression_level(level: u8, min: u8, max: u8, format: &str) -> Result<()> {
     if level < min || level > max {
         Err(anyhow::anyhow!(
@@ -143,6 +140,7 @@ fn validate_compression_level(level: u8, min: u8, max: u8, format: &str) -> Resu
 }
 
 // Return a file writer appropriate for the output path extension
+#[cfg_attr(not(feature = "compression"), allow(unused_variables))]
 fn get_writer(output_path: Option<&std::path::Path>, compression_level: u8) -> Result<BoxedWriter> {
     let Some(path) = output_path else {
         return Ok(Box::new(BufWriter::with_capacity(
@@ -161,23 +159,26 @@ fn get_writer(output_path: Option<&std::path::Path>, compression_level: u8) -> R
     let buffered_file = BufWriter::with_capacity(OUTPUT_BUFFER_SIZE, file);
 
     match path.to_string_lossy().as_ref() {
+        #[cfg(feature = "compression")]
         p if p.ends_with(".gz") => {
             validate_compression_level(compression_level, 1, 9, "gzip")?;
-            Ok(Box::new(GzEncoder::new(
+            Ok(Box::new(flate2::write::GzEncoder::new(
                 buffered_file,
                 flate2::Compression::new(compression_level as u32),
             )))
         }
+        #[cfg(feature = "compression")]
         p if p.ends_with(".zst") => {
             validate_compression_level(compression_level, 1, 22, "zstd")?;
-            Ok(Box::new(ZstdEncoder::new(
+            Ok(Box::new(zstd::stream::write::Encoder::new(
                 buffered_file,
                 compression_level as i32,
             )?))
         }
+        #[cfg(feature = "compression")]
         p if p.ends_with(".xz") => {
             validate_compression_level(compression_level, 0, 9, "xz")?;
-            Ok(Box::new(XzEncoder::new(
+            Ok(Box::new(liblzma::write::XzEncoder::new(
                 buffered_file,
                 compression_level as u32,
             )))
@@ -770,7 +771,11 @@ pub fn run(config: &FilterConfig) -> Result<()> {
 
     // Check for empty files and handle gracefully
     let input1_empty = is_empty_file(config.input_path)?;
-    let input2_empty = config.input2_path.map(|p| is_empty_file(p)).transpose()?.unwrap_or(false);
+    let input2_empty = config
+        .input2_path
+        .map(|p| is_empty_file(p))
+        .transpose()?
+        .unwrap_or(false);
 
     // If all input files are empty, skip processing entirely
     if input1_empty && (config.input2_path.is_none() || input2_empty) {
