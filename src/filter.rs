@@ -249,14 +249,15 @@ struct FilterProcessor {
     filtering_start_time: Instant,
 }
 
-#[derive(Clone, Default)]
-struct ProcessingStats {
-    total_seqs: u64,
+#[derive(Clone, Default, Debug)]
+pub(crate) struct ProcessingStats {
+    pub total_seqs: u64,
     filtered_seqs: u64,
-    total_bp: u64,
+    pub total_bp: u64,
     output_bp: u64,
     filtered_bp: u64,
     output_seq_counter: u64,
+    pub last_reported: u64,
 }
 
 #[derive(Default, Clone)]

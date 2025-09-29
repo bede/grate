@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use deacon::index::convert_index;
 use deacon::{
-    DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, FilterConfig, IndexConfig, diff_index, index_info,
-    union_index,
+    diff_index, index_info, union_index, FilterConfig, IndexConfig, DEFAULT_KMER_LENGTH,
+    DEFAULT_WINDOW_SIZE,
 };
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
@@ -158,6 +158,10 @@ enum IndexCommands {
         #[arg(short = 'w', long = "window-size")]
         window_size: Option<u8>,
 
+        /// Number of execution threads (0 = auto)
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
+        threads: usize,
+
         /// Path to output file (stdout if not specified)
         #[arg(short = 'o', long = "output")]
         output: Option<PathBuf>,
@@ -294,9 +298,17 @@ fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
                 kmer_length,
                 window_size,
                 output,
+                threads,
             } => {
-                diff_index(first, second, *kmer_length, *window_size, output.as_deref())
-                    .context("Failed to run index diff command")?;
+                diff_index(
+                    first,
+                    second,
+                    *kmer_length,
+                    *window_size,
+                    *threads,
+                    output.as_deref(),
+                )
+                .context("Failed to run index diff command")?;
             }
             IndexCommands::Convert { input, output } => {
                 convert_index(input, output.as_deref())?;

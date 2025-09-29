@@ -1,18 +1,18 @@
-use crate::IndexConfig;
-use crate::filter::Buffers;
+use crate::filter::{Buffers, ProcessingStats};
 use crate::minimizers::KmerHasher;
+use crate::IndexConfig;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
-use rayon::prelude::*;
+use paraseq::prelude::{ParallelProcessor, ParallelReader};
+use paraseq::Record;
+use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{self, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
-
-use needletail::{parse_fastx_file, parse_fastx_stdin};
 
 /// Serialisable header for the index file
 #[derive(Serialize, Deserialize, Debug)]
@@ -161,7 +161,7 @@ pub fn write_minimizers(
 ) -> Result<()> {
     // Create writer based on output path
     let writer: Box<dyn Write> = if let Some(path) = output_path {
-        if path.to_string_lossy() == "-" {
+        if path.as_os_str() == "-" {
             Box::new(BufWriter::new(io::stdout()))
         } else {
             Box::new(BufWriter::new(
@@ -190,6 +190,59 @@ pub fn write_minimizers(
             .context("Failed to serialise minimizer hash")?;
     }
     Ok(())
+}
+
+#[derive(Clone)]
+struct BuildIndexProcessor<'c> {
+    config: &'c IndexConfig,
+    hasher: KmerHasher,
+    // Local buffers
+    buffers: Buffers,
+    local_stats: ProcessingStats,
+    local_hashes: FxHashSet<u64>,
+    // Global state
+    global_stats: Arc<Mutex<ProcessingStats>>,
+    global_hashes: Arc<Mutex<FxHashSet<u64>>>,
+}
+
+impl<Rf: Record> ParallelProcessor<Rf> for BuildIndexProcessor<'_> {
+    fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
+        let seq = record.seq();
+        self.local_stats.total_seqs += 1;
+        self.local_stats.total_bp += seq.len() as u64;
+
+        crate::minimizers::fill_minimizer_hashes(
+            &seq,
+            &self.hasher,
+            self.config.kmer_length,
+            self.config.window_size,
+            self.config.entropy_threshold,
+            &mut self.buffers,
+        );
+        self.local_hashes.extend(&self.buffers.hashes);
+
+        Ok(())
+    }
+
+    // TODO: on_thread_complete?
+    fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
+        // Write buffer to output
+        {
+            let mut global_hashes = self.global_hashes.lock();
+            global_hashes.extend(&self.local_hashes);
+            self.local_hashes.clear();
+        }
+
+        // Update global stats
+        {
+            let mut stats = self.global_stats.lock();
+            stats.total_seqs += self.local_stats.total_seqs;
+            stats.total_bp += self.local_stats.total_bp;
+            self.local_stats = ProcessingStats::default();
+        }
+
+        Ok(())
+    }
 }
 
 /// Build an index of minimizers from a fastx file
@@ -221,110 +274,41 @@ pub fn build(config: &IndexConfig) -> Result<()> {
         ));
     }
 
-    // Configure thread pool if specified (non-zero)
-    if config.threads > 0 {
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(config.threads)
-            .build_global()
-            .context("Failed to initialize thread pool")?;
-    }
-
-    // Use needletail for parsing
-    let mut reader = if path.to_string_lossy() == "-" {
-        parse_fastx_stdin().context("Failed to parse stdin")?
+    let in_path = if path.as_os_str() == "-" {
+        None
     } else {
-        parse_fastx_file(path).context("Failed to open input file")?
+        Some(path)
     };
-
-    // Init FxHashSet with user-specified capacity
-    let mut all_minimizers = FxHashSet::<u64>::default();
+    let reader = paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
 
     eprintln!(
         "Building index (k={}, w={})",
         config.kmer_length, config.window_size
     );
 
-    let mut seq_count = 0;
-    let mut total_bp = 0;
+    let mut processor = BuildIndexProcessor {
+        config,
+        hasher: KmerHasher::new(config.kmer_length as usize),
+        local_stats: ProcessingStats::default(),
+        buffers: Buffers::default(),
+        local_hashes: Default::default(),
+        global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
+        global_hashes: Arc::new(Mutex::new(FxHashSet::<u64>::default())),
+    };
+    reader.process_parallel(&mut processor, config.threads)?;
 
-    // Process sequences in batches for parallelization
-    let batch_size = 10000;
-
-    let hasher = KmerHasher::new(config.kmer_length as usize);
-
-    loop {
-        // Collect a batch of sequences
-        let mut batch = Vec::with_capacity(batch_size);
-        let mut reached_end = false;
-
-        for _ in 0..batch_size {
-            if let Some(record_result) = reader.next() {
-                match record_result {
-                    Ok(record) => {
-                        let seq_data = record.seq().to_vec();
-                        let id = record.id().to_vec();
-                        batch.push((seq_data, id));
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            } else {
-                reached_end = true;
-                break;
-            }
-        }
-
-        if batch.is_empty() {
-            break;
-        }
-
-        // Process batch in parallel
-        let batch_results: Vec<_> = batch
-            .par_iter()
-            .map_with(Buffers::default(), |buffers, (seq_data, _id)| {
-                // Compute minimizer hashes for this sequence
-                crate::minimizers::fill_minimizer_hashes(
-                    seq_data,
-                    &hasher,
-                    config.kmer_length,
-                    config.window_size,
-                    config.entropy_threshold,
-                    buffers,
-                );
-                std::mem::take(&mut buffers.hashes)
-            })
-            .collect();
-
-        // Merge results sequentially (to avoid concurrent modification of hash set)
-        for (i, hashes) in batch_results.iter().enumerate() {
-            let (seq_data, id) = &batch[i];
-
-            all_minimizers.extend(hashes.iter());
-
-            seq_count += 1;
-            total_bp += seq_data.len();
-
-            if !config.quiet {
-                let id_str = std::str::from_utf8(id).unwrap_or("unknown");
-                eprintln!(
-                    "  {} ({}bp), total minimizers: {}",
-                    id_str,
-                    seq_data.len(),
-                    all_minimizers.len()
-                );
-            }
-        }
-
-        // Check if we've reached the end of the file
-        if reached_end {
-            break;
-        }
-    }
+    let all_minimizers = Arc::try_unwrap(processor.global_hashes)
+        .unwrap()
+        .into_inner();
+    let stats = Arc::try_unwrap(processor.global_stats)
+        .unwrap()
+        .into_inner();
 
     eprintln!(
         "Indexed {} minimizers from {} sequence(s) ({}bp)",
         all_minimizers.len(),
-        seq_count,
-        total_bp
+        stats.total_seqs,
+        stats.total_bp
     );
 
     let header = IndexHeader::new(config.kmer_length, config.window_size);
@@ -338,12 +322,84 @@ pub fn build(config: &IndexConfig) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct DiffIndexProcessor {
+    kmer_length: u8,
+    window_size: u8,
+    hasher: KmerHasher,
+    // Local buffers
+    buffers: Buffers,
+    local_stats: ProcessingStats,
+    local_hashes: FxHashSet<u64>,
+    // Global state
+    global_stats: Arc<Mutex<ProcessingStats>>,
+    initial_size: usize,
+    global_hashes: Arc<Mutex<FxHashSet<u64>>>,
+}
+
+impl<Rf: Record> ParallelProcessor<Rf> for DiffIndexProcessor {
+    fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
+        let seq = record.seq();
+        self.local_stats.total_seqs += 1;
+        self.local_stats.total_bp += seq.len() as u64;
+
+        crate::minimizers::fill_minimizer_hashes(
+            &seq,
+            &self.hasher,
+            self.kmer_length,
+            self.window_size,
+            0.0,
+            &mut self.buffers,
+        );
+        self.local_hashes.extend(&self.buffers.hashes);
+
+        Ok(())
+    }
+
+    // TODO: on_thread_complete?
+    fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
+        // Write buffer to output
+        let len;
+        {
+            let mut global_hashes = self.global_hashes.lock();
+            for h in &self.local_hashes {
+                global_hashes.remove(h);
+            }
+            len = global_hashes.len();
+            self.local_hashes.clear();
+        }
+
+        // Update global stats
+        {
+            let mut stats = self.global_stats.lock();
+            stats.total_seqs += self.local_stats.total_seqs;
+            stats.total_bp += self.local_stats.total_bp;
+
+            let current_gb = stats.total_bp / 1_000_000_000;
+            if current_gb > stats.last_reported {
+                eprintln!(
+                    "  Processed {} sequences ({}bp), removed {} minimizers",
+                    stats.total_seqs,
+                    stats.total_bp,
+                    self.initial_size - len
+                );
+                stats.last_reported = current_gb;
+            }
+
+            self.local_stats = ProcessingStats::default();
+        }
+
+        Ok(())
+    }
+}
+
 /// Stream minimizers from a FASTX file or stdin and remove those present in first_minimizers
 fn stream_diff_fastx(
     fastx_path: &Path,
     kmer_length: u8,
     window_size: u8,
     first_header: &IndexHeader,
+    threads: usize,
     first_minimizers: &mut FxHashSet<u64>,
 ) -> Result<(usize, usize)> {
     let path = fastx_path;
@@ -359,7 +415,7 @@ fn stream_diff_fastx(
         ));
     }
 
-    if path.to_string_lossy() == "-" {
+    if path.as_os_str() == "-" {
         eprintln!(
             "Second index: processing FASTX from stdin (k={}, w={})…",
             kmer_length, window_size
@@ -371,101 +427,36 @@ fn stream_diff_fastx(
         );
     }
 
-    // Use needletail for parsing
-    let mut reader = if path.to_string_lossy() == "-" {
-        parse_fastx_stdin().context("Failed to parse stdin")?
+    let in_path = if path.as_os_str() == "-" {
+        None
     } else {
-        parse_fastx_file(path).context("Failed to open FASTX file")?
+        Some(path)
     };
+    let reader = paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
 
-    let mut seq_count = 0;
-    let mut total_bp = 0;
-    let mut removed_count = 0;
-    let mut last_reported_gb = 0;
+    let mut processor = DiffIndexProcessor {
+        kmer_length,
+        window_size,
+        hasher: KmerHasher::new(kmer_length as usize),
+        local_stats: ProcessingStats::default(),
+        buffers: Buffers::default(),
+        local_hashes: Default::default(),
+        global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
+        initial_size: first_minimizers.len(),
+        global_hashes: Arc::new(Mutex::new(FxHashSet::<u64>::default())),
+    };
+    reader.process_parallel(&mut processor, threads)?;
 
-    // Process sequences in batches for parallelization
-    let batch_size = 1000;
-
-    let hasher = KmerHasher::new(kmer_length as usize);
-
-    loop {
-        // Collect a batch of sequences
-        let mut batch = Vec::with_capacity(batch_size);
-        let mut reached_end = false;
-
-        for _ in 0..batch_size {
-            if let Some(record_result) = reader.next() {
-                match record_result {
-                    Ok(record) => {
-                        let seq_data = record.seq().to_vec();
-                        let id = record.id().to_vec();
-                        batch.push((seq_data, id));
-                    }
-                    Err(e) => return Err(e.into()),
-                }
-            } else {
-                reached_end = true;
-                break;
-            }
-        }
-
-        if batch.is_empty() {
-            break;
-        }
-
-        // Process batch in parallel
-        let batch_results: Vec<_> = batch
-            .par_iter()
-            .map_with(Buffers::default(), |buffers, (seq_data, _id)| {
-                // Compute minimizer hashes for this sequence
-                crate::minimizers::fill_minimizer_hashes(
-                    seq_data,
-                    &hasher,
-                    kmer_length,
-                    window_size,
-                    0.0,
-                    buffers,
-                );
-                std::mem::take(&mut buffers.hashes)
-            })
-            .collect();
-
-        // Stream removal: remove minimizers as we find them
-        for (i, hashes) in batch_results.iter().enumerate() {
-            let (seq_data, _id) = &batch[i];
-
-            // Remove matching minimizers from first_minimizers immediately
-            for &hash in hashes {
-                if first_minimizers.remove(&hash) {
-                    removed_count += 1;
-                }
-            }
-
-            seq_count += 1;
-            total_bp += seq_data.len();
-
-            let current_gb = total_bp / 1_000_000_000;
-            if current_gb > last_reported_gb {
-                eprintln!(
-                    "  Processed {} sequences ({}bp), removed {} minimizers",
-                    seq_count, total_bp, removed_count
-                );
-                last_reported_gb = current_gb;
-            }
-        }
-
-        // Check if we've reached the end of the file
-        if reached_end {
-            break;
-        }
-    }
+    let stats = Arc::try_unwrap(processor.global_stats)
+        .unwrap()
+        .into_inner();
 
     eprintln!(
         "Processed {} sequences ({}bp) from FASTX file",
-        seq_count, total_bp
+        stats.total_seqs, stats.total_bp
     );
 
-    Ok((seq_count as usize, total_bp))
+    Ok((stats.total_seqs as usize, stats.total_bp as usize))
 }
 
 /// Compute the set difference between two minimizer indexes (A - B)
@@ -474,6 +465,7 @@ pub fn diff(
     second: &Path,
     kmer_length: Option<u8>,
     window_size: Option<u8>,
+    threads: usize,
     output: Option<&Path>,
 ) -> Result<()> {
     let start_time = Instant::now();
@@ -487,7 +479,7 @@ pub fn diff(
         // Second file is a FASTX file - stream diff with provided k, w
         let before_count = first_minimizers.len();
         let (_seq_count, _total_bp) =
-            stream_diff_fastx(second, k, w, &header, &mut first_minimizers)?;
+            stream_diff_fastx(second, k, w, &header, threads, &mut first_minimizers)?;
 
         // Report results
         eprintln!(
@@ -535,7 +527,7 @@ pub fn diff(
             let before_count = first_minimizers.len();
 
             let (_seq_count, _total_bp) =
-                stream_diff_fastx(&second, k, w, &header, &mut first_minimizers)?;
+                stream_diff_fastx(&second, k, w, &header, threads, &mut first_minimizers)?;
 
             // Report results
             eprintln!(
