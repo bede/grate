@@ -49,7 +49,7 @@ rstest = "0.25"
 
 [features]
 # Disable for faster builds.
-compression = ["zstd", "liblzma", "flate2", "needletail/compression", "niffler/default"]
+compression = ["zstd", "liblzma", "flate2", "needletail/compression", "paraseq/default"]
 # Use to still handle .gz files when "compression" is not enabled.
 gz = ["niffler/gz", "flate2", "flate2/default"]
 default = ["compression"]
