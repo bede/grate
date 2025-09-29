@@ -157,7 +157,7 @@ fn get_writer(output_path: Option<&std::path::Path>, compression_level: u8) -> R
 
     let buffered_file = BufWriter::with_capacity(OUTPUT_BUFFER_SIZE, file);
 
-    match output_path {
+    match path.to_string_lossy().as_ref() {
         #[cfg(feature = "compression")]
         p if p.ends_with(".gz") => {
             validate_compression_level(compression_level, 1, 9, "gzip")?;

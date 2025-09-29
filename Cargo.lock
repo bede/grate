@@ -332,6 +332,7 @@ dependencies = [
  "indicatif",
  "liblzma",
  "needletail",
+ "niffler",
  "packed-seq",
  "paraseq",
  "parking_lot",
@@ -727,7 +728,9 @@ dependencies = [
 
 [[package]]
 name = "paraseq"
-version = "0.4.0"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d3ef3012feb5283bb53876f187aa4259b009a75766955bb9fe98b44978cc911"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
