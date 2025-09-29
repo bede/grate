@@ -1,12 +1,12 @@
-use crate::FilterConfig;
 use crate::index::load_minimizer_hashes_cached;
 use crate::minimizers::KmerHasher;
+use crate::FilterConfig;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use packed_seq::SeqVec;
-use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{PairedParallelProcessor, ParallelProcessor, ParallelReader};
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -81,8 +81,7 @@ fn create_paraseq_reader(path: Option<&str>) -> Result<Reader<Box<dyn std::io::R
         }
         Some(p) => {
             // Use paraseq's from_path for files (internally uses niffler for compression detection)
-            Reader::from_path(p)
-                .map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))
+            Reader::from_path(p).map_err(|e| anyhow::anyhow!("Failed to open file {}: {}", p, e))
         }
     }
 }
@@ -770,7 +769,11 @@ pub fn run(config: &FilterConfig) -> Result<()> {
 
     // Check for empty files and handle gracefully
     let input1_empty = is_empty_file(config.input_path)?;
-    let input2_empty = config.input2_path.map(|p| is_empty_file(p)).transpose()?.unwrap_or(false);
+    let input2_empty = config
+        .input2_path
+        .map(|p| is_empty_file(p))
+        .transpose()?
+        .unwrap_or(false);
 
     // If all input files are empty, skip processing entirely
     if input1_empty && (config.input2_path.is_none() || input2_empty) {
