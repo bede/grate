@@ -52,9 +52,7 @@ rstest = "0.25"
 compression = ["zstd", "liblzma", "flate2", "needletail/compression", "niffler/default"]
 # Use to still handle .gz files when "compression" is not enabled.
 gz = ["niffler/gz", "flate2", "flate2/default"]
-# `deacon server` feature.
-server = []
-default = ["server", "compression"]
+default = ["compression"]
 
 [[test]]
 name = "cli_tests"

@@ -6,9 +6,7 @@ use deacon::{
     union_index,
 };
 use serde::{Deserialize, Serialize};
-#[cfg(feature = "server")]
 use std::io::{Read, Write};
-#[cfg(feature = "server")]
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 
@@ -23,13 +21,11 @@ struct Cli {
 
 #[derive(Subcommand, Serialize, Deserialize)]
 enum Commands {
-    #[cfg(feature = "server")]
     Server {
         /// Number of execution threads (0 = auto)
         #[arg(short = 't', long = "threads", default_value_t = 8)]
         threads: usize,
     },
-    #[cfg(feature = "server")]
     Exit,
     /// Build and compose minimizer indexes
     Index {
@@ -177,7 +173,6 @@ enum IndexCommands {
     },
 }
 
-#[cfg(feature = "server")]
 #[derive(Serialize, Deserialize)]
 enum Message {
     /// client -> server
@@ -197,7 +192,6 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    #[cfg(feature = "server")]
     if let Commands::Server { threads } = cli.command {
         assert!(
             !cli.use_server,
@@ -241,7 +235,6 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    #[cfg(feature = "server")]
     if cli.use_server {
         let mut stream = UnixStream::connect("deacon_server_socket")?;
         serde_json::to_writer(&stream, &Message::Command(cli.command))?;
@@ -263,9 +256,7 @@ fn main() -> Result<()> {
 
 fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
     match &command {
-        #[cfg(feature = "server")]
         Commands::Server { .. } => unreachable!(),
-        #[cfg(feature = "server")]
         Commands::Exit => panic!("Use `deacon --use-server Exit` to stop the server."),
         Commands::Index { command } => match command {
             IndexCommands::Build {
