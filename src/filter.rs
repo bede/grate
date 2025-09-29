@@ -124,6 +124,7 @@ fn format_record_to_buffer<R: Record>(
 }
 
 /// Validate compression level for the given format
+#[cfg(feature = "compression")]
 fn validate_compression_level(level: u8, min: u8, max: u8, format: &str) -> Result<()> {
     if level < min || level > max {
         Err(anyhow::anyhow!(
@@ -139,6 +140,7 @@ fn validate_compression_level(level: u8, min: u8, max: u8, format: &str) -> Resu
 }
 
 // Return a file writer appropriate for the output path extension
+#[cfg_attr(not(feature = "compression"), allow(unused_variables))]
 fn get_writer(output_path: Option<&std::path::Path>, compression_level: u8) -> Result<BoxedWriter> {
     let Some(path) = output_path else {
         return Ok(Box::new(BufWriter::with_capacity(
