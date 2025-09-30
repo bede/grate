@@ -728,9 +728,9 @@ dependencies = [
 
 [[package]]
 name = "paraseq"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d3ef3012feb5283bb53876f187aa4259b009a75766955bb9fe98b44978cc911"
+checksum = "3ebc349627e504e69fa7b4cce1858b4b894bb577b5e1cb3e0dc2bf2a5d3ec40c"
 dependencies = [
  "anyhow",
  "crossbeam-channel",

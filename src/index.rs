@@ -1,10 +1,10 @@
-use crate::IndexConfig;
 use crate::filter::{Buffers, ProcessingStats};
 use crate::minimizers::KmerHasher;
+use crate::IndexConfig;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
-use paraseq::Record;
 use paraseq::prelude::{ParallelProcessor, ParallelReader};
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -195,29 +195,8 @@ pub fn write_minimizers(
 fn reader_with_inferred_batch_size(
     in_path: Option<&Path>,
 ) -> Result<paraseq::fastx::Reader<Box<dyn Read + Send>>> {
-    let mut batch_size = 1;
-
-    // Infer batch size for files; use 1 for stdin
-    if in_path.is_some() {
-        {
-            let mut reader =
-                paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
-
-            let mut rset = reader.new_record_set_with_size(1);
-            // Fill record set from reader
-            if rset.fill(&mut reader)? {
-                let mut it = rset.iter();
-                let total_len = it.next().unwrap()?.seq().len();
-                assert!(it.next().is_none());
-                // Target batch size of 256KiB.
-                batch_size = (256 * 1024usize).div_ceil(total_len);
-            }
-        }
-    }
-
-    eprintln!("Batch size: {batch_size} record(s)");
-    let reader =
-        paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, batch_size).unwrap();
+    let mut reader = paraseq::fastx::Reader::from_optional_path(in_path).unwrap();
+    reader.update_batch_size_in_bp(256 * 1024)?;
     Ok(reader)
 }
 
