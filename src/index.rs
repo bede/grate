@@ -196,20 +196,25 @@ fn reader_with_inferred_batch_size(
     in_path: Option<&Path>,
 ) -> Result<paraseq::fastx::Reader<Box<dyn Read + Send>>> {
     let mut batch_size = 1;
-    {
-        let mut reader =
-            paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
 
-        let mut rset = reader.new_record_set_with_size(1);
-        // Fill the record set with records from the reader
-        if rset.fill(&mut reader)? {
-            let mut it = rset.iter();
-            let total_len = it.next().unwrap()?.seq().len();
-            assert!(it.next().is_none());
-            // target batch size of 256KiB.
-            batch_size = (256 * 1024usize).div_ceil(total_len);
+    // Infer batch size for files; use 1 for stdin
+    if in_path.is_some() {
+        {
+            let mut reader =
+                paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
+
+            let mut rset = reader.new_record_set_with_size(1);
+            // Fill record set from reader
+            if rset.fill(&mut reader)? {
+                let mut it = rset.iter();
+                let total_len = it.next().unwrap()?.seq().len();
+                assert!(it.next().is_none());
+                // Target batch size of 256KiB.
+                batch_size = (256 * 1024usize).div_ceil(total_len);
+            }
         }
     }
+
     eprintln!("Batch size: {batch_size} record(s)");
     let reader =
         paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, batch_size).unwrap();
@@ -224,6 +229,7 @@ struct BuildIndexProcessor<'c> {
     buffers: Buffers,
     local_stats: ProcessingStats,
     local_hashes: FxHashSet<u64>,
+    local_record_info: Vec<(Vec<u8>, usize)>, // (record_id, seq_len) for progress output
     // Global state
     global_stats: Arc<Mutex<ProcessingStats>>,
     global_hashes: Arc<Mutex<FxHashSet<u64>>>,
@@ -245,32 +251,23 @@ impl<Rf: Record> ParallelProcessor<Rf> for BuildIndexProcessor<'_> {
         );
         self.local_hashes.extend(&self.buffers.hashes);
 
-        // Print record headers on stderr unless --quiet
+        // Store record info for progress output (printed sequentially in on_batch_complete)
         if !self.config.quiet {
-            let id_str = std::str::from_utf8(record.id()).unwrap_or("unknown");
-            let current_total = {
-                let global = self.global_hashes.lock();
-                global.len() + self.local_hashes.len()
-            };
-            eprintln!(
-                "  {} ({}bp), total minimizers: {}",
-                id_str,
-                seq.len(),
-                current_total
-            );
+            self.local_record_info
+                .push((record.id().to_vec(), seq.len()));
         }
 
         Ok(())
     }
 
-    // TODO: on_thread_complete?
     fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
-        // Write buffer to output
-        {
+        // Merge local hashes into global hash set and get new total count
+        let minimizer_count = {
             let mut global_hashes = self.global_hashes.lock();
             global_hashes.extend(&self.local_hashes);
             self.local_hashes.clear();
-        }
+            global_hashes.len()
+        };
 
         // Update global stats
         {
@@ -278,6 +275,18 @@ impl<Rf: Record> ParallelProcessor<Rf> for BuildIndexProcessor<'_> {
             stats.total_seqs += self.local_stats.total_seqs;
             stats.total_bp += self.local_stats.total_bp;
             self.local_stats = ProcessingStats::default();
+        }
+
+        // Print progress for each record in this batch (sequentially, after merging)
+        if !self.config.quiet {
+            for (record_id, seq_len) in &self.local_record_info {
+                let id_str = std::str::from_utf8(record_id).unwrap_or("unknown");
+                eprintln!(
+                    "  {} ({}bp), total minimizers: {}",
+                    id_str, seq_len, minimizer_count
+                );
+            }
+            self.local_record_info.clear();
         }
 
         Ok(())
@@ -331,6 +340,7 @@ pub fn build(config: &IndexConfig) -> Result<()> {
         local_stats: ProcessingStats::default(),
         buffers: Buffers::default(),
         local_hashes: Default::default(),
+        local_record_info: Vec::new(),
         global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
         global_hashes: Arc::new(Mutex::new(FxHashSet::<u64>::default())),
     };
@@ -395,7 +405,6 @@ impl<Rf: Record> ParallelProcessor<Rf> for DiffIndexProcessor {
         Ok(())
     }
 
-    // TODO: on_thread_complete?
     fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
         // Write buffer to output
         let len;
