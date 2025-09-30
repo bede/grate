@@ -30,7 +30,11 @@ fn test_server_mode() {
     let output_path = temp_dir.path().join("out.fa");
 
     // Create reference and build index
-    fs::write(&ref_fasta, ">ref\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n").unwrap();
+    fs::write(
+        &ref_fasta,
+        ">ref\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n",
+    )
+    .unwrap();
     let index_output = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"))
         .arg("index")
         .arg("build")
@@ -40,7 +44,11 @@ fn test_server_mode() {
     fs::write(&index_path, index_output.stdout).unwrap();
 
     // Create test fasta
-    fs::write(&test_fasta, ">test\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n").unwrap();
+    fs::write(
+        &test_fasta,
+        ">test\nATTAAAGGTTTATACCTTCCCAGGTAACAAACCAACCAACTTTCGATCTCTTGTAGATCT\n",
+    )
+    .unwrap();
 
     // Start server
     let mut server: Child = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"))
