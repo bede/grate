@@ -21,12 +21,11 @@ struct Cli {
 
 #[derive(Subcommand, Serialize, Deserialize)]
 enum Commands {
+    /// Start a server for subsequent low-latency filtering
     Server {
-        /// Number of execution threads (0 = auto)
-        #[arg(short = 't', long = "threads", default_value_t = 8)]
-        threads: usize,
+        #[command(subcommand)]
+        command: ServerCommands,
     },
-    Exit,
     /// Build and compose minimizer indexes
     Index {
         #[command(subcommand)]
@@ -92,6 +91,18 @@ enum Commands {
         #[arg(short = 'q', long = "quiet", default_value_t = false)]
         quiet: bool,
     },
+}
+
+#[derive(Subcommand, Serialize, Deserialize)]
+enum ServerCommands {
+    /// Start the server
+    Start {
+        /// Number of execution threads (0 = auto)
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
+        threads: usize,
+    },
+    /// Stop the running server
+    Exit,
 }
 
 #[derive(Subcommand, Serialize, Deserialize)]
@@ -196,47 +207,57 @@ fn main() -> Result<()> {
 
     let cli = Cli::parse();
 
-    if let Commands::Server { threads } = cli.command {
-        assert!(
-            !cli.use_server,
-            "`deacon --use server Server` does not make sense."
-        );
+    if let Commands::Server { command } = &cli.command {
+        if !cli.use_server {
+            // Running server commands directly (not via --use-server)
+            match command {
+                ServerCommands::Start { threads } => {
+                    rayon::ThreadPoolBuilder::new()
+                        .num_threads(*threads)
+                        .build_global()
+                        .context("Failed to initialize thread pool")?;
 
-        rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
-            .build_global()
-            .context("Failed to initialize thread pool")?;
+                    let listener = UnixListener::bind("deacon_server_socket")?;
+                    for stream in listener.incoming() {
+                        let mut stream = stream.unwrap();
+                        let mut message = vec![];
+                        let mut buf = vec![0; 10000];
+                        loop {
+                            let len = stream.read(&mut buf)?;
+                            let buf = &buf[..len];
+                            message.extend_from_slice(buf);
+                            if buf.contains(&0) {
+                                assert_eq!(buf.last(), Some(&0));
+                                message.pop();
+                                break;
+                            }
+                        }
+                        let message: Message = serde_json::from_slice(&message).unwrap();
+                        match message {
+                            Message::Command(Commands::Server {
+                                command: ServerCommands::Exit,
+                            }) => {
+                                serde_json::to_writer(stream, &Message::Done)?;
+                                break;
+                            }
+                            Message::Command(commands) => {
+                                process_command(&commands)?;
+                                serde_json::to_writer(stream, &Message::Done)?;
+                            }
+                            Message::Done => {
+                                unreachable!("Server should not receive `Done` messages.")
+                            }
+                        }
+                    }
 
-        let listener = UnixListener::bind("deacon_server_socket")?;
-        for stream in listener.incoming() {
-            let mut stream = stream.unwrap();
-            let mut message = vec![];
-            let mut buf = vec![0; 10000];
-            loop {
-                let len = stream.read(&mut buf)?;
-                let buf = &buf[..len];
-                message.extend_from_slice(buf);
-                if buf.contains(&0) {
-                    assert_eq!(buf.last(), Some(&0));
-                    message.pop();
-                    break;
+                    return Ok(());
                 }
-            }
-            let message: Message = serde_json::from_slice(&message).unwrap();
-            match message {
-                Message::Command(Commands::Exit) => {
-                    serde_json::to_writer(stream, &Message::Done)?;
-                    break;
+                ServerCommands::Exit => {
+                    panic!("Use `deacon --use-server server exit` to stop the server.")
                 }
-                Message::Command(commands) => {
-                    process_command(&commands)?;
-                    serde_json::to_writer(stream, &Message::Done)?;
-                }
-                Message::Done => unreachable!("Server should not receive `Done` messages."),
             }
         }
-
-        return Ok(());
+        // If --use-server is set, fall through to client code below
     }
 
     if cli.use_server {
@@ -260,8 +281,9 @@ fn main() -> Result<()> {
 
 fn process_command(command: &Commands) -> Result<(), anyhow::Error> {
     match &command {
-        Commands::Server { .. } => unreachable!(),
-        Commands::Exit => panic!("Use `deacon --use-server Exit` to stop the server."),
+        Commands::Server { .. } => {
+            unreachable!("Server commands are handled before this function is called")
+        }
         Commands::Index { command } => match command {
             IndexCommands::Build {
                 input,
