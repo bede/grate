@@ -1,12 +1,12 @@
+use crate::FilterConfig;
 use crate::index::load_minimizer_hashes_cached;
 use crate::minimizers::KmerHasher;
-use crate::FilterConfig;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use packed_seq::SeqVec;
+use paraseq::Record;
 use paraseq::fastx::Reader;
 use paraseq::parallel::{PairedParallelProcessor, ParallelProcessor, ParallelReader};
-use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};

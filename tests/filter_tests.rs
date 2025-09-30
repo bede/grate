@@ -1317,7 +1317,8 @@ fn test_filter_empty_file() {
 
         fs::write(&test_file_path, "\n".repeat(num_bytes)).unwrap();
 
-        Command::cargo_bin("deacon").unwrap()
+        Command::cargo_bin("deacon")
+            .unwrap()
             .arg("filter")
             .arg(&bin_path)
             .arg(&test_file_path)
@@ -1329,17 +1330,45 @@ fn test_filter_empty_file() {
             .success();
 
         // Verify empty output
-        assert!(output_path.exists(), "Output file should be created for {} bytes", num_bytes);
+        assert!(
+            output_path.exists(),
+            "Output file should be created for {} bytes",
+            num_bytes
+        );
         let output_content = fs::read_to_string(&output_path).unwrap();
-        assert!(output_content.is_empty(), "Output should be empty for {} bytes", num_bytes);
+        assert!(
+            output_content.is_empty(),
+            "Output should be empty for {} bytes",
+            num_bytes
+        );
 
         // Verify JSON summary
         let summary_content = fs::read_to_string(&summary_path).unwrap();
         let summary: serde_json::Value = serde_json::from_str(&summary_content).unwrap();
 
-        assert_eq!(summary["bp_in"].as_u64().unwrap(), 0, "bp_in should be 0 for {} bytes", num_bytes);
-        assert_eq!(summary["seqs_in"].as_u64().unwrap(), 0, "seqs_in should be 0 for {} bytes", num_bytes);
-        assert_eq!(summary["bp_out"].as_u64().unwrap(), 0, "bp_out should be 0 for {} bytes", num_bytes);
-        assert_eq!(summary["seqs_out"].as_u64().unwrap(), 0, "seqs_out should be 0 for {} bytes", num_bytes);
+        assert_eq!(
+            summary["bp_in"].as_u64().unwrap(),
+            0,
+            "bp_in should be 0 for {} bytes",
+            num_bytes
+        );
+        assert_eq!(
+            summary["seqs_in"].as_u64().unwrap(),
+            0,
+            "seqs_in should be 0 for {} bytes",
+            num_bytes
+        );
+        assert_eq!(
+            summary["bp_out"].as_u64().unwrap(),
+            0,
+            "bp_out should be 0 for {} bytes",
+            num_bytes
+        );
+        assert_eq!(
+            summary["seqs_out"].as_u64().unwrap(),
+            0,
+            "seqs_out should be 0 for {} bytes",
+            num_bytes
+        );
     }
 }

@@ -1,10 +1,10 @@
+use crate::IndexConfig;
 use crate::filter::{Buffers, ProcessingStats};
 use crate::minimizers::KmerHasher;
-use crate::IndexConfig;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
-use paraseq::prelude::{ParallelProcessor, ParallelReader};
 use paraseq::Record;
+use paraseq::prelude::{ParallelProcessor, ParallelReader};
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -210,7 +210,7 @@ fn reader_with_inferred_batch_size(
             batch_size = (256 * 1024usize).div_ceil(total_len);
         }
     }
-    eprintln!("Using batch size of {batch_size} records");
+    eprintln!("Batch size: {batch_size} record(s)");
     let reader =
         paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, batch_size).unwrap();
     Ok(reader)
@@ -329,7 +329,7 @@ pub fn build(config: &IndexConfig) -> Result<()> {
         .into_inner();
 
     eprintln!(
-        "Indexed {} minimizers from {} sequence(s) ({}bp)",
+        "Indexed {} minimizers from {} record(s) ({}bp)",
         all_minimizers.len(),
         stats.total_seqs,
         stats.total_bp
