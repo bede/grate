@@ -9,7 +9,7 @@ use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
 use std::fs::File;
-use std::io::{self, BufReader, BufWriter, Write};
+use std::io::{self, BufReader, BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
@@ -192,6 +192,30 @@ pub fn write_minimizers(
     Ok(())
 }
 
+fn reader_with_inferred_batch_size(
+    in_path: Option<&Path>,
+) -> Result<paraseq::fastx::Reader<Box<dyn Read + Send>>> {
+    let mut batch_size = 1;
+    {
+        let mut reader =
+            paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
+
+        let mut rset = reader.new_record_set_with_size(1);
+        // Fill the record set with records from the reader
+        if rset.fill(&mut reader)? {
+            let mut it = rset.iter();
+            let total_len = it.next().unwrap()?.seq().len();
+            assert!(it.next().is_none());
+            // target batch size of 256KiB.
+            batch_size = (256 * 1024usize).div_ceil(total_len);
+        }
+    }
+    eprintln!("Using batch size of {batch_size} records");
+    let reader =
+        paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, batch_size).unwrap();
+    Ok(reader)
+}
+
 #[derive(Clone)]
 struct BuildIndexProcessor<'c> {
     config: &'c IndexConfig,
@@ -277,9 +301,9 @@ pub fn build(config: &IndexConfig) -> Result<()> {
     let in_path = if path.as_os_str() == "-" {
         None
     } else {
-        Some(path)
+        Some(path.as_path())
     };
-    let reader = paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
+    let reader = reader_with_inferred_batch_size(in_path)?;
 
     eprintln!(
         "Building index (k={}, w={})",
@@ -432,7 +456,8 @@ fn stream_diff_fastx(
     } else {
         Some(path)
     };
-    let reader = paraseq::fastx::Reader::from_optional_path_with_batch_size(in_path, 1).unwrap();
+
+    let reader = reader_with_inferred_batch_size(in_path)?;
 
     let mut processor = DiffIndexProcessor {
         kmer_length,
