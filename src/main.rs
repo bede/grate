@@ -102,7 +102,7 @@ enum ServerCommands {
         threads: usize,
     },
     /// Stop the running server
-    Exit,
+    Stop,
 }
 
 #[derive(Subcommand, Serialize, Deserialize)]
@@ -217,6 +217,8 @@ fn main() -> Result<()> {
                         .build_global()
                         .context("Failed to initialize thread pool")?;
 
+                    // Remove existing socket if present
+                    let _ = std::fs::remove_file("deacon_server_socket");
                     let listener = UnixListener::bind("deacon_server_socket")?;
                     for stream in listener.incoming() {
                         let mut stream = stream.unwrap();
@@ -235,9 +237,10 @@ fn main() -> Result<()> {
                         let message: Message = serde_json::from_slice(&message).unwrap();
                         match message {
                             Message::Command(Commands::Server {
-                                command: ServerCommands::Exit,
+                                command: ServerCommands::Stop,
                             }) => {
                                 serde_json::to_writer(stream, &Message::Done)?;
+                                let _ = std::fs::remove_file("deacon_server_socket");
                                 break;
                             }
                             Message::Command(commands) => {
@@ -252,8 +255,8 @@ fn main() -> Result<()> {
 
                     return Ok(());
                 }
-                ServerCommands::Exit => {
-                    panic!("Use `deacon --use-server server exit` to stop the server.")
+                ServerCommands::Stop => {
+                    panic!("Use `deacon --use-server server stop` to stop the server.")
                 }
             }
         }

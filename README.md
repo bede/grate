@@ -231,6 +231,24 @@ Use `-s summary.json` to save detailed filtering statistics:
 }
 ```
 
+## Server mode
+
+From version 0.11.0, it is possible to eliminate index loading overhead at the start of each filter operation by preloading the index in the memory of a local server process. Having started a server process, the index of the first filtering command it receives persists in memory for the life of that server process, enabling subsequent filter commands to be served without hash table construction overhead.
+
+```bash
+# Start the server
+deacon server start
+
+# Use a throwaway filter command loads the index in memory
+echo "" | deacon --use-server filter ref.idx
+
+# Subsequent filter commands use the existing index stored in memory
+deacon --use-server filter ref.idx reads.fq -o filt.fq -s summary.json
+
+# Stop the server
+deacon --use-server server stop
+```
+
 ## Citation
 
 [![biorXiv preprint](https://img.shields.io/badge/biorXiv-10.1101/2025.06.09.658732-red?&style=flat-square)](https://doi.org/10.1101/2025.06.09.658732)

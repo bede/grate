@@ -941,7 +941,7 @@ pub fn run(config: &FilterConfig) -> Result<()> {
         serde_json::to_writer_pretty(writer, &summary).context("Failed to write summary")?;
 
         if !quiet {
-            eprintln!("Summary saved to {:?}", summary_file);
+            eprintln!("Filter summary saved to {:?}", summary_file);
         }
     }
 
