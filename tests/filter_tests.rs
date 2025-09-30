@@ -1372,3 +1372,84 @@ fn test_filter_empty_file() {
         );
     }
 }
+
+#[test]
+fn test_filter_4_byte_record() {
+    // Test filtering 4-byte FASTA record (>a\nA)
+    // Should produce empty output with "Input file(s) are empty" message
+    // This is NOT the case for stdin which is not validated by niffler
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("mn908947.fasta");
+    let bin_path = temp_dir.path().join("mn908947.bin");
+    let empty_file = temp_dir.path().join("empty.fa");
+    let output_path = temp_dir.path().join("output.fa");
+
+    // Create mn908947 reference
+    create_test_fasta_sc2(&fasta_path);
+    build_index(&fasta_path, &bin_path);
+
+    // Create 4-byte file: >a\nA (header + newline + single base)
+    fs::write(&empty_file, b">a\nA").unwrap();
+
+    // Run filter with --deplete
+    let mut cmd = Command::cargo_bin("deacon").unwrap();
+    cmd.arg("filter")
+        .arg("--deplete")
+        .arg(&bin_path)
+        .arg(&empty_file)
+        .arg("--output")
+        .arg(&output_path)
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("Input file(s) are empty"));
+
+    // Verify empty output
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(
+        output_content.is_empty(),
+        "Output should be empty for 4-byte file"
+    );
+}
+
+#[test]
+fn test_filter_5_byte_record() {
+    // Test filtering 5-byte FASTA record (>a\nA\n)
+    // Should retain the sequence (too short for k=31 minimizers)
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("mn908947.fasta");
+    let bin_path = temp_dir.path().join("mn908947.bin");
+    let short_file = temp_dir.path().join("short.fa");
+    let output_path = temp_dir.path().join("output.fa");
+
+    // Create mn908947 reference
+    create_test_fasta_sc2(&fasta_path);
+    build_index(&fasta_path, &bin_path);
+
+    // Create 5-byte file: >a\nA\n (header + newline + single base + newline)
+    fs::write(&short_file, b">a\nA\n").unwrap();
+
+    // Run filter with --deplete
+    let output = Command::cargo_bin("deacon")
+        .unwrap()
+        .arg("filter")
+        .arg("--deplete")
+        .arg(&bin_path)
+        .arg(&short_file)
+        .arg("--output")
+        .arg(&output_path)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Filter command should succeed");
+
+    // Verify sequence is retained (too short for k=31, so it passes through)
+    let output_content = fs::read_to_string(&output_path).unwrap();
+    assert!(
+        output_content.contains(">a"),
+        "Output should contain sequence header"
+    );
+    assert!(
+        output_content.contains("\nA"),
+        "Output should contain single base"
+    );
+}

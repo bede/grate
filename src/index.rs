@@ -1,10 +1,10 @@
+use crate::IndexConfig;
 use crate::filter::{Buffers, ProcessingStats};
 use crate::minimizers::KmerHasher;
-use crate::IndexConfig;
 use anyhow::{Context, Result};
 use bincode::serde::{decode_from_std_read, encode_into_std_write};
-use paraseq::prelude::{ParallelProcessor, ParallelReader};
 use paraseq::Record;
+use paraseq::prelude::{ParallelProcessor, ParallelReader};
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
