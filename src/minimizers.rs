@@ -93,16 +93,15 @@ pub(crate) fn fill_minimizer_hashes(
     buffers: &mut Buffers,
 ) {
     let Buffers {
-        packed_seq,
-        ambiguous,
+        packed_nseq,
         positions,
         hashes,
     } = buffers;
 
-    packed_seq.clear();
+    packed_nseq.seq.clear();
+    packed_nseq.ambiguous.clear();
     hashes.clear();
     positions.clear();
-    ambiguous.clear();
 
     // Skip if sequence is too short
     if seq.len() < kmer_length as usize {
@@ -110,13 +109,13 @@ pub(crate) fn fill_minimizer_hashes(
     }
 
     // Pack the sequence into 2-bit representation.
-    packed_seq.push_ascii(seq);
-    ambiguous.push_ascii(seq);
+    packed_nseq.seq.push_ascii(seq);
+    packed_nseq.ambiguous.push_ascii(seq);
 
     // Get minimizer positions using simd-minimizers
     let out = simd_minimizers::canonical_minimizers(kmer_length as usize, window_size as usize)
         .hasher(hasher)
-        .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), positions);
+        .run_skip_ambiguous_windows(packed_nseq.as_slice(), positions);
 
     // Filter positions to only include k-mers with ACGT bases and sufficient entropy
     if kmer_length <= 32 {
