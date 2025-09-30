@@ -245,6 +245,21 @@ impl<Rf: Record> ParallelProcessor<Rf> for BuildIndexProcessor<'_> {
         );
         self.local_hashes.extend(&self.buffers.hashes);
 
+        // Print record headers on stderr unless --quiet
+        if !self.config.quiet {
+            let id_str = std::str::from_utf8(record.id()).unwrap_or("unknown");
+            let current_total = {
+                let global = self.global_hashes.lock();
+                global.len() + self.local_hashes.len()
+            };
+            eprintln!(
+                "  {} ({}bp), total minimizers: {}",
+                id_str,
+                seq.len(),
+                current_total
+            );
+        }
+
         Ok(())
     }
 
