@@ -16,12 +16,13 @@ struct Cli {
     #[command(subcommand)]
     command: Commands,
     #[arg(long)]
+    /// Execute command using an existing server process
     use_server: bool,
 }
 
 #[derive(Subcommand, Serialize, Deserialize)]
 enum Commands {
-    /// Start a server for subsequent low-latency filtering
+    /// Start/stop a server process for reduced latency filtering
     Server {
         #[command(subcommand)]
         command: ServerCommands,
@@ -31,7 +32,7 @@ enum Commands {
         #[command(subcommand)]
         command: IndexCommands,
     },
-    /// Keep or discard DNA fastx records with sufficient minimizer hits to an index
+    /// Retain or deplete sequence records with sufficient minimizer hits to an index
     Filter {
         /// Path to minimizer index file
         index: PathBuf,
