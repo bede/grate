@@ -15,13 +15,109 @@ pub mod minimizers;
 // Re-export the important structures and functions for library users
 pub use filter::{FilterSummary, run as run_filter};
 pub use index::{
-    IndexHeader, build as build_index, diff as diff_index, info as index_info, union as union_index,
+    IndexHeader, build as build_index, diff as diff_index, dump_minimizers, info as index_info,
+    load_minimizers, union as union_index,
 };
-pub use minimizers::{DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, compute_minimizer_hashes};
+pub use minimizers::{DEFAULT_KMER_LENGTH, DEFAULT_WINDOW_SIZE, decode_u64, decode_u128};
 
 use anyhow::Result;
-use rustc_hash::FxHashSet;
+use std::collections::HashSet;
+use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
+
+/// BuildHasher using rapidhash with fixed seed for fast init
+#[derive(Clone, Default)]
+pub struct FixedRapidHasher;
+
+impl BuildHasher for FixedRapidHasher {
+    type Hasher = rapidhash::fast::RapidHasher<'static>;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        rapidhash::fast::SeedableState::fixed().build_hasher()
+    }
+}
+
+/// RapidHashSet using rapidhash with fixed seed for fast init
+pub type RapidHashSet<T> = HashSet<T, FixedRapidHasher>;
+
+/// Zero-cost (hopefully?) abstraction over u64 and u128 minimizer sets
+pub enum MinimizerSet {
+    U64(RapidHashSet<u64>),
+    U128(RapidHashSet<u128>),
+}
+
+impl MinimizerSet {
+    pub fn len(&self) -> usize {
+        match self {
+            MinimizerSet::U64(set) => set.len(),
+            MinimizerSet::U128(set) => set.len(),
+        }
+    }
+
+    pub fn is_u64(&self) -> bool {
+        matches!(self, MinimizerSet::U64(_))
+    }
+
+    /// Extend with another MinimizerSet (union operation)
+    pub fn extend(&mut self, other: Self) {
+        match (self, other) {
+            (MinimizerSet::U64(self_set), MinimizerSet::U64(other_set)) => {
+                self_set.extend(other_set);
+            }
+            (MinimizerSet::U128(self_set), MinimizerSet::U128(other_set)) => {
+                self_set.extend(other_set);
+            }
+            _ => panic!("Cannot extend U64 set with U128 set or vice versa"),
+        }
+    }
+
+    /// Remove minimizers from another set (diff operation)
+    pub fn remove_all(&mut self, other: &Self) {
+        match (self, other) {
+            (MinimizerSet::U64(self_set), MinimizerSet::U64(other_set)) => {
+                for val in other_set {
+                    self_set.remove(val);
+                }
+            }
+            (MinimizerSet::U128(self_set), MinimizerSet::U128(other_set)) => {
+                for val in other_set {
+                    self_set.remove(val);
+                }
+            }
+            _ => panic!("Cannot remove U128 minimizers from U64 set or vice versa"),
+        }
+    }
+}
+
+/// Zero-cost (hopefully?) abstraction over u64 and u128 minimizer sets
+#[derive(Clone)]
+pub enum MinimizerVec {
+    U64(Vec<u64>),
+    U128(Vec<u128>),
+}
+
+impl MinimizerVec {
+    pub fn clear(&mut self) {
+        match self {
+            MinimizerVec::U64(v) => v.clear(),
+            MinimizerVec::U128(v) => v.clear(),
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        match self {
+            MinimizerVec::U64(v) => v.len(),
+            MinimizerVec::U128(v) => v.len(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        match self {
+            MinimizerVec::U64(v) => v.is_empty(),
+            MinimizerVec::U128(v) => v.is_empty(),
+        }
+    }
+}
 
 pub struct FilterConfig<'a> {
     /// Minimizer index file path
@@ -244,16 +340,4 @@ impl IndexConfig {
     pub fn execute(&self) -> Result<()> {
         index::build(self)
     }
-}
-
-pub fn load_minimizers(path: &Path) -> Result<(FxHashSet<u64>, index::IndexHeader)> {
-    index::load_minimizer_hashes(path)
-}
-
-pub fn write_minimizers(
-    minimizers: &FxHashSet<u64>,
-    header: &index::IndexHeader,
-    output_path: Option<&Path>,
-) -> Result<()> {
-    index::write_minimizers(minimizers, header, output_path)
 }

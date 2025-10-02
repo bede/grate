@@ -1,24 +1,49 @@
-use packed_seq::SeqVec;
-use xxhash_rust::xxh3;
+use packed_seq::{SeqVec, unpack_base};
 
 use crate::filter::Buffers;
 
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
 pub const DEFAULT_WINDOW_SIZE: u8 = 15;
 
+/// Decode u64 minimizer (2-bit canonical k-mer) to ASCII
+pub fn decode_u64(minimizer: u64, k: u8) -> Vec<u8> {
+    (0..k)
+        .map(|i| {
+            let base_bits = ((minimizer >> (2 * i)) & 0b11) as u8;
+            unpack_base(base_bits)
+        })
+        .rev() // Reverse because we extracted LSB first
+        .collect()
+}
+
+/// Decode u128 minimizer (2-bit canonical k-mer) to ASCII
+pub fn decode_u128(minimizer: u128, k: u8) -> Vec<u8> {
+    (0..k)
+        .map(|i| {
+            let base_bits = ((minimizer >> (2 * i)) & 0b11) as u8;
+            unpack_base(base_bits)
+        })
+        .rev()
+        .collect()
+}
+
 /// Canonical NtHash, with 1-bit rotations for backwards compatibility.
 pub type KmerHasher = simd_minimizers::seq_hash::NtHasher<true, 1>;
 
-/// Returns vector of all minimizer hashes for a sequence
-pub fn compute_minimizer_hashes(
+/// Returns vector of all minimizers for a sequence
+pub fn compute_minimizers(
     seq: &[u8],
     hasher: &KmerHasher,
     kmer_length: u8,
     window_size: u8,
     entropy_threshold: f32,
-) -> Vec<u64> {
-    let mut buffers = Buffers::default();
-    fill_minimizer_hashes(
+) -> crate::MinimizerVec {
+    let mut buffers = if kmer_length <= 32 {
+        Buffers::new_u64()
+    } else {
+        Buffers::new_u128()
+    };
+    fill_minimizers(
         seq,
         hasher,
         kmer_length,
@@ -26,7 +51,7 @@ pub fn compute_minimizer_hashes(
         entropy_threshold,
         &mut buffers,
     );
-    buffers.hashes
+    buffers.minimizers
 }
 
 /// Calculate scaled entropy using character frequency analysis
@@ -82,9 +107,9 @@ fn calculate_scaled_entropy(kmer: &[u8], kmer_length: u8) -> f32 {
     entropy / 2.0
 }
 
-/// Fill a vector with minimizer hashes, skipping k-mers with non-ACGT bases
+/// Fill a vector with minimizers, skipping k-mers with non-ACGT bases
 /// and optionally filtering by scaled entropy
-pub(crate) fn fill_minimizer_hashes(
+pub(crate) fn fill_minimizers(
     seq: &[u8],
     hasher: &KmerHasher,
     kmer_length: u8,
@@ -95,12 +120,12 @@ pub(crate) fn fill_minimizer_hashes(
     let Buffers {
         packed_nseq,
         positions,
-        hashes,
+        minimizers,
     } = buffers;
 
     packed_nseq.seq.clear();
     packed_nseq.ambiguous.clear();
-    hashes.clear();
+    minimizers.clear();
     positions.clear();
 
     // Skip if sequence is too short
@@ -117,41 +142,43 @@ pub(crate) fn fill_minimizer_hashes(
         .hasher(hasher)
         .run_skip_ambiguous_windows(packed_nseq.as_slice(), positions);
 
-    // Filter positions to only include k-mers with ACGT bases and sufficient entropy
-    if kmer_length <= 32 {
-        hashes.extend(
-            out.pos_and_values_u64()
-                .filter(|&(pos, _val)| {
-                    let pos_usize = pos as usize;
-                    let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
+    match minimizers {
+        crate::MinimizerVec::U64(vec) => {
+            vec.extend(
+                out.pos_and_values_u64()
+                    .filter(|&(pos, _val)| {
+                        let pos_usize = pos as usize;
+                        let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
 
-                    // Check scaled entropy constraint if threshold specified
-                    if entropy_threshold == 0.0 {
-                        true
-                    } else {
-                        let entropy = calculate_scaled_entropy(kmer, kmer_length);
-                        entropy >= entropy_threshold
-                    }
-                })
-                .map(|(_pos, val)| xxh3::xxh3_64(&val.to_le_bytes())),
-        );
-    } else {
-        hashes.extend(
-            out.pos_and_values_u128()
-                .filter(|&(pos, _val)| {
-                    let pos_usize = pos as usize;
-                    let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
+                        // Check scaled entropy constraint if threshold specified
+                        if entropy_threshold == 0.0 {
+                            true
+                        } else {
+                            let entropy = calculate_scaled_entropy(kmer, kmer_length);
+                            entropy >= entropy_threshold
+                        }
+                    })
+                    .map(|(_pos, val)| val),
+            );
+        }
+        crate::MinimizerVec::U128(vec) => {
+            vec.extend(
+                out.pos_and_values_u128()
+                    .filter(|&(pos, _val)| {
+                        let pos_usize = pos as usize;
+                        let kmer = &seq[pos_usize..pos_usize + kmer_length as usize];
 
-                    // Check scaled entropy constraint if threshold specified
-                    if entropy_threshold == 0.0 {
-                        true
-                    } else {
-                        let entropy = calculate_scaled_entropy(kmer, kmer_length);
-                        entropy >= entropy_threshold
-                    }
-                })
-                .map(|(_pos, val)| xxh3::xxh3_64(&val.to_le_bytes())),
-        );
+                        // Check scaled entropy constraint if threshold specified
+                        if entropy_threshold == 0.0 {
+                            true
+                        } else {
+                            let entropy = calculate_scaled_entropy(kmer, kmer_length);
+                            entropy >= entropy_threshold
+                        }
+                    })
+                    .map(|(_pos, val)| val),
+            );
+        }
     };
 }
 
@@ -160,21 +187,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_compute_minimizer_hashes() {
+    fn test_compute_minimizers() {
         // Simple sequence test
         let seq = b"ACGTACGTACGT";
         let k = 5;
         let w = 3;
         let hasher = KmerHasher::new(k as usize);
-        let hashes = compute_minimizer_hashes(seq, &hasher, k, w, 0.0);
+        let minimizers = compute_minimizers(seq, &hasher, k, w, 0.0);
 
-        // We should have at least one minimizer hash
-        assert!(!hashes.is_empty());
+        // We should have at least one minimizer
+        assert!(!minimizers.is_empty());
 
         // Test with a sequence shorter than k
         let short_seq = b"ACGT";
-        let short_hashes = compute_minimizer_hashes(short_seq, &hasher, k, w, 0.0);
-        assert!(short_hashes.is_empty());
+        let short_minimizers = compute_minimizers(short_seq, &hasher, k, w, 0.0);
+        assert!(short_minimizers.is_empty());
     }
 
     #[test]
