@@ -1,12 +1,12 @@
-use crate::FilterConfig;
 use crate::index::load_minimizer_hashes_cached;
 use crate::minimizers::KmerHasher;
+use crate::FilterConfig;
 use anyhow::{Context, Result};
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
-use packed_seq::SeqVec;
-use paraseq::Record;
+use packed_seq::{PackedNSeqVec, SeqVec};
 use paraseq::fastx::Reader;
 use paraseq::parallel::{PairedParallelProcessor, ParallelProcessor, ParallelReader};
+use paraseq::Record;
 use parking_lot::Mutex;
 use rustc_hash::FxHashSet;
 use serde::{Deserialize, Serialize};
@@ -260,12 +260,24 @@ pub(crate) struct ProcessingStats {
     pub last_reported: u64,
 }
 
-#[derive(Default, Clone)]
+#[derive(Clone)]
 pub(crate) struct Buffers {
-    pub packed_seq: packed_seq::PackedSeqVec,
-    pub ambiguous: packed_seq::BitSeqVec,
+    pub packed_nseq: PackedNSeqVec,
     pub positions: Vec<u32>,
     pub hashes: Vec<u64>,
+}
+
+impl Default for Buffers {
+    fn default() -> Self {
+        Self {
+            packed_nseq: PackedNSeqVec {
+                seq: Default::default(),
+                ambiguous: Default::default(),
+            },
+            positions: Default::default(),
+            hashes: Default::default(),
+        }
+    }
 }
 
 impl FilterProcessor {
@@ -367,27 +379,26 @@ impl FilterProcessor {
         let seq = seq.strip_suffix(b"\n").unwrap_or(seq);
 
         let Buffers {
-            packed_seq,
-            ambiguous,
+            packed_nseq,
             positions,
             hashes,
         } = &mut self.buffers;
 
-        packed_seq.clear();
+        packed_nseq.seq.clear();
+        packed_nseq.ambiguous.clear();
         hashes.clear();
         positions.clear();
-        ambiguous.clear();
 
         // Pack the sequence into 2-bit representation.
-        packed_seq.push_ascii(seq);
-        ambiguous.push_ascii(seq);
+        packed_nseq.seq.push_ascii(seq);
+        packed_nseq.ambiguous.push_ascii(seq);
 
         // let mut positions = Vec::new();
         let k = self.kmer_length as usize;
         let w = self.window_size as usize;
         let m = simd_minimizers::canonical_minimizers(k, w)
             .hasher(&self.hasher)
-            .run_skip_ambiguous_windows(packed_seq.as_slice(), ambiguous.as_slice(), positions);
+            .run_skip_ambiguous_windows(packed_nseq.as_slice(), positions);
 
         // Hash valid positions
         if self.kmer_length <= 32 {
