@@ -112,8 +112,8 @@ enum IndexCommands {
         /// Path to input fastx file (supports gz, zst and xz compression)
         input: PathBuf,
 
-        /// K-mer length used for indexing (1-57)
-        #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=57))]
+        /// K-mer length used for indexing (k+w-1 must be <= 96 and odd)
+        #[arg(short = 'k', default_value_t = DEFAULT_KMER_LENGTH)]
         kmer_length: u8,
 
         /// Minimizer window size used for indexing

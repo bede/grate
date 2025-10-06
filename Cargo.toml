@@ -27,7 +27,7 @@ rapidhash = "4.1.0"
 parking_lot = "0.12"
 indicatif = "0.17"
 
-packed-seq = "4.1.0"
+packed-seq = "4.1.1"
 simd-minimizers = "2.1.0"
 
 needletail = { version = "0.6", default-features = false }

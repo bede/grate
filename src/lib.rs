@@ -300,6 +300,24 @@ impl IndexConfig {
         }
     }
 
+    /// Validate k-mer and window size constraints
+    pub fn validate(&self) -> Result<()> {
+        let k = self.kmer_length as usize;
+        let w = self.window_size as usize;
+
+        // Check constraints: k <= 61, k+w <= 96, k+w even (ensures k odd and k+w-1 odd)
+        if k > 61 || k + w > 96 || (k + w) % 2 != 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid k-w combination: k={}, w={}, k+w={} (constraints: k<=61, k+w<=96, k+w even)",
+                k,
+                w,
+                k + w
+            ));
+        }
+
+        Ok(())
+    }
+
     /// Set k-mer length
     pub fn with_kmer_length(mut self, kmer_length: u8) -> Self {
         self.kmer_length = kmer_length;

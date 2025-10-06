@@ -39,6 +39,19 @@ impl IndexHeader {
             ));
         }
 
+        let k = self.kmer_length as usize;
+        let w = self.window_size as usize;
+
+        // Check constraints: k <= 61, k+w <= 96, k+w even (ensures k odd and k+w-1 odd)
+        if k > 61 || k + w > 96 || (k + w) % 2 != 0 {
+            return Err(anyhow::anyhow!(
+                "Invalid k-w combination: k={}, w={}, k+w={} (constraints: k<=61, k+w<=96, k+w even)",
+                k,
+                w,
+                k + w
+            ));
+        }
+
         Ok(())
     }
 
@@ -51,7 +64,6 @@ impl IndexHeader {
     pub fn window_size(&self) -> u8 {
         self.window_size
     }
-
 }
 
 /// Load just the header and count from an index file
@@ -331,23 +343,8 @@ pub fn build(config: &IndexConfig) -> Result<()> {
         options.join(", ")
     );
 
-    // Ensure k <= 57 for u128 k-mer storage
-    if config.kmer_length > 57 {
-        return Err(anyhow::anyhow!(
-            "k-mer length must be <= 57 (k={})",
-            config.kmer_length
-        ));
-    }
-
-    // Ensure l = k + w - 1 is odd so that canonicalisation tie breaks work correctly
-    let l = config.kmer_length as usize + config.window_size as usize - 1;
-    if l % 2 == 0 {
-        return Err(anyhow::anyhow!(
-            "Constraint violated: k + w - 1 must be odd (k={}, w={})",
-            config.kmer_length,
-            config.window_size
-        ));
-    }
+    // Validate k-mer and window size constraints
+    config.validate()?;
 
     let in_path = if path.as_os_str() == "-" {
         None
@@ -533,13 +530,17 @@ fn stream_diff_fastx(
 ) -> Result<(usize, usize)> {
     let path = fastx_path;
 
-    // Ensure k <= 57 for u128 k-mer storage
-    if kmer_length > 57 {
-        return Err(anyhow::anyhow!(
-            "k-mer length must be <= 57 (k={})",
-            kmer_length
-        ));
-    }
+    // Validate k-mer and window size constraints
+    let temp_config = crate::IndexConfig {
+        input_path: PathBuf::new(),
+        kmer_length,
+        window_size,
+        output_path: None,
+        threads: 0,
+        quiet: false,
+        entropy_threshold: 0.0,
+    };
+    temp_config.validate()?;
 
     // Validate parameters match the first index
     if kmer_length != first_header.kmer_length() || window_size != first_header.window_size() {
@@ -889,5 +890,43 @@ mod tests {
             window_size: 21,
         };
         assert!(invalid_header_v4.validate().is_err());
+
+        // Test k <= 61 constraint
+        let valid_max_k = IndexHeader {
+            format_version: 3,
+            kmer_length: 61,
+            window_size: 15,
+        };
+        assert!(valid_max_k.validate().is_ok()); // k=61 is valid
+
+        let invalid_max_k = IndexHeader {
+            format_version: 3,
+            kmer_length: 63,
+            window_size: 15,
+        };
+        assert!(invalid_max_k.validate().is_err()); // k=63 exceeds 61
+
+        // Test k+w <= 96 constraint
+        let valid_max_kw = IndexHeader {
+            format_version: 3,
+            kmer_length: 61,
+            window_size: 35,
+        };
+        assert!(valid_max_kw.validate().is_ok()); // k+w=96 is valid
+
+        let invalid_max_kw = IndexHeader {
+            format_version: 3,
+            kmer_length: 61,
+            window_size: 36,
+        };
+        assert!(invalid_max_kw.validate().is_err()); // k+w=97 exceeds 96
+
+        // Test k must be odd
+        let invalid_even = IndexHeader {
+            format_version: 3,
+            kmer_length: 30,
+            window_size: 15,
+        };
+        assert!(invalid_even.validate().is_err()); // k=30 is even
     }
 }
