@@ -52,13 +52,6 @@ impl IndexHeader {
         self.window_size
     }
 
-    /// Calculate bytes per minimizer (round up to multiple of 4, divide by 4)
-    /// Byte alignment wastes at most no more than 7 bits per minimizer
-    pub fn bytes_per_minimizer(&self) -> usize {
-        let k = self.kmer_length as usize;
-        // Round k up to multiple of 4, then each 2bit base needs = k/4 bytes
-        ((k + 3) / 4) * 4 / 4
-    }
 }
 
 /// Load just the header and count from an index file
@@ -111,7 +104,7 @@ pub fn load_minimizers(path: &Path) -> Result<(crate::MinimizerSet, IndexHeader)
     let count: usize = decode_from_std_read(&mut reader, config)
         .context("Failed to deserialise minimizer count")?;
 
-    let bytes_per_minimizer = header.bytes_per_minimizer();
+    let bytes_per_minimizer = (header.kmer_length as usize).div_ceil(4);
 
     let minimizers = if header.kmer_length <= 32 {
         // Read as u64 with packed byte-aligned format
@@ -190,7 +183,7 @@ pub fn dump_minimizers(
         .context("Failed to serialise minimizer count")?;
 
     // Serialise minimizers in byte-aligned packed format
-    let bytes_per_minimizer = header.bytes_per_minimizer();
+    let bytes_per_minimizer = (header.kmer_length as usize).div_ceil(4);
     match minimizers {
         crate::MinimizerSet::U64(set) => {
             for &val in set {
