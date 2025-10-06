@@ -51,6 +51,14 @@ impl IndexHeader {
     pub fn window_size(&self) -> u8 {
         self.window_size
     }
+
+    /// Calculate bytes per minimizer (round up to multiple of 4, divide by 4)
+    /// Byte alignment wastes at most no more than 7 bits per minimizer
+    pub fn bytes_per_minimizer(&self) -> usize {
+        let k = self.kmer_length as usize;
+        // Round k up to multiple of 4, then each 2bit base needs = k/4 bytes
+        ((k + 3) / 4) * 4 / 4
+    }
 }
 
 /// Load just the header and count from an index file
@@ -103,31 +111,47 @@ pub fn load_minimizers(path: &Path) -> Result<(crate::MinimizerSet, IndexHeader)
     let count: usize = decode_from_std_read(&mut reader, config)
         .context("Failed to deserialise minimizer count")?;
 
+    let bytes_per_minimizer = header.bytes_per_minimizer();
+
     let minimizers = if header.kmer_length <= 32 {
-        // Read as u64 (8 bytes per minimizer) - zero-cost abstraction
+        // Read as u64 with packed byte-aligned format
         let mut set = RapidHashSet::<u64>::with_capacity_and_hasher(count, FixedRapidHasher);
         const B: usize = 16 * 1024;
-        let mut buffer = vec![0u8; 8 * B];
+        let mut buffer = vec![0u8; bytes_per_minimizer * B];
         for i in (0..count).step_by(B) {
             let batch_count = B.min(count - i);
-            let batch = &mut buffer[..8 * batch_count];
+            let batch_bytes = bytes_per_minimizer * batch_count;
+            let batch = &mut buffer[..batch_bytes];
             reader.read_exact(batch).unwrap();
-            for bytes in batch.as_chunks::<8>().0 {
-                set.insert(u64::from_le_bytes(*bytes));
+
+            // Extract minimizers from packed bytes
+            for j in 0..batch_count {
+                let start = j * bytes_per_minimizer;
+                let end = start + bytes_per_minimizer;
+                let mut minimizer_bytes = [0u8; 8];
+                minimizer_bytes[..bytes_per_minimizer].copy_from_slice(&batch[start..end]);
+                set.insert(u64::from_le_bytes(minimizer_bytes));
             }
         }
         crate::MinimizerSet::U64(set)
     } else {
-        // Read as u128 (16 bytes per minimizer) - zero-cost abstraction
+        // Read as u128 with packed byte-aligned format
         let mut set = RapidHashSet::<u128>::with_capacity_and_hasher(count, FixedRapidHasher);
         const B: usize = 16 * 1024;
-        let mut buffer = vec![0u8; 16 * B];
+        let mut buffer = vec![0u8; bytes_per_minimizer * B];
         for i in (0..count).step_by(B) {
             let batch_count = B.min(count - i);
-            let batch = &mut buffer[..16 * batch_count];
+            let batch_bytes = bytes_per_minimizer * batch_count;
+            let batch = &mut buffer[..batch_bytes];
             reader.read_exact(batch).unwrap();
-            for bytes in batch.as_chunks::<16>().0 {
-                set.insert(u128::from_le_bytes(*bytes));
+
+            // Extract minimizers from packed bytes
+            for j in 0..batch_count {
+                let start = j * bytes_per_minimizer;
+                let end = start + bytes_per_minimizer;
+                let mut minimizer_bytes = [0u8; 16];
+                minimizer_bytes[..bytes_per_minimizer].copy_from_slice(&batch[start..end]);
+                set.insert(u128::from_le_bytes(minimizer_bytes));
             }
         }
         crate::MinimizerSet::U128(set)
@@ -143,20 +167,18 @@ pub fn dump_minimizers(
     output_path: Option<&Path>,
 ) -> Result<()> {
     // Create writer based on output path
-    let writer: Box<dyn Write> = if let Some(path) = output_path {
+    let mut writer: BufWriter<Box<dyn Write>> = if let Some(path) = output_path {
         if path.as_os_str() == "-" {
-            Box::new(BufWriter::new(io::stdout()))
+            BufWriter::new(Box::new(io::stdout()))
         } else {
-            Box::new(BufWriter::new(
+            BufWriter::new(Box::new(
                 File::create(path).context("Failed to create output file")?,
             ))
         }
     } else {
-        Box::new(BufWriter::new(io::stdout()))
+        BufWriter::new(Box::new(io::stdout()))
     };
 
-    // Serialise header and minimizers
-    let mut writer = BufWriter::new(writer);
     // Use fixed-width little-endian encoding for all values.
     let config = bincode::config::standard().with_fixed_int_encoding();
     encode_into_std_write(header, &mut writer, config)
@@ -167,18 +189,25 @@ pub fn dump_minimizers(
     encode_into_std_write(count, &mut writer, config)
         .context("Failed to serialise minimizer count")?;
 
-    // Serialise each minimizer based on variant
+    // Serialise minimizers in byte-aligned packed format
+    let bytes_per_minimizer = header.bytes_per_minimizer();
     match minimizers {
         crate::MinimizerSet::U64(set) => {
             for &val in set {
-                encode_into_std_write(val, &mut writer, config)
-                    .context("Failed to serialise minimizer")?;
+                // Write only the required bytes (little-endian)
+                let bytes = val.to_le_bytes();
+                writer
+                    .write_all(&bytes[..bytes_per_minimizer])
+                    .context("Failed to write minimizer")?;
             }
         }
         crate::MinimizerSet::U128(set) => {
             for &val in set {
-                encode_into_std_write(val, &mut writer, config)
-                    .context("Failed to serialise minimizer")?;
+                // Write only the required bytes (little-endian)
+                let bytes = val.to_le_bytes();
+                writer
+                    .write_all(&bytes[..bytes_per_minimizer])
+                    .context("Failed to write minimizer")?;
             }
         }
     }
