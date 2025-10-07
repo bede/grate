@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2025-10-07
+
+### Added
+
+- Local (socket) server mode, enabling successive filter commands to be handled by a persistent server process for low latency filtering.
+- Support for longer k-mers of up to length 61, where k+w ≤ 96 (packed-seq 4.1.1). 
+
+### Changed
+
+- Much faster paired read filtering, particularly from separate input files which are now decompressed in parallel.
+- Faster indexing and index loading.
+- While minimizers containing non-ACGT nucleotides were already discarded, minimizer selection could still be influenced by non-ACGT nucleotides present in the window, occasionally impacting results. Enabled by changes in simd-minimizers ≥ 2.0, entire windows containing non-ACGT nucleotides are discarded. Records containing non-ACGT nucleotides may therefore be classified differently in this release.
+- Redesigned index format (v3).
+  - Index now stores 'concrete' k-mers using using 2*k rather than 64bit `xxh3` k-mer hashes.
+  - Eliminates [tiny] risk of false positive matches caused by xxh3 collisions.
+  - Serialised k-mers are byte-aligned, balancing efficient storage and deserialisation speed.
+  - Index disk footprint reduced by 10%.
+  - Paves way for painless future adoption of faster HashSet implementations.
+  - Paves way for future index introspection functionality.
+- `RapidHashSet` (`rapidhash::fast`) replaces combined use of `xxHash` (`xxh3`) and `FxHashSet` 
+- Fails gracefully given empty input files.
+- Bugfix for paired read I/O.
+- Feature gating for reduced compile times.
+
+### Removed
+
+- Removed `--capacity` argument, which was easily misused for little performance benefit.
+
 ## [0.10.0] - 2025-09-01
 
 ### Added

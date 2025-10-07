@@ -9,14 +9,14 @@
 
 <div align="center"><img src="deacon.png" width="180" alt="Logo"></div>
 
-Search and depletion of FASTA/FASTQ files and streams using accelerated minimizer matching. Default parameters balance sensitivity and specificity for the application of microbial metagenomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements may be tuned by varying *k*-mer length (`-k`), window size (`-w`), and the two match thresholds (`-a` and `-r`). Minimizer `k` and `w` are chosen at index time, while the match thresholds can be chosen at filter time. To be considered a match, sequences must meet both an absolute threshold (`-a`, default 2 minimizer hits) and a relative threshold (`-r`, default 0.01 or 1% of minimizers). Paired sequences are also supported: a match in either mate causes both mates in the pair to be retained or discarded; `deacon filter` retains only matches by default (search mode) and discards matches in `--deplete` mode. Deacon reports filtering performance during execution and optionally writes a JSON `--summary` upon completion. Sequences can optionally be renamed using `--rename` for privacy and smaller file sizes. Gzip, zst and xz compression formats are natively supported and detected by file extension.
+Search and deplete FASTA/FASTQ files and streams at gigabases per second using accelerated minimizer matching. Default parameters balance sensitivity and specificity for the application of microbial metagenomic host depletion, for which a validated prebuilt index is available. Classification sensitivity, specificity and memory requirements may be tuned by varying *k*-mer length (`-k`), window size (`-w`), and the two match thresholds (`-a` and `-r`). Minimizer `k` and `w` are chosen at index time, while the match thresholds can be chosen at filter time. To be considered a match, sequences must meet *both* an absolute threshold (`-a`, default 2 minimizer hits) and a relative threshold (`-r`, default 0.01 or 1% of minimizers). Paired sequences are fully supported: a match in either mate causes both mates in the pair to be retained or discarded; `deacon filter` retains only matches by default (search mode) and discards matches in `--deplete` mode. Deacon reports live filtering performance during execution and optionally writes a JSON `--summary` upon completion. Sequences can optionally be renamed using `--rename` for privacy and smaller file sizes. Gzip, zst and xz compression formats are natively supported and detected by file extension. Other source formats can be converted to FASTA or FASTQ and piped into Deacon using stdin.
 
-Deacon is capable of filtering compressed long reads at >500Mbp/s and indexing a human genome in <30s (Apple M1). Filtering at >2Gbp/s is possible with uncompressed input. Peak memory usage during filtering is 5GB for the default panhuman index. Use Zstandard (zst) compression and/or pipe output to an external compressor such as `pigz` for best performance.
+Deacon can filter compressed long reads at ~500Mbp/s, paired short reads at ~250Mbp/s, and index a human genome in 20s on Apple M1 Pro. x86_64 performance is comparable, and 3Gbp/s was recorded with uncompressed long reads on a 32 core amd64 system. For best performance, compressing reads with Zstandard ([`zstd --long`](https://log.bede.im/2025/09/12/zstandard-long-range-genomes.html)) rather than Gzip is recommended. Peak memory usage during filtering is ~5GB for the default panhuman index.
 
 Benchmarks for panhuman host depletion of complex microbial metagenomes are described in a [preprint](https://www.biorxiv.org/content/10.1101/2025.06.09.658732v1). Among tested approaches, Deacon with the panhuman-1 (*k*=31, w=15) index exhibited the highest balanced accuracy for both long and short simulated reads. Deacon was however less specific than Hostile for short reads.
 
 > [!IMPORTANT]
-> Deacon is actively developed and unstable. Take note of software and index version(s) used in order to guarantee reproducibility of your results. Carefully review the CHANGELOG when updating. Version 0.7.0 introduced a new index container format that is incompatible with prior versions. Please report any problems you encounter by creating an issue or using the email address in my profile.
+> Deacon is actively developed. Take note of software and index version(s) used in order to guarantee reproducibility of your results. Carefully review the CHANGELOG when updating. Versions 0.7.0 and 0.11.0 introduced backwards incompatible index formats. Please report any problems you encounter by creating an issue or using the email address in my profile.
 
 ## Install
 
@@ -36,12 +36,12 @@ conda install -c bioconda deacon
 
 ### Indexing
 
-Use `deacon index build` to quickly build custom indexes. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below from Zenodo or faster object storage. Object storage is provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
+Use `deacon index build` to quickly build custom indexes. For human host depletion, the prebuilt validated panhuman index is recommended, available for download below from Zenodo or fast object storage provided by the [ModMedMicro research unit](https://www.expmedndm.ox.ac.uk/modernising-medical-microbiology) at the University of Oxford.
 
 ```shell
-deacon index build chm13v2.fa > human.k31w15.idx
+deacon index build chm13v2.fa > chm13v2.k31w15.idx
 
-# Discard very low complexity minimizers
+# Discard low complexity minimizers during indexing
 deacon index build -e 0.5 chm13v2.fa > human.k31w15e5.idx
 ```
 
@@ -49,12 +49,21 @@ deacon index build -e 0.5 chm13v2.fa > human.k31w15e5.idx
 
 |                           Name/URL                           |                         Composition                          | Minimizers  | Subtracted minimizers | Size  | Date    |
 | :----------------------------------------------------------: | :----------------------------------------------------------: | ----------- | --------------------- | ----- | ------- |
-| **panhuman-1 (*k*=31, *w*=15)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/2/panhuman-1.k31w15.idx), [Zenodo](https://zenodo.org/records/15838532) | [HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [`CHM13v2.0`](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [`GRCh38.p14`](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40) - bacteria (FDA-ARGOS) - viruses (RefSeq) | 409,913,780 | 20,781 (**0.0051%**)  | 3.7GB | 2025-07 |
-| **panmouse-1a (k=31, w=15, e=0.5)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/2/panmouse-1.k31w15e05.idx) | [`GRCm39`](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001635.27) ∪ [`PRJEB47108`](https://www.ebi.ac.uk/ena/browser/view/PRJEB47108?show=sequences) - bacteria (FDA-ARGOS) - viruses (RefSeq) | 548,331,948 | 8,246 (**0.0015%**)   | 4.6GB | 2025-08 |
+| **panhuman-1 (*k*=31, *w*=15)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/3/panhuman-1.k31w15.idx), [Zenodo](https://zenodo.org/records/15838532) | [HPRC Year 1](https://github.com/human-pangenomics/HPP_Year1_Assemblies/blob/main/assembly_index/Year1_assemblies_v2_genbank.index) ∪ [`CHM13v2.0`](https://www.ncbi.nlm.nih.gov/assembly/11828891) ∪ [`GRCh38.p14`](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001405.40) - bacteria (FDA-ARGOS) - viruses (RefSeq) | 409,907,949 | 20,671 (**0.0050%**)  | 3.3GB | 2025-10 |
+| **panmouse-1 (k=31, w=15, e=0.5)** [Cloud](https://objectstorage.uk-london-1.oraclecloud.com/n/lrbvkel2wjot/b/human-genome-bucket/o/deacon/3/panmouse-1.k31w15e05.idx) | [`GRCm39`](https://www.ncbi.nlm.nih.gov/datasets/genome/GCF_000001635.27) ∪ [`PRJEB47108`](https://www.ebi.ac.uk/ena/browser/view/PRJEB47108?show=sequences) - bacteria (FDA-ARGOS) - viruses (RefSeq) | 548,328,389 | 8,243 (**0.0015%**)   | 4.6GB | 2025-08 |
+
+#### Index compatibility
+
+Deacon `0.11.0` and above uses index format version 3. Using version 3 indexes with older Deacon versions and vice versa triggers an error. Prebuilt indexes in legacy formats are therefore archived in object storage. Should you wish to download indexes in legacy formats, replace the `/3/` in any prebuilt index download URL with either `/2/` or `/1/`  accordingly.
+
+- Deacon **`0.11.0`** and above uses index format version **`3`**
+- Deacon **`0.7.0`** through to **`0.10.0`** used index format version **`2`**
+
+- Deacon **`0.1.0`** through to **`0.6.0`** used index format version **`1`**
 
 ### Filtering
 
-The main command `deacon filter` accepts an index path followed by up to two query FASTA/FASTQ file paths, depending on whether query sequences originate from stdin, a single file, or paired input files. Paired queries are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file, or else to separate paired output files. For paired reads, distinct minimizer hits originating from either mate are counted. By default, query sequences must meet both an absolute threshold of 2 minimizer hits (`-a 2`) and a relative threshold of 1% of minimizers (`-r 0.01`) to pass the filter. Filtering can be inverted for e.g. host depletion using the `--deplete` (`-d`) flag. Gzip, Zstandard, and xz compression formats are detected automatically by file extension. Use Zstandard compression rather than Gzip where possible for best performance.
+The main command `deacon filter` accepts an index path followed by up to two query FASTA/FASTQ file paths, depending on whether query sequences originate from stdin, a single file, or paired input files. Paired queries are supported as either separate files or interleaved stdin, and written interleaved to either stdout or file, or else to separate paired output files. For paired reads, distinct minimizer hits originating from either mate are counted. By default, query sequences must meet both an absolute threshold of 2 minimizer hits (`-a 2`) and a relative threshold of 1% of minimizers (`-r 0.01`) to pass the filter. Filtering can be inverted for e.g. host depletion using the `--deplete` (`-d`) flag. Gzip, Zstandard, and xz compression formats are detected automatically by file extension.
 
 **Examples**
 
@@ -191,11 +200,11 @@ Options:
 
 ## Building custom indexes
 
-Building custom Deacon indexes is quite fast. Nevertheless, when indexing many large genomes, it may be worthwhile separately indexing and subsequently combining indexes into one succinct index. Combine distinct minimizers from multiple indexes using `deacon index union`. Similarly, use `deacon index diff` to subtract the minimizers contained in one index from another. This can be helpful  for e.g. eliminating shared minimizers between the target and host genomes when building custom (non-human) indexes for host depletion.
+Building custom Deacon indexes is fast. Nevertheless, when indexing many large genomes, it may be worthwhile separately indexing and subsequently combining indexes into one succinct index. Combine distinct minimizers from multiple indexes using `deacon index union`. Similarly, use `deacon index diff` to subtract the minimizers contained in one index from another. This can be helpful for e.g. eliminating shared minimizers between the target and host genomes when building custom (non-human) indexes for host depletion.
 
 - Use `deacon index union 1.idx 2.idx 3.idx… > 1+2+3.idx` to succinctly combine two (or more!) deacon indexes.
 - Use `deacon index diff 1.idx 2.idx > 1-2.idx` to subtract minimizers in 1.idx from 2.idx. Useful for masking out shared minimizer content between e.g. target and host genomes.
-- In version `0.7.0` and above, `deacon index diff` also supports subtracting minimizers from an index using a fastx file or stream, e.g. `deacon index diff 1.idx 2.fa.gz > 1-2.idx` or `zcat *.fa.gz | deacon index diff 1.idx - > 1-2.idx`.
+- From version `0.7.0`, `deacon index diff` also supports subtracting minimizers from an index using a fastx file or stream, e.g. `deacon index diff 1.idx 2.fa.gz > 1-2.idx` or `zcat *.fa.gz | deacon index diff 1.idx - > 1-2.idx`.
 
 
 ## Filtering summary statistics
@@ -232,7 +241,7 @@ Use `-s summary.json` to save detailed filtering statistics:
 
 ## Server mode
 
-From version 0.11.0, it is possible to eliminate index loading overhead at the start of each filter operation by preloading the index in the memory of a local server process. Subsequent filtering commands with `--use-server` are executed by the server process using a UNIX socket. Having started a server process, the index of the first filtering command it receives persists in memory for the life of that server process, enabling subsequent filter commands to be served rapidly without hash table construction overhead.
+From version `0.11.0`, it is possible to eliminate index loading overhead at the start of each filter operation by preloading the index in the memory of a local server process. Subsequent filtering commands with `--use-server` are executed by the server process using a UNIX socket. Having started a server process, the index of the first filtering command it receives persists in memory for the life of that server process, enabling subsequent filter commands to be served rapidly without hash set construction overhead.
 
 ```bash
 # Start the server
