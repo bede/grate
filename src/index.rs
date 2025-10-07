@@ -72,13 +72,15 @@ pub fn load_header_and_count<P: AsRef<Path>>(path: &P) -> Result<(IndexHeader, u
         File::open(path).context(format!("Failed to open index file {:?}", path.as_ref()))?;
     let mut reader = BufReader::new(file);
 
+    let config = bincode::config::standard().with_fixed_int_encoding();
+
     // Deserialise header
-    let header: IndexHeader = decode_from_std_read(&mut reader, bincode::config::standard())
-        .context("Failed to deserialise index header")?;
+    let header: IndexHeader =
+        decode_from_std_read(&mut reader, config).context("Failed to deserialise index header")?;
     header.validate()?;
 
     // Deserialise the count of minimizers
-    let count: usize = decode_from_std_read(&mut reader, bincode::config::standard())
+    let count: usize = decode_from_std_read(&mut reader, config)
         .context("Failed to deserialise minimizer count")?;
 
     Ok((header, count))
