@@ -197,7 +197,6 @@ Building custom Deacon indexes is quite fast. Nevertheless, when indexing many l
 - Use `deacon index diff 1.idx 2.idx > 1-2.idx` to subtract minimizers in 1.idx from 2.idx. Useful for masking out shared minimizer content between e.g. target and host genomes.
 - In version `0.7.0` and above, `deacon index diff` also supports subtracting minimizers from an index using a fastx file or stream, e.g. `deacon index diff 1.idx 2.fa.gz > 1-2.idx` or `zcat *.fa.gz | deacon index diff 1.idx - > 1-2.idx`.
 
-For best performance, set the `--capacity` argument of `deacon index build` to a number of minimizers in millions greater than that you expect your index to contain. Setting this too low will cause delays during indexing for hash table resizing.
 
 ## Filtering summary statistics
 
