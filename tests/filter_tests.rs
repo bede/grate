@@ -528,6 +528,98 @@ fn test_interleaved_paired_reads_stdin() {
 }
 
 #[test]
+fn test_interleaved_paired_reads_stdin_separate_out() {
+    let temp_dir = tempdir().unwrap();
+    let fasta_path = temp_dir.path().join("ref.fasta");
+    let interleaved_fastq_path = temp_dir.path().join("interleaved_reads.fastq");
+    let bin_path = temp_dir.path().join("ref.bin");
+    let output_path1 = temp_dir.path().join("filtered_R1.fastq");
+    let output_path2 = temp_dir.path().join("filtered_R2.fastq");
+
+    // Create test files
+    create_test_fasta(&fasta_path);
+
+    let interleaved_content =
+        "@read1/1\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read1/2\nACGTGCATAGCTGCATGCATGCATGCATGCATGCATGCAATGCAACGTGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCA\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n"
+            .to_owned()
+            + "@read2/1\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n@read2/2\nTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATTGCAGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGCATGC\n+\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n";
+    fs::write(&interleaved_fastq_path, interleaved_content).unwrap();
+
+    build_index(&fasta_path, &bin_path);
+    assert!(bin_path.exists(), "Index file wasn't created");
+
+    // Test piping interleaved file to stdin with separate output files
+    let mut cmd = StdCommand::new(assert_cmd::cargo::cargo_bin("deacon"));
+    let output = cmd
+        .arg("filter")
+        .arg("-a")
+        .arg("1")
+        .arg("-r")
+        .arg("0.0")
+        .arg(&bin_path)
+        .arg("-") // stdin for input
+        .arg("-") // stdin for input2 (signals interleaved mode)
+        .arg("-o")
+        .arg(&output_path1)
+        .arg("-O")
+        .arg(&output_path2)
+        .stdin(File::open(&interleaved_fastq_path).unwrap())
+        .output()
+        .expect("Failed to execute command");
+
+    assert!(
+        output.status.success(),
+        "Command failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_path1.exists(), "Output R1 file wasn't created");
+    assert!(output_path2.exists(), "Output R2 file wasn't created");
+
+    // Validate that R1 and R2 outputs are properly separated
+    let output1_content = fs::read_to_string(&output_path1).unwrap();
+    let output2_content = fs::read_to_string(&output_path2).unwrap();
+
+    assert!(!output1_content.is_empty(), "Output R1 file is empty");
+    assert!(!output2_content.is_empty(), "Output R2 file is empty");
+
+    // Verify R1 output contains only /1 reads
+    assert!(
+        output1_content.contains("/1"),
+        "R1 output should contain /1 reads"
+    );
+    assert!(
+        !output1_content.contains("/2"),
+        "R1 output should NOT contain /2 reads"
+    );
+
+    // Verify R2 output contains only /2 reads
+    assert!(
+        output2_content.contains("/2"),
+        "R2 output should contain /2 reads"
+    );
+    assert!(
+        !output2_content.contains("/1"),
+        "R2 output should NOT contain /1 reads"
+    );
+
+    // Count records in each file (4 lines per FASTQ record)
+    let r1_records = output1_content
+        .lines()
+        .filter(|l| l.starts_with('@'))
+        .count();
+    let r2_records = output2_content
+        .lines()
+        .filter(|l| l.starts_with('@'))
+        .count();
+
+    assert_eq!(
+        r1_records, r2_records,
+        "R1 and R2 should have the same number of records"
+    );
+    assert_eq!(r1_records, 2, "Should have 2 pairs in output");
+}
+
+#[test]
 fn test_single_read_stdin() {
     let temp_dir = tempdir().unwrap();
     let fasta_path = temp_dir.path().join("ref.fasta");
