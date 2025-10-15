@@ -6,7 +6,7 @@ const DEFAULT_KMER_LENGTH: u8 = 31;
 const DEFAULT_WINDOW_SIZE: u8 = 15;
 
 #[derive(Parser)]
-#[command(author, version, about = "Fast minimizer-based coverage analysis for genomic sequences", long_about = None)]
+#[command(author, version, about = "Streaming containment and abundance estimation using minimizers", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -14,16 +14,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Estimate minimizer coverage and depth from reference and reads
+    /// Estimate containment and abundance of target sequence(s) in a read file or stream
     Cov {
-        /// Reference FASTA file
-        reference: PathBuf,
+        /// FASTA file containing target sequence record(s)
+        targets: PathBuf,
 
-        /// Reads FASTA/FASTQ file (supports .gz, .zst, .xz compression). Use '-' for stdin, or omit to read from stdin.
+        /// Reads FASTA/FASTQ file (supports .gz, .zst, .xz compression). Use '-' for stdin.
         #[arg(default_value = "-")]
         reads: PathBuf,
 
-        /// K-mer length used for minimizer computation (1-61)
+        /// Minimizer length (1-61)
         #[arg(short = 'k', long = "kmer-length", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
         kmer_length: u8,
 
@@ -43,9 +43,22 @@ enum Commands {
         #[arg(short = 'q', long = "quiet", default_value_t = false)]
         quiet: bool,
 
-        /// Output format: table, csv, or json
+        /// Output format
         #[arg(short = 'f', long = "format", default_value = "table", value_parser = ["table", "csv", "json"])]
         format: String,
+
+        /// Abundance thresholds for containment calculation (comma-separated integers)
+        #[arg(
+            short = 'a',
+            long = "abundance-thresholds",
+            value_delimiter = ',',
+            default_value = "10"
+        )]
+        abundance_thresholds: Vec<usize>,
+
+        /// Retain only minimizers that discriminate between targets
+        #[arg(short = 'd', long = "discriminatory", default_value_t = false)]
+        discriminatory: bool,
     },
 }
 
@@ -62,7 +75,7 @@ fn main() -> Result<()> {
 
     match &cli.command {
         Commands::Cov {
-            reference,
+            targets,
             reads,
             kmer_length,
             window_size,
@@ -70,6 +83,8 @@ fn main() -> Result<()> {
             output,
             quiet,
             format,
+            abundance_thresholds,
+            discriminatory,
         } => {
             // Validate k-mer and window size constraints
             let k = *kmer_length as usize;
@@ -102,7 +117,7 @@ fn main() -> Result<()> {
             };
 
             let config = grate::CoverageConfig {
-                reference_path: reference.clone(),
+                targets_path: targets.clone(),
                 reads_path: reads.clone(),
                 kmer_length: *kmer_length,
                 window_size: *window_size,
@@ -114,6 +129,8 @@ fn main() -> Result<()> {
                 },
                 quiet: *quiet,
                 output_format,
+                abundance_thresholds: abundance_thresholds.clone(),
+                discriminatory: *discriminatory,
             };
 
             config

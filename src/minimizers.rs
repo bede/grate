@@ -3,7 +3,6 @@ use packed_seq::{unpack_base, PackedNSeqVec, SeqVec};
 pub const DEFAULT_KMER_LENGTH: u8 = 31;
 pub const DEFAULT_WINDOW_SIZE: u8 = 15;
 
-/// Canonical NtHash, with 1-bit rotations for backwards compatibility with deacon.
 pub type KmerHasher = simd_minimizers::seq_hash::NtHasher<true, 1>;
 
 /// Zero-cost abstraction over u64 and u128 minimizer vectors
@@ -36,18 +35,18 @@ impl MinimizerVec {
     }
 }
 
-/// Decode u64 minimizer (2-bit canonical k-mer) to ASCII
+/// Decode u64 minimizer (2-bit canonical k-mer)
 pub fn decode_u64(minimizer: u64, k: u8) -> Vec<u8> {
     (0..k)
         .map(|i| {
             let base_bits = ((minimizer >> (2 * i)) & 0b11) as u8;
             unpack_base(base_bits)
         })
-        .rev() // Reverse because we extracted LSB first
+        .rev()
         .collect()
 }
 
-/// Decode u128 minimizer (2-bit canonical k-mer) to ASCII
+/// Decode u128 minimizer (2-bit canonical k-mer)
 pub fn decode_u128(minimizer: u128, k: u8) -> Vec<u8> {
     (0..k)
         .map(|i| {
@@ -58,7 +57,7 @@ pub fn decode_u128(minimizer: u128, k: u8) -> Vec<u8> {
         .collect()
 }
 
-/// Buffers for minimizer computation (reusable across sequences)
+/// Reusable buffers for minimizer computation
 #[derive(Clone)]
 pub struct Buffers {
     pub packed_nseq: PackedNSeqVec,
@@ -111,12 +110,12 @@ pub fn fill_minimizers_with_positions(
     positions.clear();
     positions_out.clear();
 
-    // Skip if sequence is too short
+    // Skip if too short
     if seq.len() < kmer_length as usize {
         return;
     }
 
-    // Pack the sequence into 2-bit representation
+    // Pack the sequence into 2-bit
     packed_nseq.seq.push_ascii(seq);
     packed_nseq.ambiguous.push_ascii(seq);
 
