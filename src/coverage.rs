@@ -770,6 +770,112 @@ fn format_bp_per_sec(bp_per_sec: f64) -> String {
     }
 }
 
+/// Process a single sample's reads and calculate statistics
+fn process_single_sample(
+    _idx: usize,
+    reads_path: &Path,
+    sample_name: &str,
+    targets: &[TargetInfo],
+    targets_minimizers: Arc<MinimizerSet>,
+    config: &CoverageConfig,
+) -> Result<SampleResults> {
+    // Silence per-sample progress for >1 sample
+    let quiet_sample = config.quiet || config.reads_paths.len() > 1;
+
+    let reads_start = Instant::now();
+    let (abundance_map, total_reads, total_bp) = process_reads_file(
+        reads_path,
+        targets_minimizers,
+        config.kmer_length,
+        config.window_size,
+        config.threads,
+        quiet_sample,
+        config.limit_bp,
+    )?;
+    let reads_time = reads_start.elapsed();
+
+    // Calculate coverage statistics for this sample
+    let analysis_start = Instant::now();
+    let coverage_results = calculate_containment_statistics(
+        targets,
+        &abundance_map,
+        &config.abundance_thresholds,
+        Some(sample_name.to_string()),
+    );
+    let analysis_time = analysis_start.elapsed();
+
+    // Overall stats for this sample
+    let total_minimizers: usize = coverage_results.iter().map(|r| r.total_minimizers).sum();
+    let total_contained_minimizers: usize = coverage_results
+        .iter()
+        .map(|r| r.contained_minimizers)
+        .sum();
+    let overall_containment = if total_minimizers > 0 {
+        total_contained_minimizers as f64 / total_minimizers as f64
+    } else {
+        0.0
+    };
+
+    let overall_median_abundance = if total_minimizers > 0 {
+        coverage_results
+            .iter()
+            .map(|r| r.median_abundance * r.total_minimizers as f64)
+            .sum::<f64>()
+            / total_minimizers as f64
+    } else {
+        0.0
+    };
+
+    let reads_per_second = total_reads as f64 / reads_time.as_secs_f64();
+    let bp_per_second = total_bp as f64 / reads_time.as_secs_f64();
+
+    // Calculate overall containment at each threshold
+    let mut overall_containment_at_threshold = HashMap::new();
+    for &threshold in &config.abundance_thresholds {
+        let total_at_threshold: usize = coverage_results
+            .iter()
+            .map(|r| {
+                let containment = r.containment_at_threshold.get(&threshold).unwrap_or(&0.0);
+                (containment * r.total_minimizers as f64) as usize
+            })
+            .sum();
+        let overall_containment_value = if total_minimizers > 0 {
+            total_at_threshold as f64 / total_minimizers as f64
+        } else {
+            0.0
+        };
+        overall_containment_at_threshold.insert(threshold, overall_containment_value);
+    }
+
+    Ok(SampleResults {
+        sample_name: sample_name.to_string(),
+        reads_file: if reads_path.to_string_lossy() == "-" {
+            "stdin".to_string()
+        } else {
+            reads_path.to_string_lossy().to_string()
+        },
+        targets: coverage_results,
+        overall_stats: OverallStats {
+            total_targets: targets.len(),
+            total_minimizers,
+            total_contained_minimizers,
+            overall_containment,
+            overall_median_abundance,
+            total_reads_processed: total_reads,
+            total_bp_processed: total_bp,
+            overall_containment_at_threshold,
+        },
+        timing: TimingStats {
+            reference_processing_time: 0.0, // Not per-sample
+            reads_processing_time: reads_time.as_secs_f64(),
+            analysis_time: analysis_time.as_secs_f64(),
+            total_time: reads_time.as_secs_f64() + analysis_time.as_secs_f64(),
+            reads_per_second,
+            bp_per_second,
+        },
+    })
+}
+
 pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
@@ -935,122 +1041,52 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
 
     let targets_minimizers = Arc::new(targets_minimizers);
 
-    // Process each sample
-    let mut sample_results = Vec::new();
-    let mut total_reads_time = 0.0;
-    let mut total_analysis_time = 0.0;
+    // Process each sample in parallel
+    use rayon::prelude::*;
 
-    for (idx, (reads_path, sample_name)) in config
+    let is_multisample = config.reads_paths.len() > 1;
+    let completed = if is_multisample && !config.quiet {
+        eprint!("\rProcessed 0 of {}...", config.reads_paths.len());
+        Some(Arc::new(Mutex::new(0usize)))
+    } else {
+        None
+    };
+
+    let sample_results: Vec<SampleResults> = config
         .reads_paths
-        .iter()
+        .par_iter()
         .zip(&config.sample_names)
         .enumerate()
-    {
-        if !config.quiet {
-            eprintln!(
-                "Processing sample '{}' ({}/{}):",
+        .map(|(idx, (reads_path, sample_name))| {
+            let result = process_single_sample(
+                idx,
+                reads_path,
                 sample_name,
-                idx + 1,
-                config.reads_paths.len()
+                &targets,
+                Arc::clone(&targets_minimizers),
+                config,
             );
-        }
 
-        // Process reads for this sample
-        let reads_start = Instant::now();
-        let (abundance_map, total_reads, total_bp) = process_reads_file(
-            reads_path,
-            Arc::clone(&targets_minimizers),
-            config.kmer_length,
-            config.window_size,
-            config.threads,
-            config.quiet,
-            config.limit_bp,
-        )?;
-        let reads_time = reads_start.elapsed();
-        total_reads_time += reads_time.as_secs_f64();
+            // Report completion for multisample runs
+            if let Some(ref counter) = completed {
+                let mut count = counter.lock();
+                *count += 1;
+                eprint!("\rProcessed {} of {}...", *count, config.reads_paths.len());
+            }
 
-        // Calculate coverage statistics for this sample
-        let analysis_start = Instant::now();
-        let coverage_results = calculate_containment_statistics(
-            &targets,
-            &abundance_map,
-            &config.abundance_thresholds,
-            Some(sample_name.clone()),
-        );
-        let analysis_time = analysis_start.elapsed();
-        total_analysis_time += analysis_time.as_secs_f64();
+            result
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-        // Overall stats for this sample
-        let total_minimizers: usize = coverage_results.iter().map(|r| r.total_minimizers).sum();
-        let total_contained_minimizers: usize = coverage_results
-            .iter()
-            .map(|r| r.contained_minimizers)
-            .sum();
-        let overall_containment = if total_minimizers > 0 {
-            total_contained_minimizers as f64 / total_minimizers as f64
-        } else {
-            0.0
-        };
-
-        let overall_median_abundance = if total_minimizers > 0 {
-            coverage_results
-                .iter()
-                .map(|r| r.median_abundance * r.total_minimizers as f64)
-                .sum::<f64>()
-                / total_minimizers as f64
-        } else {
-            0.0
-        };
-
-        let reads_per_second = total_reads as f64 / reads_time.as_secs_f64();
-        let bp_per_second = total_bp as f64 / reads_time.as_secs_f64();
-
-        // Calculate overall containment at each threshold
-        let mut overall_containment_at_threshold = HashMap::new();
-        for &threshold in &config.abundance_thresholds {
-            let total_at_threshold: usize = coverage_results
-                .iter()
-                .map(|r| {
-                    let containment = r.containment_at_threshold.get(&threshold).unwrap_or(&0.0);
-                    (containment * r.total_minimizers as f64) as usize
-                })
-                .sum();
-            let overall_containment_value = if total_minimizers > 0 {
-                total_at_threshold as f64 / total_minimizers as f64
-            } else {
-                0.0
-            };
-            overall_containment_at_threshold.insert(threshold, overall_containment_value);
-        }
-
-        sample_results.push(SampleResults {
-            sample_name: sample_name.clone(),
-            reads_file: if reads_path.to_string_lossy() == "-" {
-                "stdin".to_string()
-            } else {
-                reads_path.to_string_lossy().to_string()
-            },
-            targets: coverage_results,
-            overall_stats: OverallStats {
-                total_targets: targets.len(),
-                total_minimizers,
-                total_contained_minimizers,
-                overall_containment,
-                overall_median_abundance,
-                total_reads_processed: total_reads,
-                total_bp_processed: total_bp,
-                overall_containment_at_threshold,
-            },
-            timing: TimingStats {
-                reference_processing_time: 0.0, // Not per-sample
-                reads_processing_time: reads_time.as_secs_f64(),
-                analysis_time: analysis_time.as_secs_f64(),
-                total_time: reads_time.as_secs_f64() + analysis_time.as_secs_f64(),
-                reads_per_second,
-                bp_per_second,
-            },
-        });
+    if is_multisample && !config.quiet {
+        eprintln!();
     }
+
+    let total_reads_time: f64 = sample_results
+        .iter()
+        .map(|s| s.timing.reads_processing_time)
+        .sum();
+    let total_analysis_time: f64 = sample_results.iter().map(|s| s.timing.analysis_time).sum();
 
     let total_time = start_time.elapsed();
 
@@ -1235,9 +1271,9 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
         }
     }
 
-    // Overall statistics per sample
+    // Overall statistics
     writeln!(writer)?;
-    writeln!(writer, "Overall statistics per sample:")?;
+    writeln!(writer, "Overall:")?;
     for sample in &report.samples {
         let mut overall_msg = format!(
             "  {}: containment={:.1}%",
