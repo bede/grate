@@ -31,6 +31,14 @@ impl BuildHasher for FixedRapidHasher {
 /// RapidHashSet using rapidhash with fixed seed for fast init
 pub type RapidHashSet<T> = HashSet<T, FixedRapidHasher>;
 
+/// Sort order for results
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortOrder {
+    Original,     // Original order from reference file
+    Alphabetical, // Alphabetical by target name
+    Containment,  // Descending by containment (highest first)
+}
+
 /// Zero-cost (hopefully?) abstraction over u64 and u128 minimizer sets
 #[derive(Debug, Clone)]
 pub enum MinimizerSet {
@@ -66,21 +74,11 @@ pub struct CoverageResult {
     pub total_minimizers: usize,
     pub contained_minimizers: usize,
     pub containment: f64,
-    pub mean_abundance: f64,
     pub median_abundance: f64,
     pub abundance_histogram: Vec<(u16, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoverageReport {
-    pub version: String,
-    pub targets_file: String,
-    pub reads_file: String,
-    pub parameters: CoverageParameters,
-    pub targets: Vec<CoverageResult>,
-    pub overall_stats: OverallStats,
-    pub timing: TimingStats,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sample_name: Option<String>, // Only used in multi-sample mode
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,7 +95,6 @@ pub struct OverallStats {
     pub total_minimizers: usize,
     pub total_contained_minimizers: usize,
     pub overall_containment: f64,
-    pub overall_mean_abundance: f64,
     pub overall_median_abundance: f64,
     pub total_reads_processed: u64,
     pub total_bp_processed: u64,
@@ -114,6 +111,26 @@ pub struct TimingStats {
     pub bp_per_second: f64,
 }
 
+/// Results for a single sample in multi-sample mode
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SampleResults {
+    pub sample_name: String,
+    pub reads_file: String,
+    pub targets: Vec<CoverageResult>,
+    pub overall_stats: OverallStats,
+    pub timing: TimingStats,
+}
+
+/// Report containing results for one or more samples
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Report {
+    pub version: String,
+    pub targets_file: String,
+    pub parameters: CoverageParameters,
+    pub samples: Vec<SampleResults>,
+    pub total_timing: TimingStats,
+}
+
 /// Output format options
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutputFormat {
@@ -124,7 +141,8 @@ pub enum OutputFormat {
 
 pub struct CoverageConfig {
     pub targets_path: PathBuf,
-    pub reads_path: PathBuf,
+    pub reads_paths: Vec<PathBuf>,
+    pub sample_names: Vec<String>,
     pub kmer_length: u8,
     pub window_size: u8,
     pub threads: usize,
@@ -133,7 +151,8 @@ pub struct CoverageConfig {
     pub output_format: OutputFormat,
     pub abundance_thresholds: Vec<usize>,
     pub discriminatory: bool,
-    pub sample_bp: Option<u64>,
+    pub limit_bp: Option<u64>,
+    pub sort_order: SortOrder,
 }
 
 impl CoverageConfig {
@@ -347,7 +366,7 @@ struct ReadsProcessor {
     global_counts_u128: Arc<Mutex<Option<HashMap<u128, u16>>>>,
     spinner: Option<Arc<Mutex<ProgressBar>>>,
     start_time: Instant,
-    sample_bp: Option<u64>,
+    limit_bp: Option<u64>,
 }
 
 impl ReadsProcessor {
@@ -357,7 +376,7 @@ impl ReadsProcessor {
         targets_minimizers: Arc<MinimizerSet>,
         spinner: Option<Arc<Mutex<ProgressBar>>>,
         start_time: Instant,
-        sample_bp: Option<u64>,
+        limit_bp: Option<u64>,
     ) -> Self {
         let buffers = if kmer_length <= 32 {
             Buffers::new_u64()
@@ -397,7 +416,7 @@ impl ReadsProcessor {
             global_counts_u128,
             spinner,
             start_time,
-            sample_bp,
+            limit_bp,
         }
     }
 
@@ -422,14 +441,13 @@ impl ReadsProcessor {
 impl<Rf: Record> ParallelProcessor<Rf> for ReadsProcessor {
     fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
         // Check if we've reached sample limit
-        if let Some(limit) = self.sample_bp {
+        if let Some(limit) = self.limit_bp {
             let global_bp = self.global_stats.lock().total_bp;
             if global_bp >= limit {
                 // Stop processing - return error to halt pipeline
-                return Err(paraseq::parallel::ProcessError::IoError(std::io::Error::new(
-                    std::io::ErrorKind::Interrupted,
-                    "Sample limit reached",
-                )));
+                return Err(paraseq::parallel::ProcessError::IoError(
+                    std::io::Error::new(std::io::ErrorKind::Interrupted, "Sample limit reached"),
+                ));
             }
         }
 
@@ -534,7 +552,7 @@ fn process_reads_file(
     window_size: u8,
     threads: usize,
     quiet: bool,
-    sample_bp: Option<u64>,
+    limit_bp: Option<u64>,
 ) -> Result<(AbundanceMap, u64, u64)> {
     let in_path = if reads_path.to_string_lossy() == "-" {
         None
@@ -566,7 +584,7 @@ fn process_reads_file(
         targets_minimizers,
         spinner.clone(),
         start_time,
-        sample_bp,
+        limit_bp,
     );
 
     // Process reads - may terminate early if sample limit reached
@@ -628,6 +646,7 @@ fn calculate_containment_statistics(
     targets: &[TargetInfo],
     abundance_map: &AbundanceMap,
     abundance_thresholds: &[usize],
+    sample_name: Option<String>,
 ) -> Vec<CoverageResult> {
     targets
         .iter()
@@ -665,17 +684,11 @@ fn calculate_containment_statistics(
                 0.0
             };
 
-            // Ignoro zero-abundance minimizers for mean + median calc
+            // Ignore zero-abundance minimizers for median calc
             let non_zero_abundances: Vec<u16> =
                 abundances.iter().copied().filter(|&a| a > 0).collect();
 
-            let mean_abundance = if !non_zero_abundances.is_empty() {
-                non_zero_abundances.iter().sum::<u16>() as f64 / non_zero_abundances.len() as f64
-            } else {
-                0.0
-            };
-
-            // Calculate median medians w/o zeros
+            // Calculate median w/o zeros
             let mut sorted_abundances = non_zero_abundances;
             sorted_abundances.sort_unstable();
             let median_abundance = if sorted_abundances.is_empty() {
@@ -716,166 +729,13 @@ fn calculate_containment_statistics(
                 total_minimizers,
                 contained_minimizers: contained_count,
                 containment,
-                mean_abundance,
                 median_abundance,
                 abundance_histogram,
                 containment_at_threshold,
+                sample_name: sample_name.clone(),
             }
         })
         .collect()
-}
-
-fn output_results(
-    report: &CoverageReport,
-    output_path: Option<&PathBuf>,
-    output_format: OutputFormat,
-) -> Result<()> {
-    let writer: Box<dyn Write> = if let Some(path) = output_path {
-        Box::new(BufWriter::new(File::create(path)?))
-    } else {
-        Box::new(BufWriter::new(io::stdout()))
-    };
-
-    let mut writer = writer;
-
-    match output_format {
-        OutputFormat::Json => {
-            // Output JSON
-            serde_json::to_writer_pretty(&mut writer, report)?;
-            writeln!(writer)?;
-        }
-        OutputFormat::Csv => {
-            // Get sorted thresholds for consistent column ordering
-            let mut thresholds = report.parameters.abundance_thresholds.clone();
-            thresholds.sort_unstable();
-
-            // Build header with containment columns after target
-            let mut header = "target,containment".to_string();
-            for threshold in &thresholds {
-                header.push_str(&format!(",containment{}", threshold));
-            }
-            header.push_str(
-                ",length_bp,total_minimizers,contained_minimizers,median_abundance,mean_abundance",
-            );
-            writeln!(writer, "{}", header)?;
-
-            // Output data rows
-            for result in &report.targets {
-                let mut row = format!("{},{:.5}", result.target, result.containment,);
-                for threshold in &thresholds {
-                    let containment = result
-                        .containment_at_threshold
-                        .get(threshold)
-                        .unwrap_or(&0.0);
-                    row.push_str(&format!(",{:.5}", containment));
-                }
-                row.push_str(&format!(
-                    ",{},{},{},{:.0},{:.2}",
-                    result.length,
-                    result.total_minimizers,
-                    result.contained_minimizers,
-                    result.median_abundance,
-                    result.mean_abundance,
-                ));
-                writeln!(writer, "{}", row)?;
-            }
-
-            // Add overall statistics as a final row
-            let total_length: usize = report.targets.iter().map(|r| r.length).sum();
-            let mut overall_row = format!("ALL,{:.5}", report.overall_stats.overall_containment,);
-            for threshold in &thresholds {
-                let containment = report
-                    .overall_stats
-                    .overall_containment_at_threshold
-                    .get(threshold)
-                    .unwrap_or(&0.0);
-                overall_row.push_str(&format!(",{:.5}", containment));
-            }
-            overall_row.push_str(&format!(
-                ",{},{},{},{:.0},{:.2}",
-                total_length,
-                report.overall_stats.total_minimizers,
-                report.overall_stats.total_contained_minimizers,
-                report.overall_stats.overall_median_abundance,
-                report.overall_stats.overall_mean_abundance,
-            ));
-            writeln!(writer, "{}", overall_row)?;
-        }
-        OutputFormat::Table => {
-            // Get sorted thresholds for consistent column ordering
-            let mut thresholds = report.parameters.abundance_thresholds.clone();
-            thresholds.sort_unstable();
-
-            // Build header with containment columns after target
-            let mut header = format!("{:<30} | {:>12} ", "target", "containment");
-            for threshold in &thresholds {
-                header.push_str(&format!("| {:>14} ", format!("containment{}", threshold)));
-            }
-            header.push_str(&format!(
-                "| {:>10} | {:>12} | {:>17} | {:>15}",
-                "length", "minimizers", "median_abundance", "mean_abundance"
-            ));
-
-            // Use actual header length for separator
-            let separator = "-".repeat(header.len());
-
-            // Output header
-            writeln!(writer)?;
-            writeln!(writer, "{}", header)?;
-            writeln!(writer, "{}", separator)?;
-
-            // Output data rows
-            for result in &report.targets {
-                let mut row = format!(
-                    "{:<30} | {:>11.1}% ",
-                    truncate_string(&result.target, 30),
-                    result.containment * 100.0
-                );
-                for threshold in &thresholds {
-                    let containment = result
-                        .containment_at_threshold
-                        .get(threshold)
-                        .unwrap_or(&0.0);
-                    row.push_str(&format!("| {:>13.1}% ", containment * 100.0));
-                }
-                row.push_str(&format!(
-                    "| {:>10} | {:>12} | {:>17.0} | {:>15.1}",
-                    format_bp(result.length),
-                    result.total_minimizers,
-                    result.median_abundance,
-                    result.mean_abundance
-                ));
-                writeln!(writer, "{}", row)?;
-            }
-
-            // Overall statistics with threshold values
-            writeln!(writer)?;
-            let mut overall_msg = format!(
-                "Overall: containment: {:.1}%",
-                report.overall_stats.overall_containment * 100.0
-            );
-            for threshold in &thresholds {
-                let containment = report
-                    .overall_stats
-                    .overall_containment_at_threshold
-                    .get(threshold)
-                    .unwrap_or(&0.0);
-                overall_msg.push_str(&format!(
-                    ", containment{}: {:.1}%",
-                    threshold,
-                    containment * 100.0
-                ));
-            }
-            overall_msg.push_str(&format!(
-                ", median_abundance: {:.0}, mean_abundance: {:.1}",
-                report.overall_stats.overall_median_abundance,
-                report.overall_stats.overall_mean_abundance
-            ));
-            writeln!(writer, "{}", overall_msg)?;
-        }
-    }
-
-    Ok(())
 }
 
 fn truncate_string(s: &str, max_len: usize) -> String {
@@ -920,10 +780,15 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
             config.kmer_length, config.window_size, config.threads
         );
 
+        if config.reads_paths.len() > 1 {
+            options.push_str(&format!(", samples={}", config.reads_paths.len()));
+        }
+
         if !config.abundance_thresholds.is_empty() {
             options.push_str(&format!(
                 ", abundance-thresholds={}",
-                config.abundance_thresholds
+                config
+                    .abundance_thresholds
                     .iter()
                     .map(|t| t.to_string())
                     .collect::<Vec<_>>()
@@ -935,11 +800,12 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
             options.push_str(", discriminatory");
         }
 
-        if let Some(sample) = config.sample_bp {
-            options.push_str(&format!(", sample={}", format_bp(sample as usize)));
+        if let Some(limit) = config.limit_bp {
+            options.push_str(&format!(", limit={}", format_bp(limit as usize)));
         }
 
-        options.push_str(&format!(", format={}",
+        options.push_str(&format!(
+            ", format={}",
             match config.output_format {
                 OutputFormat::Table => "table",
                 OutputFormat::Csv => "csv",
@@ -947,10 +813,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
             }
         ));
 
-        eprintln!(
-            "Grate v{}; mode: cov; options: {}",
-            version, options
-        );
+        eprintln!("Grate v{}; mode: cov; options: {}", version, options);
     }
 
     // Process targets file
@@ -1072,120 +935,333 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
 
     let targets_minimizers = Arc::new(targets_minimizers);
 
-    // Process reads file
-    let reads_start = Instant::now();
-    let (abundance_map, total_reads, total_bp) = process_reads_file(
-        &config.reads_path,
-        targets_minimizers,
-        config.kmer_length,
-        config.window_size,
-        config.threads,
-        config.quiet,
-        config.sample_bp,
-    )?;
-    let reads_time = reads_start.elapsed();
+    // Process each sample
+    let mut sample_results = Vec::new();
+    let mut total_reads_time = 0.0;
+    let mut total_analysis_time = 0.0;
 
-    // Containment stats
-    let analysis_start = Instant::now();
-    let coverage_results =
-        calculate_containment_statistics(&targets, &abundance_map, &config.abundance_thresholds);
-    let analysis_time = analysis_start.elapsed();
-
-    let total_time = start_time.elapsed();
-
-    // Overall stats
-    let total_minimizers: usize = coverage_results.iter().map(|r| r.total_minimizers).sum();
-    let total_contained_minimizers: usize = coverage_results
+    for (idx, (reads_path, sample_name)) in config
+        .reads_paths
         .iter()
-        .map(|r| r.contained_minimizers)
-        .sum();
-    let overall_containment = if total_minimizers > 0 {
-        total_contained_minimizers as f64 / total_minimizers as f64
-    } else {
-        0.0
-    };
+        .zip(&config.sample_names)
+        .enumerate()
+    {
+        if !config.quiet {
+            eprintln!(
+                "Processing sample '{}' ({}/{}):",
+                sample_name,
+                idx + 1,
+                config.reads_paths.len()
+            );
+        }
 
-    let overall_mean_abundance = if total_minimizers > 0 {
-        coverage_results
+        // Process reads for this sample
+        let reads_start = Instant::now();
+        let (abundance_map, total_reads, total_bp) = process_reads_file(
+            reads_path,
+            Arc::clone(&targets_minimizers),
+            config.kmer_length,
+            config.window_size,
+            config.threads,
+            config.quiet,
+            config.limit_bp,
+        )?;
+        let reads_time = reads_start.elapsed();
+        total_reads_time += reads_time.as_secs_f64();
+
+        // Calculate coverage statistics for this sample
+        let analysis_start = Instant::now();
+        let coverage_results = calculate_containment_statistics(
+            &targets,
+            &abundance_map,
+            &config.abundance_thresholds,
+            Some(sample_name.clone()),
+        );
+        let analysis_time = analysis_start.elapsed();
+        total_analysis_time += analysis_time.as_secs_f64();
+
+        // Overall stats for this sample
+        let total_minimizers: usize = coverage_results.iter().map(|r| r.total_minimizers).sum();
+        let total_contained_minimizers: usize = coverage_results
             .iter()
-            .map(|r| r.mean_abundance * r.total_minimizers as f64)
-            .sum::<f64>()
-            / total_minimizers as f64
-    } else {
-        0.0
-    };
-
-    // Calculate overall median abundance from all median abundances weighted by minimizer count
-    let overall_median_abundance = if total_minimizers > 0 {
-        coverage_results
-            .iter()
-            .map(|r| r.median_abundance * r.total_minimizers as f64)
-            .sum::<f64>()
-            / total_minimizers as f64
-    } else {
-        0.0
-    };
-
-    let reads_per_second = total_reads as f64 / reads_time.as_secs_f64();
-    let bp_per_second = total_bp as f64 / reads_time.as_secs_f64();
-
-    // Calculate overall containment at each threshold
-    let mut overall_containment_at_threshold = HashMap::new();
-    for &threshold in &config.abundance_thresholds {
-        let total_at_threshold: usize = coverage_results
-            .iter()
-            .map(|r| {
-                let containment = r.containment_at_threshold.get(&threshold).unwrap_or(&0.0);
-                (containment * r.total_minimizers as f64) as usize
-            })
+            .map(|r| r.contained_minimizers)
             .sum();
-        let overall_containment_value = if total_minimizers > 0 {
-            total_at_threshold as f64 / total_minimizers as f64
+        let overall_containment = if total_minimizers > 0 {
+            total_contained_minimizers as f64 / total_minimizers as f64
         } else {
             0.0
         };
-        overall_containment_at_threshold.insert(threshold, overall_containment_value);
+
+        let overall_median_abundance = if total_minimizers > 0 {
+            coverage_results
+                .iter()
+                .map(|r| r.median_abundance * r.total_minimizers as f64)
+                .sum::<f64>()
+                / total_minimizers as f64
+        } else {
+            0.0
+        };
+
+        let reads_per_second = total_reads as f64 / reads_time.as_secs_f64();
+        let bp_per_second = total_bp as f64 / reads_time.as_secs_f64();
+
+        // Calculate overall containment at each threshold
+        let mut overall_containment_at_threshold = HashMap::new();
+        for &threshold in &config.abundance_thresholds {
+            let total_at_threshold: usize = coverage_results
+                .iter()
+                .map(|r| {
+                    let containment = r.containment_at_threshold.get(&threshold).unwrap_or(&0.0);
+                    (containment * r.total_minimizers as f64) as usize
+                })
+                .sum();
+            let overall_containment_value = if total_minimizers > 0 {
+                total_at_threshold as f64 / total_minimizers as f64
+            } else {
+                0.0
+            };
+            overall_containment_at_threshold.insert(threshold, overall_containment_value);
+        }
+
+        sample_results.push(SampleResults {
+            sample_name: sample_name.clone(),
+            reads_file: if reads_path.to_string_lossy() == "-" {
+                "stdin".to_string()
+            } else {
+                reads_path.to_string_lossy().to_string()
+            },
+            targets: coverage_results,
+            overall_stats: OverallStats {
+                total_targets: targets.len(),
+                total_minimizers,
+                total_contained_minimizers,
+                overall_containment,
+                overall_median_abundance,
+                total_reads_processed: total_reads,
+                total_bp_processed: total_bp,
+                overall_containment_at_threshold,
+            },
+            timing: TimingStats {
+                reference_processing_time: 0.0, // Not per-sample
+                reads_processing_time: reads_time.as_secs_f64(),
+                analysis_time: analysis_time.as_secs_f64(),
+                total_time: reads_time.as_secs_f64() + analysis_time.as_secs_f64(),
+                reads_per_second,
+                bp_per_second,
+            },
+        });
     }
 
-    // Report
-    let report = CoverageReport {
+    let total_time = start_time.elapsed();
+
+    // Create report
+    let report = Report {
         version: format!("grate {}", version),
         targets_file: config.targets_path.to_string_lossy().to_string(),
-        reads_file: if config.reads_path.to_string_lossy() == "-" {
-            "stdin".to_string()
-        } else {
-            config.reads_path.to_string_lossy().to_string()
-        },
         parameters: CoverageParameters {
             kmer_length: config.kmer_length,
             window_size: config.window_size,
             threads: config.threads,
             abundance_thresholds: config.abundance_thresholds.clone(),
         },
-        targets: coverage_results,
-        overall_stats: OverallStats {
-            total_targets: targets.len(),
-            total_minimizers,
-            total_contained_minimizers,
-            overall_containment,
-            overall_mean_abundance,
-            overall_median_abundance,
-            total_reads_processed: total_reads,
-            total_bp_processed: total_bp,
-            overall_containment_at_threshold,
-        },
-        timing: TimingStats {
+        samples: sample_results,
+        total_timing: TimingStats {
             reference_processing_time: targets_time.as_secs_f64(),
-            reads_processing_time: reads_time.as_secs_f64(),
-            analysis_time: analysis_time.as_secs_f64(),
+            reads_processing_time: total_reads_time,
+            analysis_time: total_analysis_time,
             total_time: total_time.as_secs_f64(),
-            reads_per_second,
-            bp_per_second,
+            reads_per_second: 0.0, // Not meaningful across samples
+            bp_per_second: 0.0,    // Not meaningful across samples
         },
     };
 
     // Output results
-    output_results(&report, config.output_path.as_ref(), config.output_format)?;
+    output_results(
+        &report,
+        config.output_path.as_ref(),
+        config.output_format,
+        config.sort_order,
+    )?;
+
+    Ok(())
+}
+
+/// Sort coverage results based on the specified sort order
+fn sort_results(results: &mut [CoverageResult], sort_order: SortOrder) {
+    match sort_order {
+        SortOrder::Original => {
+            // No sorting needed - keep original order
+        }
+        SortOrder::Alphabetical => {
+            results.sort_by(|a, b| a.target.cmp(&b.target));
+        }
+        SortOrder::Containment => {
+            // Sort by containment descending (highest first)
+            results.sort_by(|a, b| {
+                b.containment
+                    .partial_cmp(&a.containment)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+}
+
+fn output_results(
+    report: &Report,
+    output_path: Option<&PathBuf>,
+    output_format: OutputFormat,
+    sort_order: SortOrder,
+) -> Result<()> {
+    // Create a sorted copy of the report if needed
+    let mut sorted_report = report.clone();
+    if sort_order != SortOrder::Original {
+        for sample in &mut sorted_report.samples {
+            sort_results(&mut sample.targets, sort_order);
+        }
+    }
+
+    let writer: Box<dyn Write> = if let Some(path) = output_path {
+        Box::new(BufWriter::new(File::create(path)?))
+    } else {
+        Box::new(BufWriter::new(io::stdout()))
+    };
+
+    let mut writer = writer;
+
+    match output_format {
+        OutputFormat::Json => {
+            // Output JSON
+            serde_json::to_writer_pretty(&mut writer, &sorted_report)?;
+            writeln!(writer)?;
+        }
+        OutputFormat::Csv => {
+            output_csv(&mut writer, &sorted_report)?;
+        }
+        OutputFormat::Table => {
+            output_table(&mut writer, &sorted_report)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
+    let mut thresholds = report.parameters.abundance_thresholds.clone();
+    thresholds.sort_unstable();
+
+    // Build header with sample column first
+    let mut header = "sample,target,containment".to_string();
+    for threshold in &thresholds {
+        header.push_str(&format!(",containment{}", threshold));
+    }
+    header.push_str(",length_bp,total_minimizers,contained_minimizers,median_abundance");
+    writeln!(writer, "{}", header)?;
+
+    // Output data rows for all samples
+    for sample in &report.samples {
+        for result in &sample.targets {
+            let mut row = format!(
+                "{},{},{:.5}",
+                sample.sample_name, result.target, result.containment
+            );
+            for threshold in &thresholds {
+                let containment = result
+                    .containment_at_threshold
+                    .get(threshold)
+                    .unwrap_or(&0.0);
+                row.push_str(&format!(",{:.5}", containment));
+            }
+            row.push_str(&format!(
+                ",{},{},{},{:.0}",
+                result.length,
+                result.total_minimizers,
+                result.contained_minimizers,
+                result.median_abundance,
+            ));
+            writeln!(writer, "{}", row)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
+    let mut thresholds = report.parameters.abundance_thresholds.clone();
+    thresholds.sort_unstable();
+
+    // Build header with sample column first
+    let mut header = format!(
+        "{:<20} | {:<30} | {:>12} ",
+        "sample", "target", "containment"
+    );
+    for threshold in &thresholds {
+        header.push_str(&format!("| {:>14} ", format!("containment{}", threshold)));
+    }
+    header.push_str(&format!(
+        "| {:>10} | {:>12} | {:>17}",
+        "length", "minimizers", "median_abundance"
+    ));
+
+    let separator = "-".repeat(header.len());
+
+    // Output header
+    writeln!(writer)?;
+    writeln!(writer, "{}", header)?;
+    writeln!(writer, "{}", separator)?;
+
+    // Output data rows for all samples
+    for sample in &report.samples {
+        for result in &sample.targets {
+            let mut row = format!(
+                "{:<20} | {:<30} | {:>11.1}% ",
+                truncate_string(&sample.sample_name, 20),
+                truncate_string(&result.target, 30),
+                result.containment * 100.0
+            );
+            for threshold in &thresholds {
+                let containment = result
+                    .containment_at_threshold
+                    .get(threshold)
+                    .unwrap_or(&0.0);
+                row.push_str(&format!("| {:>13.1}% ", containment * 100.0));
+            }
+            row.push_str(&format!(
+                "| {:>10} | {:>12} | {:>17.0}",
+                format_bp(result.length),
+                result.total_minimizers,
+                result.median_abundance,
+            ));
+            writeln!(writer, "{}", row)?;
+        }
+    }
+
+    // Overall statistics per sample
+    writeln!(writer)?;
+    writeln!(writer, "Overall statistics per sample:")?;
+    for sample in &report.samples {
+        let mut overall_msg = format!(
+            "  {}: containment={:.1}%",
+            sample.sample_name,
+            sample.overall_stats.overall_containment * 100.0
+        );
+        for threshold in &thresholds {
+            let containment = sample
+                .overall_stats
+                .overall_containment_at_threshold
+                .get(threshold)
+                .unwrap_or(&0.0);
+            overall_msg.push_str(&format!(
+                ", containment{}={:.1}%",
+                threshold,
+                containment * 100.0
+            ));
+        }
+        overall_msg.push_str(&format!(
+            ", median_abundance={:.0}",
+            sample.overall_stats.overall_median_abundance,
+        ));
+        writeln!(writer, "{}", overall_msg)?;
+    }
 
     Ok(())
 }

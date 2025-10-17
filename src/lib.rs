@@ -11,8 +11,8 @@ pub mod minimizers;
 
 // Re-export the main functionality
 pub use coverage::{
-    run_coverage_analysis, CoverageConfig, CoverageParameters, CoverageReport, CoverageResult,
-    OutputFormat, OverallStats, TargetInfo, TimingStats,
+    run_coverage_analysis, CoverageConfig, CoverageParameters, CoverageResult, OutputFormat,
+    OverallStats, Report, SampleResults, SortOrder, TargetInfo, TimingStats,
 };
 
 pub use minimizers::{
