@@ -133,6 +133,7 @@ pub struct CoverageConfig {
     pub output_format: OutputFormat,
     pub abundance_thresholds: Vec<usize>,
     pub discriminatory: bool,
+    pub sample_bp: Option<u64>,
 }
 
 impl CoverageConfig {
@@ -158,10 +159,21 @@ struct TargetsProcessor {
     buffers: Buffers,
     positions: Vec<usize>,
     targets: Arc<Mutex<Vec<TargetInfo>>>,
+
+    // Progress tracking
+    local_stats: ProcessingStats,
+    global_stats: Arc<Mutex<ProcessingStats>>,
+    spinner: Option<Arc<Mutex<ProgressBar>>>,
+    start_time: std::time::Instant,
 }
 
 impl TargetsProcessor {
-    fn new(kmer_length: u8, window_size: u8) -> Self {
+    fn new(
+        kmer_length: u8,
+        window_size: u8,
+        spinner: Option<Arc<Mutex<ProgressBar>>>,
+        start_time: std::time::Instant,
+    ) -> Self {
         let buffers = if kmer_length <= 32 {
             Buffers::new_u64()
         } else {
@@ -175,6 +187,27 @@ impl TargetsProcessor {
             buffers,
             positions: Vec::new(),
             targets: Arc::new(Mutex::new(Vec::new())),
+            local_stats: ProcessingStats::default(),
+            global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
+            spinner,
+            start_time,
+        }
+    }
+
+    fn update_spinner(&self) {
+        if let Some(ref spinner) = self.spinner {
+            let stats = self.global_stats.lock();
+            let elapsed = self.start_time.elapsed();
+            let seqs_per_sec = stats.total_seqs as f64 / elapsed.as_secs_f64();
+            let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
+
+            spinner.lock().set_message(format!(
+                "Processing targets: {} seqs ({}). {:.0} seqs/s ({})",
+                stats.total_seqs,
+                format_bp(stats.total_bp as usize),
+                seqs_per_sec,
+                format_bp_per_sec(bp_per_sec)
+            ));
         }
     }
 }
@@ -183,6 +216,9 @@ impl<Rf: Record> ParallelProcessor<Rf> for TargetsProcessor {
     fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
         let sequence = record.seq();
         let target_name = String::from_utf8_lossy(record.id()).to_string();
+
+        self.local_stats.total_seqs += 1;
+        self.local_stats.total_bp += sequence.len() as u64;
 
         fill_minimizers_with_positions(
             &sequence,
@@ -216,12 +252,34 @@ impl<Rf: Record> ParallelProcessor<Rf> for TargetsProcessor {
 
         Ok(())
     }
+
+    fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
+        // Update global stats
+        {
+            let mut stats = self.global_stats.lock();
+            stats.total_seqs += self.local_stats.total_seqs;
+            stats.total_bp += self.local_stats.total_bp;
+
+            // Update spinner every 0.1 Gbp
+            let current_progress = stats.total_bp / 100_000_000; // 0.1 Gbp increments
+            if current_progress > stats.last_reported {
+                drop(stats); // Release lock before updating spinner
+                self.update_spinner();
+                self.global_stats.lock().last_reported = current_progress;
+            }
+
+            self.local_stats = ProcessingStats::default();
+        }
+
+        Ok(())
+    }
 }
 
 fn process_targets_file(
     targets_path: &Path,
     kmer_length: u8,
     window_size: u8,
+    quiet: bool,
 ) -> Result<Vec<TargetInfo>> {
     let in_path = if targets_path.to_string_lossy() == "-" {
         None
@@ -230,10 +288,32 @@ fn process_targets_file(
     };
 
     let reader = reader_with_inferred_batch_size(in_path)?;
-    let mut processor = TargetsProcessor::new(kmer_length, window_size);
+
+    // Progress bar
+    let spinner = if !quiet {
+        let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{msg}")?,
+        );
+        pb.set_message("Processing targets: 0 seqs (0bp)");
+        Some(Arc::new(Mutex::new(pb)))
+    } else {
+        None
+    };
+
+    let start_time = std::time::Instant::now();
+    let mut processor =
+        TargetsProcessor::new(kmer_length, window_size, spinner.clone(), start_time);
 
     // Single thread to preserve order
     reader.process_parallel(&mut processor, 1)?;
+
+    // Finish spinner and clear
+    if let Some(ref pb) = spinner {
+        pb.lock().finish_and_clear();
+    }
 
     let targets = Arc::try_unwrap(processor.targets).unwrap().into_inner();
 
@@ -267,6 +347,7 @@ struct ReadsProcessor {
     global_counts_u128: Arc<Mutex<Option<HashMap<u128, u16>>>>,
     spinner: Option<Arc<Mutex<ProgressBar>>>,
     start_time: Instant,
+    sample_bp: Option<u64>,
 }
 
 impl ReadsProcessor {
@@ -276,6 +357,7 @@ impl ReadsProcessor {
         targets_minimizers: Arc<MinimizerSet>,
         spinner: Option<Arc<Mutex<ProgressBar>>>,
         start_time: Instant,
+        sample_bp: Option<u64>,
     ) -> Self {
         let buffers = if kmer_length <= 32 {
             Buffers::new_u64()
@@ -315,6 +397,7 @@ impl ReadsProcessor {
             global_counts_u128,
             spinner,
             start_time,
+            sample_bp,
         }
     }
 
@@ -338,6 +421,18 @@ impl ReadsProcessor {
 
 impl<Rf: Record> ParallelProcessor<Rf> for ReadsProcessor {
     fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
+        // Check if we've reached sample limit
+        if let Some(limit) = self.sample_bp {
+            let global_bp = self.global_stats.lock().total_bp;
+            if global_bp >= limit {
+                // Stop processing - return error to halt pipeline
+                return Err(paraseq::parallel::ProcessError::IoError(std::io::Error::new(
+                    std::io::ErrorKind::Interrupted,
+                    "Sample limit reached",
+                )));
+            }
+        }
+
         let seq = record.seq();
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq.len() as u64;
@@ -439,6 +534,7 @@ fn process_reads_file(
     window_size: u8,
     threads: usize,
     quiet: bool,
+    sample_bp: Option<u64>,
 ) -> Result<(AbundanceMap, u64, u64)> {
     let in_path = if reads_path.to_string_lossy() == "-" {
         None
@@ -470,9 +566,23 @@ fn process_reads_file(
         targets_minimizers,
         spinner.clone(),
         start_time,
+        sample_bp,
     );
 
-    reader.process_parallel(&mut processor, threads)?;
+    // Process reads - may terminate early if sample limit reached
+    let process_result = reader.process_parallel(&mut processor, threads);
+
+    // Check if we stopped due to sampling
+    let stopped_early = if let Err(ref e) = process_result {
+        e.to_string().contains("Sample limit reached")
+    } else {
+        false
+    };
+
+    // If it's not a sample stop, propagate the error
+    if !stopped_early {
+        process_result?;
+    }
 
     // Finish spinner
     if let Some(ref pb) = spinner {
@@ -582,14 +692,16 @@ fn calculate_containment_statistics(
             for abundance in &abundances {
                 *abundance_counts.entry(*abundance).or_insert(0) += 1;
             }
-            let mut abundance_histogram: Vec<(u16, usize)> =
-                abundance_counts.into_iter().collect();
+            let mut abundance_histogram: Vec<(u16, usize)> = abundance_counts.into_iter().collect();
             abundance_histogram.sort_by_key(|(abundance, _)| *abundance);
 
             // Calculate containment at threshold
             let mut containment_at_threshold = HashMap::new();
             for &threshold in abundance_thresholds {
-                let count_at_threshold = abundances.iter().filter(|&&a| a >= threshold as u16).count();
+                let count_at_threshold = abundances
+                    .iter()
+                    .filter(|&&a| a >= threshold as u16)
+                    .count();
                 let containment_value = if total_minimizers > 0 {
                     count_at_threshold as f64 / total_minimizers as f64
                 } else {
@@ -803,16 +915,52 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     let version = env!("CARGO_PKG_VERSION").to_string();
 
     if !config.quiet {
+        let mut options = format!(
+            "k={}, w={}, threads={}",
+            config.kmer_length, config.window_size, config.threads
+        );
+
+        if !config.abundance_thresholds.is_empty() {
+            options.push_str(&format!(
+                ", abundance-thresholds={}",
+                config.abundance_thresholds
+                    .iter()
+                    .map(|t| t.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ));
+        }
+
+        if config.discriminatory {
+            options.push_str(", discriminatory");
+        }
+
+        if let Some(sample) = config.sample_bp {
+            options.push_str(&format!(", sample={}", format_bp(sample as usize)));
+        }
+
+        options.push_str(&format!(", format={}",
+            match config.output_format {
+                OutputFormat::Table => "table",
+                OutputFormat::Csv => "csv",
+                OutputFormat::Json => "json",
+            }
+        ));
+
         eprintln!(
-            "Grate v{}; mode: cov; options: k={}, w={}, threads={}",
-            version, config.kmer_length, config.window_size, config.threads
+            "Grate v{}; mode: cov; options: {}",
+            version, options
         );
     }
 
     // Process targets file
     let targets_start = Instant::now();
-    let mut targets =
-        process_targets_file(&config.targets_path, config.kmer_length, config.window_size)?;
+    let mut targets = process_targets_file(
+        &config.targets_path,
+        config.kmer_length,
+        config.window_size,
+        config.quiet,
+    )?;
     let targets_time = targets_start.elapsed();
 
     // Count minimizers shared by multiple targets
@@ -933,6 +1081,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
         config.window_size,
         config.threads,
         config.quiet,
+        config.sample_bp,
     )?;
     let reads_time = reads_start.elapsed();
 

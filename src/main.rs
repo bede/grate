@@ -5,6 +5,27 @@ use std::path::PathBuf;
 const DEFAULT_KMER_LENGTH: u8 = 31;
 const DEFAULT_WINDOW_SIZE: u8 = 15;
 
+/// Parse sample string with K/M/G/T suffix into bp count
+fn parse_sample(s: &str) -> Result<u64> {
+    let s = s.trim().to_uppercase();
+    let (num_str, multiplier) = if s.ends_with('T') {
+        (&s[..s.len()-1], 1_000_000_000_000u64)
+    } else if s.ends_with('G') {
+        (&s[..s.len()-1], 1_000_000_000u64)
+    } else if s.ends_with('M') {
+        (&s[..s.len()-1], 1_000_000u64)
+    } else if s.ends_with('K') {
+        (&s[..s.len()-1], 1_000u64)
+    } else {
+        (s.as_str(), 1u64)
+    };
+
+    let num: u64 = num_str.parse()
+        .with_context(|| format!("Invalid sample value: {}", s))?;
+
+    Ok(num * multiplier)
+}
+
 #[derive(Parser)]
 #[command(author, version, about = "Streaming containment and abundance estimation using minimizers", long_about = None)]
 struct Cli {
@@ -16,10 +37,10 @@ struct Cli {
 enum Commands {
     /// Estimate containment and abundance of target sequence(s) in a read file or stream
     Cov {
-        /// FASTA file containing target sequence record(s)
+        /// Path to fasta file containing target sequence record(s)
         targets: PathBuf,
 
-        /// Reads FASTA/FASTQ file (supports .gz, .zst, .xz compression). Use '-' for stdin.
+        /// Path to fastx file containing reads (or - for stdin).
         #[arg(default_value = "-")]
         reads: PathBuf,
 
@@ -47,7 +68,7 @@ enum Commands {
         #[arg(short = 'f', long = "format", default_value = "table", value_parser = ["table", "csv", "json"])]
         format: String,
 
-        /// Abundance thresholds for containment calculation (comma-separated integers)
+        /// Comma-separated abundance thresholds for containment calculation
         #[arg(
             short = 'a',
             long = "abundance-thresholds",
@@ -56,9 +77,13 @@ enum Commands {
         )]
         abundance_thresholds: Vec<usize>,
 
-        /// Retain only minimizers that discriminate between targets
+        /// Retain only minimizers exclusive to each target
         #[arg(short = 'd', long = "discriminatory", default_value_t = false)]
         discriminatory: bool,
+
+        /// Terminate read processing after approximately this many bases (e.g. 50M, 10G)
+        #[arg(short = 's', long = "sample")]
+        sample: Option<String>,
     },
 }
 
@@ -85,6 +110,7 @@ fn main() -> Result<()> {
             format,
             abundance_thresholds,
             discriminatory,
+            sample,
         } => {
             // Validate k-mer and window size constraints
             let k = *kmer_length as usize;
@@ -116,6 +142,13 @@ fn main() -> Result<()> {
                 _ => unreachable!("clap should have validated the format"),
             };
 
+            // Parse sample if provided
+            let sample_bp = if let Some(s) = sample {
+                Some(parse_sample(s)?)
+            } else {
+                None
+            };
+
             let config = grate::CoverageConfig {
                 targets_path: targets.clone(),
                 reads_path: reads.clone(),
@@ -131,6 +164,7 @@ fn main() -> Result<()> {
                 output_format,
                 abundance_thresholds: abundance_thresholds.clone(),
                 discriminatory: *discriminatory,
+                sample_bp,
             };
 
             config
