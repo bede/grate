@@ -221,7 +221,7 @@ impl TargetsProcessor {
             let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
 
             spinner.lock().set_message(format!(
-                "Processing targets: {} seqs ({}). {:.0} seqs/s ({})",
+                "Collecting target minimizers: {} seqs ({}). {:.0} seqs/s ({})",
                 stats.total_seqs,
                 format_bp(stats.total_bp as usize),
                 seqs_per_sec,
@@ -316,7 +316,6 @@ fn process_targets_file(
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
                 .template("{msg}")?,
         );
-        pb.set_message("Processing targets: 0 seqs (0bp)");
         Some(Arc::new(Mutex::new(pb)))
     } else {
         None
@@ -933,6 +932,9 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     let targets_time = targets_start.elapsed();
 
     // Count minimizers shared by multiple targets
+    if !config.quiet {
+        eprint!("Counting shared minimizers…\r");
+    }
     let mut minimizer_target_counts: HashMap<u64, usize> = HashMap::new();
     let mut minimizer_target_counts_u128: HashMap<u128, usize> = HashMap::new();
 
@@ -992,6 +994,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     }
 
     if !config.quiet {
+        eprint!("\r"); // Clear space
         let total_unique_minimizers: usize = targets.iter().map(|t| t.minimizers.len()).sum();
         let total_bp: usize = targets.iter().map(|t| t.length).sum();
 
@@ -1021,6 +1024,9 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     }
 
     // Build set of all unique minimizers across targets
+    if !config.quiet {
+        eprint!("Building minimizer set…\r");
+    }
     let targets_minimizers = if config.kmer_length <= 32 {
         let mut set = RapidHashSet::default();
         for target in &targets {
@@ -1046,9 +1052,14 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
 
     let is_multisample = config.reads_paths.len() > 1;
     let completed = if is_multisample && !config.quiet {
-        eprint!("\rProcessed 0 of {}...", config.reads_paths.len());
+        // Give us a blank line to overwrite
+        eprint!("\x1B[2K\rReads: processed 0 of {}…", config.reads_paths.len());
         Some(Arc::new(Mutex::new(0usize)))
     } else {
+        // Give us a blank line to overwrite
+        if !config.quiet {
+            eprint!("\x1B[2K\r");
+        }
         None
     };
 
@@ -1071,7 +1082,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
             if let Some(ref counter) = completed {
                 let mut count = counter.lock();
                 *count += 1;
-                eprint!("\rProcessed {} of {}...", *count, config.reads_paths.len());
+                eprint!("\rReads: processed {} of {}…", *count, config.reads_paths.len());
             }
 
             result
