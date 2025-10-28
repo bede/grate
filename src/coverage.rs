@@ -16,6 +16,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Alias for abund counts
+type CountDepth = u16;
+
 /// BuildHasher using rapidhash with fixed seed for fast init
 #[derive(Clone, Default)]
 pub struct FixedRapidHasher;
@@ -75,7 +78,7 @@ pub struct CoverageResult {
     pub contained_minimizers: usize,
     pub containment: f64,
     pub median_abundance: f64,
-    pub abundance_histogram: Vec<(u16, usize)>, // (abundance, count)
+    pub abundance_histogram: Vec<(CountDepth, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sample_name: Option<String>, // Only used in multi-sample mode
@@ -356,13 +359,13 @@ struct ReadsProcessor {
     // Local buffers
     buffers: Buffers,
     local_stats: ProcessingStats,
-    local_counts_u64: Option<HashMap<u64, u16>>,
-    local_counts_u128: Option<HashMap<u128, u16>>,
+    local_counts_u64: Option<HashMap<u64, CountDepth>>,
+    local_counts_u128: Option<HashMap<u128, CountDepth>>,
 
     // Global state
     global_stats: Arc<Mutex<ProcessingStats>>,
-    global_counts_u64: Arc<Mutex<Option<HashMap<u64, u16>>>>,
-    global_counts_u128: Arc<Mutex<Option<HashMap<u128, u16>>>>,
+    global_counts_u64: Arc<Mutex<Option<HashMap<u64, CountDepth>>>>,
+    global_counts_u128: Arc<Mutex<Option<HashMap<u128, CountDepth>>>>,
     spinner: Option<Arc<Mutex<ProgressBar>>>,
     start_time: Instant,
     limit_bp: Option<u64>,
@@ -540,8 +543,8 @@ impl<Rf: Record> ParallelProcessor<Rf> for ReadsProcessor {
 
 /// Enum to abstract over u64 and u128 abundance maps
 enum AbundanceMap {
-    U64(HashMap<u64, u16>),
-    U128(HashMap<u128, u16>),
+    U64(HashMap<u64, CountDepth>),
+    U128(HashMap<u128, CountDepth>),
 }
 
 fn process_reads_file(
@@ -651,7 +654,7 @@ fn calculate_containment_statistics(
         .iter()
         .map(|target| {
             let total_minimizers = target.minimizers.len();
-            let mut abundances: Vec<u16> = Vec::new();
+            let mut abundances: Vec<CountDepth> = Vec::new();
             let mut contained_count = 0;
 
             // Collect abundances for all unique minimizers in this target
@@ -684,7 +687,7 @@ fn calculate_containment_statistics(
             };
 
             // Ignore zero-abundance minimizers for median calc
-            let non_zero_abundances: Vec<u16> =
+            let non_zero_abundances: Vec<CountDepth> =
                 abundances.iter().copied().filter(|&a| a > 0).collect();
 
             // Calculate median w/o zeros
@@ -700,11 +703,12 @@ fn calculate_containment_statistics(
             };
 
             // Abundance hist
-            let mut abundance_counts: HashMap<u16, usize> = HashMap::new();
+            let mut abundance_counts: HashMap<CountDepth, usize> = HashMap::new();
             for abundance in &abundances {
                 *abundance_counts.entry(*abundance).or_insert(0) += 1;
             }
-            let mut abundance_histogram: Vec<(u16, usize)> = abundance_counts.into_iter().collect();
+            let mut abundance_histogram: Vec<(CountDepth, usize)> =
+                abundance_counts.into_iter().collect();
             abundance_histogram.sort_by_key(|(abundance, _)| *abundance);
 
             // Calculate containment at threshold
@@ -712,7 +716,7 @@ fn calculate_containment_statistics(
             for &threshold in abundance_thresholds {
                 let count_at_threshold = abundances
                     .iter()
-                    .filter(|&&a| a >= threshold as u16)
+                    .filter(|&&a| a >= threshold as CountDepth)
                     .count();
                 let containment_value = if total_minimizers > 0 {
                     count_at_threshold as f64 / total_minimizers as f64
@@ -1053,7 +1057,10 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     let is_multisample = config.reads_paths.len() > 1;
     let completed = if is_multisample && !config.quiet {
         // Give us a blank line to overwrite
-        eprint!("\x1B[2K\rReads: processed 0 of {}…", config.reads_paths.len());
+        eprint!(
+            "\x1B[2K\rReads: processed 0 of {}…",
+            config.reads_paths.len()
+        );
         Some(Arc::new(Mutex::new(0usize)))
     } else {
         // Give us a blank line to overwrite
@@ -1082,7 +1089,11 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
             if let Some(ref counter) = completed {
                 let mut count = counter.lock();
                 *count += 1;
-                eprint!("\rReads: processed {} of {}…", *count, config.reads_paths.len());
+                eprint!(
+                    "\rReads: processed {} of {}…",
+                    *count,
+                    config.reads_paths.len()
+                );
             }
 
             result
