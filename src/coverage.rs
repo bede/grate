@@ -8,6 +8,7 @@ use paraseq::parallel::{ParallelProcessor, ParallelReader};
 use paraseq::Record;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use statrs::distribution::{Beta, ContinuousCDF};
 use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::hash::BuildHasher;
@@ -33,6 +34,50 @@ impl BuildHasher for FixedRapidHasher {
 
 /// RapidHashSet using rapidhash with fixed seed for fast init
 pub type RapidHashSet<T> = HashSet<T, FixedRapidHasher>;
+
+/// Calculate 95% confidence interval for containment using beta-binomial approach
+/// Returns (lower_bound, upper_bound) as proportions [0, 1]
+fn calculate_containment_ci(successes: usize, trials: usize) -> (f64, f64) {
+    if trials == 0 {
+        return (0.0, 0.0);
+    }
+
+    // Handle edge cases
+    if successes == 0 {
+        // Wilson score interval for zero successes
+        // For 95% CI with zero successes, use a conservative upper bound
+        let z = 1.96; // 95% confidence
+        let upper = z * z / (trials as f64 + z * z);
+        return (0.0, upper);
+    }
+
+    if successes == trials {
+        // Wilson score interval for all successes
+        let z = 1.96;
+        let n = trials as f64;
+        let lower = (n - z * z / (n + z * z)) / (n + z * z / n);
+        return (lower.max(0.0), 1.0);
+    }
+
+    // Standard beta distribution approach
+    // Beta(α, β) where α = successes + 1, β = failures + 1
+    let alpha = successes as f64 + 1.0;
+    let beta = (trials - successes) as f64 + 1.0;
+
+    match Beta::new(alpha, beta) {
+        Ok(dist) => {
+            // 95% CI: 2.5th and 97.5th percentiles
+            let lower = dist.inverse_cdf(0.025);
+            let upper = dist.inverse_cdf(0.975);
+            (lower, upper)
+        }
+        Err(_) => {
+            // Fallback to simple proportion if beta distribution fails
+            let p = successes as f64 / trials as f64;
+            (p, p)
+        }
+    }
+}
 
 /// Sort order for results
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,6 +122,8 @@ pub struct CoverageResult {
     pub total_minimizers: usize,
     pub contained_minimizers: usize,
     pub containment: f64,
+    pub containment_ci_lower: f64,
+    pub containment_ci_upper: f64,
     pub median_abundance: f64,
     pub abundance_histogram: Vec<(CountDepth, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
@@ -686,6 +733,10 @@ fn calculate_containment_statistics(
                 0.0
             };
 
+            // Calculate 95% confidence interval for containment
+            let (containment_ci_lower, containment_ci_upper) =
+                calculate_containment_ci(contained_count, total_minimizers);
+
             // Ignore zero-abundance minimizers for median calc
             let non_zero_abundances: Vec<CountDepth> =
                 abundances.iter().copied().filter(|&a| a > 0).collect();
@@ -732,6 +783,8 @@ fn calculate_containment_statistics(
                 total_minimizers,
                 contained_minimizers: contained_count,
                 containment,
+                containment_ci_lower,
+                containment_ci_upper,
                 median_abundance,
                 abundance_histogram,
                 containment_at_threshold,
@@ -1208,7 +1261,8 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     thresholds.sort_unstable();
 
     // Build header with sample column first
-    let mut header = "sample,target,containment".to_string();
+    let mut header =
+        "sample,target,containment,containment_ci_lower,containment_ci_upper".to_string();
     for threshold in &thresholds {
         header.push_str(&format!(",containment{}", threshold));
     }
@@ -1219,8 +1273,12 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     for sample in &report.samples {
         for result in &sample.targets {
             let mut row = format!(
-                "{},{},{:.5}",
-                sample.sample_name, result.target, result.containment
+                "{},{},{:.5},{:.5},{:.5}",
+                sample.sample_name,
+                result.target,
+                result.containment,
+                result.containment_ci_lower,
+                result.containment_ci_upper
             );
             for threshold in &thresholds {
                 let containment = result
@@ -1249,7 +1307,7 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
 
     // Build header with sample column first
     let mut header = format!(
-        "{:<20} | {:<30} | {:>12} ",
+        "{:<20} | {:<30} | {:>28} ",
         "sample", "target", "containment"
     );
     for threshold in &thresholds {
@@ -1270,11 +1328,18 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
     // Output data rows for all samples
     for sample in &report.samples {
         for result in &sample.targets {
+            // Format containment with CI in parentheses
+            let containment_str = format!(
+                "{:>5.1}% ({:>4.1}-{:<4.1}%)",
+                result.containment * 100.0,
+                result.containment_ci_lower * 100.0,
+                result.containment_ci_upper * 100.0
+            );
             let mut row = format!(
-                "{:<20} | {:<30} | {:>11.1}% ",
+                "{:<20} | {:<30} | {:>28} ",
                 truncate_string(&sample.sample_name, 20),
                 truncate_string(&result.target, 30),
-                result.containment * 100.0
+                containment_str
             );
             for threshold in &thresholds {
                 let containment = result
