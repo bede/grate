@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 const DEFAULT_KMER_LENGTH: u8 = 31;
-const DEFAULT_WINDOW_SIZE: u8 = 15;
+const DEFAULT_WINDOW_SIZE: u8 = 31;
 
 /// Derive sample name from file path by stripping directory and extensions
 fn derive_sample_name(path: &Path) -> String {
