@@ -1,4 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run
+# /// script
+# dependencies = [
+#   "pandas",
+#   "altair",
+#   "vl-convert-python",
+# ]
+# ///
 
 import argparse
 import os
@@ -17,8 +24,9 @@ def natural_sort_key(text):
 def main():
     parser = argparse.ArgumentParser(description="Plot Grate CSV file (single CSV; one or many samples)")
     parser.add_argument("input_csv", help="Input CSV file containing one or many samples (must include a sample column)")
-    parser.add_argument("--output-plot", default="containment.png", help="Output plot filename")
-    parser.add_argument("--output-csv", default="containment.csv", help="(Re)written CSV filename")
+    parser.add_argument("--output-plot", help="Output plot filename (default: <input_prefix>.png)")
+    parser.add_argument("--output-csv", help="(Re)written CSV filename (default: <input_prefix>.csv)")
+    parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     parser.add_argument("--title", default="Containment analysis (Grate)", help="Plot title")
     parser.add_argument("--short-names", action="store_true",
@@ -27,6 +35,25 @@ def main():
                         help="Name of the column that identifies samples (default: 'sample')")
 
     args = parser.parse_args()
+
+    # Auto-generate output filenames from input prefix if not specified
+    input_prefix = os.path.splitext(args.input_csv)[0]
+    if args.output_plot is None:
+        args.output_plot = f"{input_prefix}.png"
+    if args.output_csv is None:
+        args.output_csv = f"{input_prefix}.csv"
+
+    # Check if output files exist and require --force to overwrite
+    existing_files = []
+    if os.path.exists(args.output_plot):
+        existing_files.append(args.output_plot)
+    if os.path.exists(args.output_csv):
+        existing_files.append(args.output_csv)
+
+    if existing_files and not args.force:
+        print(f"ERROR: Output file(s) already exist: {', '.join(existing_files)}")
+        print("Use --force to overwrite existing files")
+        sys.exit(1)
 
     try:
         # --- Load & validate ---
