@@ -1,4 +1,4 @@
-sample,target,containment,containment10,length_bp,total_minimizers,contained_minimizers,median_abundance
+sample,target,containment1,containment10,length_bp,total_minimizers,contained_minimizers,median_abundance
 rsviruses17900,AC_000017.1 AdV-1,0.75305,0.38375,35676,4430,3336,10
 rsviruses17900,AF533012.1 HPIV-2,0.91062,0.21706,15654,1958,1783,8
 rsviruses17900,AM749299.1 AdV-31,0.41297,0.32005,33755,4165,1720,14

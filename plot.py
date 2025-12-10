@@ -28,16 +28,23 @@ def main():
     parser.add_argument("--output-csv", help="(Re)written CSV filename (default: <input_prefix>.csv)")
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
-    parser.add_argument("--title", default="Containment analysis (Grate)", help="Plot title")
+    parser.add_argument("--title", default="Containment analysis (Grate)",
+                        help="Plot title (default: %(default)s)")
     parser.add_argument("--short-names", action="store_true",
                         help="Remove accession prefix (before first space) from target names")
     parser.add_argument("--sample-column", default="sample",
                         help="Name of the column that identifies samples (default: 'sample')")
+    parser.add_argument("--abundance-threshold", type=int, default=1,
+                        help="Abundance threshold for containment column to plot (default: %(default)s for containment1)")
+    parser.add_argument("--no-depth", action="store_true",
+                        help="Disable depth labels on the plot")
 
     args = parser.parse_args()
 
     # Auto-generate output filenames from input prefix if not specified
-    input_prefix = os.path.splitext(args.input_csv)[0]
+    # Use only the filename (not path) and output to current directory
+    input_filename = os.path.basename(args.input_csv)
+    input_prefix = os.path.splitext(input_filename)[0]
     if args.output_plot is None:
         args.output_plot = f"{input_prefix}.png"
     if args.output_csv is None:
@@ -77,8 +84,11 @@ def main():
             print("ERROR: Input CSV has no data")
             sys.exit(1)
 
+        # Construct containment column name from abundance threshold
+        containment_col = f"containment{args.abundance_threshold}"
+
         # Ensure required columns exist
-        required_cols = {"target", "containment", "median_abundance"}
+        required_cols = {"target", containment_col, "median_abundance"}
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             print(f"ERROR: Input CSV missing required columns: {', '.join(missing)}")
@@ -91,7 +101,7 @@ def main():
             sys.exit(1)
 
         # Coerce numeric columns in case they're strings
-        for c in ("containment", "median_abundance", "length_bp", "contained_minimizers"):
+        for c in (containment_col, "median_abundance", "length_bp", "contained_minimizers"):
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -140,7 +150,7 @@ def main():
             .mark_bar(size=6)
             .encode(
                 y=alt.Y("display_name:N", title="", sort=target_order),
-                x=alt.X("containment:Q", title="Containment", scale=alt.Scale(domain=[0, 1])),
+                x=alt.X(f"{containment_col}:Q", title=f"Containment at depth ≥ {args.abundance_threshold}", scale=alt.Scale(domain=[0, 1])),
                 color=alt.Color(
                     f"{sample_col}:N",
                     sort=sample_order,
@@ -151,7 +161,7 @@ def main():
                 tooltip=[
                     "target:N",
                     alt.Tooltip(f"{sample_col}:N", title="sample"),
-                    "containment:Q",
+                    alt.Tooltip(f"{containment_col}:Q", title="containment"),
                     alt.Tooltip("median_abundance:Q", title="median_abundance"),
                     alt.Tooltip("length_bp:Q", title="length_bp", format=",.0f") if "length_bp" in plot_df.columns else alt.value(None),
                     alt.Tooltip("contained_minimizers:Q", title="contained_minimizers", format=",.0f")
@@ -160,19 +170,24 @@ def main():
             )
         )
 
-        text_labels = (
-            alt.Chart(plot_df)
-            .mark_text(align="left", baseline="middle", dx=5, fontSize=7, color="black")
-            .encode(
-                y=alt.Y("display_name:N", sort=target_order),
-                yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
-                x=alt.value(0),
-                text="depth_label:N",
+        # Conditionally add depth labels
+        if not args.no_depth:
+            text_labels = (
+                alt.Chart(plot_df)
+                .mark_text(align="left", baseline="middle", dx=5, fontSize=7, color="black")
+                .encode(
+                    y=alt.Y("display_name:N", sort=target_order),
+                    yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
+                    x=alt.value(0),
+                    text="depth_label:N",
+                )
             )
-        )
+            chart = bars + text_labels
+        else:
+            chart = bars
 
         chart = (
-            (bars + text_labels)
+            chart
             .properties(title=args.title, width=450, height=alt.Step(7))
             .configure_legend(titleFontSize=14, labelFontSize=12, symbolSize=150)
             .configure_axis(labelFontSize=12, titleFontSize=14)

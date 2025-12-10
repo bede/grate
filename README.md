@@ -11,18 +11,24 @@ RUSTFLAGS="-C target-cpu=native" cargo install --git https://github.com/bede/gra
 ## Usage
 
 ```bash
-# Single reads1 file
+# One samples
 grate cov refs.fa reads.fastq.gz
 
-# Many read files
+# Many samples
 grate cov refs.fa reads1.fastq.gz reads2.fastq.gz reads3.fastq.gz…
 
-# CSV output
+# CSV output, needed for plotting
 grate cov -f csv refs.fa reads.fastq.gz > results.csv
 
-# Plotting
-python viz.py results.csv  #  Requires pandas, altair
+# Plotting (requires uv)
+./plot.py results.csv
+uv run plot.py results.csv
+
+# See plotting options
+./plot.py --help
 ```
+
+The plotting script is a self-contained uv script that automatically installs its dependencies (pandas, altair, vl-convert-python) when run. You need [uv](https://docs.astral.sh/uv/) installed.
 
 ### CLI Reference
 

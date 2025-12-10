@@ -118,8 +118,8 @@ fn test_sort_containment() {
 
     // Verify sorted by containment descending
     for i in 0..targets.len() - 1 {
-        assert!(targets[i].containment >= targets[i + 1].containment);
+        assert!(targets[i].containment1 >= targets[i + 1].containment1);
     }
     // Highest containment should be > 60%
-    assert!(targets[0].containment > 0.6);
+    assert!(targets[0].containment1 > 0.6);
 }

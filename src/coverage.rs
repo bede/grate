@@ -76,7 +76,7 @@ pub struct CoverageResult {
     pub length: usize,
     pub total_minimizers: usize,
     pub contained_minimizers: usize,
-    pub containment: f64,
+    pub containment1: f64,
     pub median_abundance: f64,
     pub abundance_histogram: Vec<(CountDepth, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
@@ -97,7 +97,7 @@ pub struct OverallStats {
     pub total_targets: usize,
     pub total_minimizers: usize,
     pub total_contained_minimizers: usize,
-    pub overall_containment: f64,
+    pub overall_containment1: f64,
     pub overall_median_abundance: f64,
     pub total_reads_processed: u64,
     pub total_bp_processed: u64,
@@ -680,7 +680,7 @@ fn calculate_containment_statistics(
                 _ => panic!("Mismatch between MinimizerSet and AbundanceMap types"),
             }
 
-            let containment = if total_minimizers > 0 {
+            let containment1 = if total_minimizers > 0 {
                 contained_count as f64 / total_minimizers as f64
             } else {
                 0.0
@@ -731,7 +731,7 @@ fn calculate_containment_statistics(
                 length: target.length,
                 total_minimizers,
                 contained_minimizers: contained_count,
-                containment,
+                containment1,
                 median_abundance,
                 abundance_histogram,
                 containment_at_threshold,
@@ -813,7 +813,7 @@ fn process_single_sample(
         .iter()
         .map(|r| r.contained_minimizers)
         .sum();
-    let overall_containment = if total_minimizers > 0 {
+    let overall_containment1 = if total_minimizers > 0 {
         total_contained_minimizers as f64 / total_minimizers as f64
     } else {
         0.0
@@ -862,7 +862,7 @@ fn process_single_sample(
             total_targets: targets.len(),
             total_minimizers,
             total_contained_minimizers,
-            overall_containment,
+            overall_containment1,
             overall_median_abundance,
             total_reads_processed: total_reads,
             total_bp_processed: total_bp,
@@ -1156,8 +1156,8 @@ fn sort_results(results: &mut [CoverageResult], sort_order: SortOrder) {
         SortOrder::Containment => {
             // Sort by containment descending (highest first)
             results.sort_by(|a, b| {
-                b.containment
-                    .partial_cmp(&a.containment)
+                b.containment1
+                    .partial_cmp(&a.containment1)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
         }
@@ -1208,7 +1208,7 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     thresholds.sort_unstable();
 
     // Build header with sample column first
-    let mut header = "sample,target,containment".to_string();
+    let mut header = "sample,target,containment1".to_string();
     for threshold in &thresholds {
         header.push_str(&format!(",containment{}", threshold));
     }
@@ -1220,7 +1220,7 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
         for result in &sample.targets {
             let mut row = format!(
                 "{},{},{:.5}",
-                sample.sample_name, result.target, result.containment
+                sample.sample_name, result.target, result.containment1
             );
             for threshold in &thresholds {
                 let containment = result
@@ -1250,7 +1250,7 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
     // Build header with sample column first
     let mut header = format!(
         "{:<20} | {:<30} | {:>12} ",
-        "sample", "target", "containment"
+        "sample", "target", "containment1"
     );
     for threshold in &thresholds {
         header.push_str(&format!("| {:>14} ", format!("containment{}", threshold)));
@@ -1274,7 +1274,7 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
                 "{:<20} | {:<30} | {:>11.1}% ",
                 truncate_string(&sample.sample_name, 20),
                 truncate_string(&result.target, 30),
-                result.containment * 100.0
+                result.containment1 * 100.0
             );
             for threshold in &thresholds {
                 let containment = result
@@ -1298,9 +1298,9 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
     writeln!(writer, "Overall:")?;
     for sample in &report.samples {
         let mut overall_msg = format!(
-            "  {}: containment={:.1}%",
+            "  {}: containment1={:.1}%",
             sample.sample_name,
-            sample.overall_stats.overall_containment * 100.0
+            sample.overall_stats.overall_containment1 * 100.0
         );
         for threshold in &thresholds {
             let containment = sample
