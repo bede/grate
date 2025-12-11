@@ -77,7 +77,7 @@ pub struct CoverageResult {
     pub total_minimizers: usize,
     pub contained_minimizers: usize,
     pub containment1: f64,
-    pub median_abundance: f64,
+    pub median_nz_abundance: f64,
     pub abundance_histogram: Vec<(CountDepth, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
     pub hits_at_threshold: HashMap<usize, usize>,     // threshold -> hit count
@@ -99,7 +99,7 @@ pub struct OverallStats {
     pub total_minimizers: usize,
     pub total_contained_minimizers: usize,
     pub overall_containment1: f64,
-    pub overall_median_abundance: f64,
+    pub overall_median_nz_abundance: f64,
     pub total_reads_processed: u64,
     pub total_bp_processed: u64,
     pub overall_containment_at_threshold: HashMap<usize, f64>, // threshold -> overall containment
@@ -694,7 +694,7 @@ fn calculate_containment_statistics(
             // Calculate median w/o zeros
             let mut sorted_abundances = non_zero_abundances;
             sorted_abundances.sort_unstable();
-            let median_abundance = if sorted_abundances.is_empty() {
+            let median_nz_abundance = if sorted_abundances.is_empty() {
                 0.0
             } else if sorted_abundances.len() % 2 == 0 {
                 let mid = sorted_abundances.len() / 2;
@@ -738,7 +738,7 @@ fn calculate_containment_statistics(
                 total_minimizers,
                 contained_minimizers: contained_count,
                 containment1,
-                median_abundance,
+                median_nz_abundance,
                 abundance_histogram,
                 containment_at_threshold,
                 hits_at_threshold,
@@ -870,10 +870,10 @@ fn process_single_sample(
         0.0
     };
 
-    let overall_median_abundance = if total_minimizers > 0 {
+    let overall_median_nz_abundance = if total_minimizers > 0 {
         coverage_results
             .iter()
-            .map(|r| r.median_abundance * r.total_minimizers as f64)
+            .map(|r| r.median_nz_abundance * r.total_minimizers as f64)
             .sum::<f64>()
             / total_minimizers as f64
     } else {
@@ -916,7 +916,7 @@ fn process_single_sample(
             total_minimizers,
             total_contained_minimizers,
             overall_containment1,
-            overall_median_abundance,
+            overall_median_nz_abundance,
             total_reads_processed: total_reads,
             total_bp_processed: total_bp,
             overall_containment_at_threshold,
@@ -1265,7 +1265,7 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     for threshold in &thresholds {
         header.push_str(&format!(",containment{},containment{}_hits", threshold, threshold));
     }
-    header.push_str(",length_bp,total_minimizers,contained_minimizers,median_abundance");
+    header.push_str(",length_bp,total_minimizers,contained_minimizers,median_nz_abundance");
     writeln!(writer, "{}", header)?;
 
     // Output data rows for all samples
@@ -1292,7 +1292,7 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
                 result.length,
                 result.total_minimizers,
                 result.contained_minimizers,
-                result.median_abundance,
+                result.median_nz_abundance,
             ));
             writeln!(writer, "{}", row)?;
         }
@@ -1307,15 +1307,15 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
 
     // Build header with sample column first
     let mut header = format!(
-        "{:<20} | {:<30} | {:>12} ",
+        "{:<20} | {:<50} | {:>12} ",
         "sample", "target", "containment1"
     );
     for threshold in &thresholds {
         header.push_str(&format!("| {:>14} ", format!("containment{}", threshold)));
     }
     header.push_str(&format!(
-        "| {:>10} | {:>12} | {:>17}",
-        "length", "minimizers", "median_abundance"
+        "| {:>17}",
+        "median_nz_abundance"
     ));
 
     let separator = "-".repeat(header.len());
@@ -1335,10 +1335,17 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
         };
 
         for result in &sample.targets {
+            // Format target with length in parentheses
+            let target_with_info = format!(
+                "{} ({})",
+                result.target,
+                format_bp(result.length)
+            );
+
             let mut row = format!(
-                "{:<20} | {:<30} | {:>11.1}% ",
+                "{:<20} | {:<50} | {:>11.1}% ",
                 truncate_string(&sample_display, 20),
-                truncate_string(&result.target, 30),
+                truncate_string(&target_with_info, 50),
                 result.containment1 * 100.0
             );
             for threshold in &thresholds {
@@ -1349,10 +1356,8 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
                 row.push_str(&format!("| {:>13.1}% ", containment * 100.0));
             }
             row.push_str(&format!(
-                "| {:>10} | {:>12} | {:>17.0}",
-                format_bp(result.length),
-                result.total_minimizers,
-                result.median_abundance,
+                "| {:>17.0}",
+                result.median_nz_abundance,
             ));
             writeln!(writer, "{}", row)?;
         }
@@ -1380,8 +1385,8 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
             ));
         }
         overall_msg.push_str(&format!(
-            ", median_abundance={:.0}",
-            sample.overall_stats.overall_median_abundance,
+            ", median_nz_abundance={:.0}",
+            sample.overall_stats.overall_median_nz_abundance,
         ));
         writeln!(writer, "{}", overall_msg)?;
     }

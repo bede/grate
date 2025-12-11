@@ -89,7 +89,7 @@ def main():
         hits_col = f"containment{args.abundance_threshold}_hits"
 
         # Ensure required columns exist
-        required_cols = {"target", containment_col, hits_col, "median_abundance"}
+        required_cols = {"target", containment_col, hits_col, "median_nz_abundance"}
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             print(f"ERROR: Input CSV missing required columns: {', '.join(missing)}")
@@ -102,7 +102,7 @@ def main():
             sys.exit(1)
 
         # Coerce numeric columns in case they're strings
-        for c in (containment_col, hits_col, "median_abundance", "length_bp", "contained_minimizers"):
+        for c in (containment_col, hits_col, "median_nz_abundance", "length_bp", "contained_minimizers"):
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -139,7 +139,7 @@ def main():
         target_order = sorted(plot_df["display_name"].dropna().astype(str).unique(), key=natural_sort_key)
 
         # Text labels for median depth
-        plot_df["depth_label"] = plot_df["median_abundance"].apply(
+        plot_df["depth_label"] = plot_df["median_nz_abundance"].apply(
             lambda x: f"med(depth): {x:.0f}" if pd.notna(x) and float(x) > 0 else ""
         )
 
@@ -164,7 +164,7 @@ def main():
                     alt.Tooltip(f"{sample_col}:N", title="sample"),
                     alt.Tooltip(f"{containment_col}:Q", title="containment"),
                     alt.Tooltip(f"{hits_col}:Q", title="hits", format=",.0f"),
-                    alt.Tooltip("median_abundance:Q", title="median_abundance"),
+                    alt.Tooltip("median_nz_abundance:Q", title="median_nz_abundance"),
                     alt.Tooltip("length_bp:Q", title="length_bp", format=",.0f") if "length_bp" in plot_df.columns else alt.value(None),
                     alt.Tooltip("contained_minimizers:Q", title="contained_minimizers", format=",.0f")
                     if "contained_minimizers" in plot_df.columns else alt.value(None),
