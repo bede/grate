@@ -7,12 +7,18 @@
 //!
 
 pub mod containment;
+pub mod length;
 pub mod minimizers;
 
 // Re-export the main functionality
 pub use containment::{
     run_containment_analysis, ContainmentConfig, ContainmentParameters, ContainmentResult, OutputFormat,
     TotalStats, Report, SampleResults, SortOrder, TargetInfo, TimingStats,
+};
+
+pub use length::{
+    run_length_histogram_analysis, LengthHistogramConfig, LengthHistogramParameters,
+    LengthHistogramReport, LengthHistogramResult,
 };
 
 pub use minimizers::{

@@ -299,7 +299,7 @@ impl<Rf: Record> ParallelProcessor<Rf> for TargetsProcessor {
     }
 }
 
-fn process_targets_file(
+pub fn process_targets_file(
     targets_path: &Path,
     kmer_length: u8,
     window_size: u8,
@@ -757,7 +757,7 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     }
 }
 
-fn format_bp(bp: usize) -> String {
+pub fn format_bp(bp: usize) -> String {
     if bp >= 1_000_000_000 {
         format!("{:.1}Gbp", bp as f64 / 1_000_000_000.0)
     } else if bp >= 1_000_000 {
@@ -769,7 +769,7 @@ fn format_bp(bp: usize) -> String {
     }
 }
 
-fn format_bp_per_sec(bp_per_sec: f64) -> String {
+pub fn format_bp_per_sec(bp_per_sec: f64) -> String {
     if bp_per_sec >= 1_000_000_000.0 {
         format!("{:.1} Gbp/s", bp_per_sec / 1_000_000_000.0)
     } else if bp_per_sec >= 1_000_000.0 {

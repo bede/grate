@@ -1,4 +1,4 @@
-use grate::{ContainmentConfig, OutputFormat, SortOrder};
+use grate::{ContainmentConfig, LengthHistogramConfig, OutputFormat, SortOrder};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
@@ -122,4 +122,30 @@ fn test_sort_containment() {
     }
     // Highest containment should be > 60%
     assert!(targets[0].containment1 > 0.6);
+}
+
+#[test]
+fn test_length_histogram() {
+    let temp_output = NamedTempFile::new().unwrap();
+
+    let config = LengthHistogramConfig {
+        targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
+        reads_paths: vec![vec![PathBuf::from("data/rsviruses17900.10k.fastq.zst")]],
+        sample_names: vec!["test".to_string()],
+        kmer_length: 31,
+        window_size: 21,
+        threads: 2,
+        output_path: Some(temp_output.path().to_path_buf()),
+        quiet: true,
+        limit_bp: None,
+    };
+
+    grate::run_length_histogram_analysis(&config).unwrap();
+
+    let report: grate::LengthHistogramReport =
+        serde_json::from_str(&std::fs::read_to_string(temp_output.path()).unwrap()).unwrap();
+
+    assert_eq!(report.samples.len(), 1);
+    assert!(report.samples[0].reads_with_hits > 0);
+    assert!(!report.samples[0].length_histogram.is_empty());
 }

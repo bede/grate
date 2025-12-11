@@ -265,6 +265,46 @@ enum Commands {
         #[arg(short = 'q', long = "quiet", default_value_t = false)]
         quiet: bool,
     },
+    /// Generate length histogram for reads with minimizer hits
+    Len {
+        /// Path to fasta file containing target sequence record(s)
+        targets: PathBuf,
+
+        /// Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample.
+        #[arg(required = true)]
+        samples: Vec<PathBuf>,
+
+        // Algorithm parameters
+        /// Minimizer length (1-61)
+        #[arg(short = 'k', long = "kmer-length", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
+        kmer_length: u8,
+
+        /// Minimizer window size
+        #[arg(short = 'w', long = "window-size", default_value_t = 21)]
+        window_size: u8,
+
+        // Processing options
+        /// Number of execution threads (0 = auto)
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
+        threads: usize,
+
+        /// Terminate read processing after approximately this many bases (e.g. 50M, 10G)
+        #[arg(short = 'l', long = "limit")]
+        limit: Option<String>,
+
+        // Output options
+        /// Path to output file (- for stdout)
+        #[arg(short = 'o', long = "output", default_value = "-")]
+        output: String,
+
+        /// Comma-separated sample names (default is file/dir name without extension)
+        #[arg(short = 'n', long = "names", value_delimiter = ',')]
+        sample_names: Option<Vec<String>>,
+
+        /// Suppress progress reporting
+        #[arg(short = 'q', long = "quiet", default_value_t = false)]
+        quiet: bool,
+    },
 }
 
 fn main() -> Result<()> {
@@ -387,6 +427,91 @@ fn main() -> Result<()> {
             config
                 .execute()
                 .context("Failed to run containment analysis")?;
+        }
+        Commands::Len {
+            targets,
+            samples,
+            sample_names,
+            kmer_length,
+            window_size,
+            threads,
+            output,
+            quiet,
+            limit,
+        } => {
+            // Expand directories to lists of files
+            let (expanded_reads, is_directory) = expand_sample_inputs(&samples)?;
+
+            // Derive or validate sample names
+            let derived_sample_names: Vec<String> = if let Some(names) = sample_names {
+                // User-provided names
+                if names.len() != expanded_reads.len() {
+                    return Err(anyhow::anyhow!(
+                        "Number of sample names ({}) must match number of samples ({})",
+                        names.len(),
+                        expanded_reads.len()
+                    ));
+                }
+                names.clone()
+            } else {
+                // Derive from filenames/directory names
+                samples.iter()
+                    .zip(&is_directory)
+                    .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
+                    .collect()
+            };
+
+            // Validate uniqueness
+            validate_sample_names(&derived_sample_names)?;
+
+            // Validate k-mer and window size constraints
+            let k = *kmer_length as usize;
+            let w = *window_size as usize;
+
+            // Check constraints: k <= 61, k+w <= 96, k+w even (ensures k odd and k+w-1 odd)
+            if k > 61 || k + w > 96 || (k + w) % 2 != 0 {
+                return Err(anyhow::anyhow!(
+                    "Invalid k-w combination: k={}, w={}, k+w={} (constraints: k<=61, k+w<=96, k+w even)",
+                    k,
+                    w,
+                    k + w
+                ));
+            }
+
+            // Configure thread pool if specified (non-zero)
+            if *threads > 0 {
+                rayon::ThreadPoolBuilder::new()
+                    .num_threads(*threads)
+                    .build_global()
+                    .context("Failed to initialize thread pool")?;
+            }
+
+            // Parse limit if provided
+            let limit_bp = if let Some(s) = limit {
+                Some(parse_sample(s)?)
+            } else {
+                None
+            };
+
+            let config = grate::LengthHistogramConfig {
+                targets_path: targets.clone(),
+                reads_paths: expanded_reads,
+                sample_names: derived_sample_names,
+                kmer_length: *kmer_length,
+                window_size: *window_size,
+                threads: *threads,
+                output_path: if output == "-" {
+                    None
+                } else {
+                    Some(PathBuf::from(output))
+                },
+                quiet: *quiet,
+                limit_bp,
+            };
+
+            config
+                .execute()
+                .context("Failed to run length histogram analysis")?;
         }
     }
 

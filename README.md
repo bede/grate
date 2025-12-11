@@ -23,14 +23,25 @@ zstdcat reads3.fq.zst | grate con refs.fa
 # CSV output for plotting
 grate con -f csv refs.fa reads.fastq.gz > results.csv
 
-# Plotting (requires uv)
+# JSON output for histogram plotting
+grate con -f json refs.fa reads.fastq.gz > results.json
+
+# Plot containment bar chart (requires uv)
 uv run plot/con.py results.csv
 
+# Plot abundance histograms (requires uv)
+uv run plot/minhist.py results.json
+
 # View plotting options
-uv run ./plot/con.py --help
+uv run plot/con.py --help
+uv run plot/minhist.py --help
 ```
 
 Run the plotting scripts with [uv](https://docs.astral.sh/uv/) to automatically handle dependencies.
+
+**Plotting scripts:**
+- `plot/con.py` - Containment bar chart from CSV output
+- `plot/minhist.py` - Abundance distribution histograms from JSON output (one row per target, one line per sample)
 
 ### CLI Reference
 
