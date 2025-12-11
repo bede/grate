@@ -63,7 +63,7 @@ fn test_multisample_report_structure() {
 }
 
 #[test]
-fn test_sort_alphabetical() {
+fn test_sort_target() {
     let temp_output = NamedTempFile::new().unwrap();
     let config = CoverageConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
@@ -78,7 +78,7 @@ fn test_sort_alphabetical() {
         abundance_thresholds: vec![10],
         discriminatory: false,
         limit_bp: None,
-        sort_order: SortOrder::Alphabetical,
+        sort_order: SortOrder::Target,
     };
 
     grate::run_coverage_analysis(&config).unwrap();
@@ -86,7 +86,7 @@ fn test_sort_alphabetical() {
         serde_json::from_str(&std::fs::read_to_string(temp_output.path()).unwrap()).unwrap();
     let targets = &report.samples[0].targets;
 
-    // Verify sorted alphabetically
+    // Verify sorted alphabetically by target
     for i in 0..targets.len() - 1 {
         assert!(targets[i].target <= targets[i + 1].target);
     }

@@ -204,12 +204,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Estimate containment and abundance of target sequence(s) in read file(s) or stream
+    /// Calculate minimizer containment & abundance in fastx files or directories thereof
     Cov {
         /// Path to fasta file containing target sequence record(s)
         targets: PathBuf,
 
-        /// Path(s) to fastx file(s) containing reads (or - for stdin). Multiple files are treated as separate samples.
+        /// Path(s) to fastx file(s)/directories thereof (- for stdin). Multiple files/dirs treated as distinct samples
         #[arg(required = true)]
         reads: Vec<PathBuf>,
 
@@ -258,8 +258,8 @@ enum Commands {
         #[arg(short = 'l', long = "limit")]
         limit: Option<String>,
 
-        /// Sort order for results: o=original (default), a=alphabetical, c=containment (max first)
-        #[arg(long = "sort", default_value = "o", value_parser = ["o", "a", "c"])]
+        /// Sort order for results: o=original, t=target, s=sample, c=containment (descending)
+        #[arg(long = "sort", default_value = "o", value_parser = ["o", "t", "s", "c"])]
         sort: String,
     },
 }
@@ -355,7 +355,8 @@ fn main() -> Result<()> {
             // Parse sort order
             let sort_order = match sort.as_str() {
                 "o" => grate::SortOrder::Original,
-                "a" => grate::SortOrder::Alphabetical,
+                "t" => grate::SortOrder::Target,
+                "s" => grate::SortOrder::Sample,
                 "c" => grate::SortOrder::Containment,
                 _ => unreachable!("clap should have validated the sort order"),
             };

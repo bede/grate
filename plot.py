@@ -38,6 +38,8 @@ def main():
                         help="Abundance threshold for containment column to plot (default: %(default)s for containment1)")
     parser.add_argument("--no-depth", action="store_true",
                         help="Disable depth labels on the plot")
+    parser.add_argument("--totals", action="store_true",
+                        help="Plot only TOTAL rows (aggregate stats per sample)")
 
     args = parser.parse_args()
 
@@ -113,9 +115,14 @@ def main():
         # --- Prep for plotting ---
         plot_df = df.copy()
 
-        # Optional: drop 'ALL' row if present
+        # Filter TOTAL rows based on --totals flag
         if "target" in plot_df.columns:
-            plot_df = plot_df[plot_df["target"] != "ALL"]
+            if args.totals:
+                # Keep only TOTAL rows
+                plot_df = plot_df[plot_df["target"] == "TOTAL"]
+            else:
+                # Drop TOTAL rows (default behavior)
+                plot_df = plot_df[plot_df["target"] != "TOTAL"]
 
         if plot_df.empty:
             print("ERROR: No data to plot after filtering")

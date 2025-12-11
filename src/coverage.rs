@@ -37,9 +37,10 @@ pub type RapidHashSet<T> = HashSet<T, FixedRapidHasher>;
 /// Sort order for results
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortOrder {
-    Original,     // Original order from reference file
-    Alphabetical, // Alphabetical by target name
-    Containment,  // Descending by containment (highest first)
+    Original,     // Original order from reference file (default)
+    Target,       // Alphabetical by target name
+    Sample,       // Alphabetical by sample name
+    Containment,  // Descending by containment1 (highest first)
 }
 
 /// Zero-cost (hopefully?) abstraction over u64 and u128 minimizer sets
@@ -94,15 +95,15 @@ pub struct CoverageParameters {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OverallStats {
+pub struct TotalStats {
     pub total_targets: usize,
     pub total_minimizers: usize,
     pub total_contained_minimizers: usize,
-    pub overall_containment1: f64,
-    pub overall_median_nz_abundance: f64,
+    pub total_containment1: f64,
+    pub total_median_nz_abundance: f64,
     pub total_reads_processed: u64,
     pub total_bp_processed: u64,
-    pub overall_containment_at_threshold: HashMap<usize, f64>, // threshold -> overall containment
+    pub total_containment_at_threshold: HashMap<usize, f64>, // threshold -> overall containment
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -121,7 +122,7 @@ pub struct SampleResults {
     pub sample_name: String,
     pub reads_files: Vec<String>,  // Multiple files per sample
     pub targets: Vec<CoverageResult>,
-    pub overall_stats: OverallStats,
+    pub total_stats: TotalStats,
     pub timing: TimingStats,
 }
 
@@ -864,13 +865,13 @@ fn process_single_sample(
         .iter()
         .map(|r| r.contained_minimizers)
         .sum();
-    let overall_containment1 = if total_minimizers > 0 {
+    let total_containment1 = if total_minimizers > 0 {
         total_contained_minimizers as f64 / total_minimizers as f64
     } else {
         0.0
     };
 
-    let overall_median_nz_abundance = if total_minimizers > 0 {
+    let total_median_nz_abundance = if total_minimizers > 0 {
         coverage_results
             .iter()
             .map(|r| r.median_nz_abundance * r.total_minimizers as f64)
@@ -884,7 +885,7 @@ fn process_single_sample(
     let bp_per_second = total_bp as f64 / reads_time.as_secs_f64();
 
     // Calculate overall containment at each threshold
-    let mut overall_containment_at_threshold = HashMap::new();
+    let mut total_containment_at_threshold = HashMap::new();
     for &threshold in &config.abundance_thresholds {
         let total_at_threshold: usize = coverage_results
             .iter()
@@ -898,7 +899,7 @@ fn process_single_sample(
         } else {
             0.0
         };
-        overall_containment_at_threshold.insert(threshold, overall_containment_value);
+        total_containment_at_threshold.insert(threshold, overall_containment_value);
     }
 
     Ok(SampleResults {
@@ -911,15 +912,15 @@ fn process_single_sample(
             }
         }).collect(),
         targets: coverage_results,
-        overall_stats: OverallStats {
+        total_stats: TotalStats {
             total_targets: targets.len(),
             total_minimizers,
             total_contained_minimizers,
-            overall_containment1,
-            overall_median_nz_abundance,
+            total_containment1,
+            total_median_nz_abundance,
             total_reads_processed: total_reads,
             total_bp_processed: total_bp,
-            overall_containment_at_threshold,
+            total_containment_at_threshold,
         },
         timing: TimingStats {
             reference_processing_time: 0.0, // Not per-sample
@@ -1197,13 +1198,18 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     Ok(())
 }
 
-/// Sort coverage results based on the specified sort order
+/// Sort coverage results based on the specified sort order (per-sample sorting)
 fn sort_results(results: &mut [CoverageResult], sort_order: SortOrder) {
     match sort_order {
         SortOrder::Original => {
             // No sorting needed - keep original order
         }
-        SortOrder::Alphabetical => {
+        SortOrder::Target => {
+            results.sort_by(|a, b| a.target.cmp(&b.target));
+        }
+        SortOrder::Sample => {
+            // For per-sample sorting (CSV/JSON), this doesn't make sense
+            // but we'll keep it for consistency - sorts by target name
             results.sort_by(|a, b| a.target.cmp(&b.target));
         }
         SortOrder::Containment => {
@@ -1223,14 +1229,6 @@ fn output_results(
     output_format: OutputFormat,
     sort_order: SortOrder,
 ) -> Result<()> {
-    // Create a sorted copy of the report if needed
-    let mut sorted_report = report.clone();
-    if sort_order != SortOrder::Original {
-        for sample in &mut sorted_report.samples {
-            sort_results(&mut sample.targets, sort_order);
-        }
-    }
-
     let writer: Box<dyn Write> = if let Some(path) = output_path {
         Box::new(BufWriter::new(File::create(path)?))
     } else {
@@ -1241,16 +1239,176 @@ fn output_results(
 
     match output_format {
         OutputFormat::Json => {
-            // Output JSON
+            // JSON: per-sample sorting (keep existing approach)
+            let mut sorted_report = report.clone();
+            if sort_order != SortOrder::Original {
+                for sample in &mut sorted_report.samples {
+                    sort_results(&mut sample.targets, sort_order);
+                }
+            }
             serde_json::to_writer_pretty(&mut writer, &sorted_report)?;
             writeln!(writer)?;
         }
         OutputFormat::Csv => {
+            // CSV: per-sample sorting (keep existing approach)
+            let mut sorted_report = report.clone();
+            if sort_order != SortOrder::Original {
+                for sample in &mut sorted_report.samples {
+                    sort_results(&mut sample.targets, sort_order);
+                }
+            }
             output_csv(&mut writer, &sorted_report)?;
         }
         OutputFormat::Table => {
-            output_table(&mut writer, &sorted_report)?;
+            // Table: full cross-sample sorting
+            output_table_sorted(&mut writer, report, sort_order)?;
         }
+    }
+
+    Ok(())
+}
+
+/// Flattened row for cross-sample sorting in table output
+#[derive(Clone)]
+struct TableRow<'a> {
+    target: &'a str,
+    sample_name: &'a str,
+    sample_display: String,
+    result: &'a CoverageResult,
+}
+
+/// Output table with cross-sample sorting
+fn output_table_sorted(
+    writer: &mut dyn Write,
+    report: &Report,
+    sort_order: SortOrder,
+) -> Result<()> {
+    let mut thresholds = report.parameters.abundance_thresholds.clone();
+    thresholds.sort_unstable();
+
+    // Build header with target column first
+    let mut header = format!(
+        "{:<50} | {:<20} | {:>12}",
+        "target", "sample", "containment1"
+    );
+    for threshold in &thresholds {
+        header.push_str(&format!(" | containment{}", threshold));
+    }
+    header.push_str(" | median_nz_abundance");
+
+    let separator = "-".repeat(header.len());
+
+    // Output header
+    writeln!(writer)?;
+    writeln!(writer, "{}", header)?;
+    writeln!(writer, "{}", separator)?;
+
+    // Flatten all rows (including TOTAL rows)
+    let mut rows: Vec<TableRow> = Vec::new();
+
+    for sample in &report.samples {
+        let sample_display = if sample.reads_files.len() > 1 {
+            format!("{} ({} files)", sample.sample_name, sample.reads_files.len())
+        } else {
+            sample.sample_name.clone()
+        };
+
+        // Add regular target rows
+        for result in &sample.targets {
+            rows.push(TableRow {
+                target: &result.target,
+                sample_name: &sample.sample_name,
+                sample_display: sample_display.clone(),
+                result,
+            });
+        }
+    }
+
+    // Sort the rows based on sort_order
+    match sort_order {
+        SortOrder::Original => {
+            // Keep original order (already in order from nested loops)
+        }
+        SortOrder::Target => {
+            // Sort by target name (alphabetically), then by sample order
+            rows.sort_by(|a, b| {
+                a.target.cmp(b.target)
+                    .then_with(|| a.sample_name.cmp(b.sample_name))
+            });
+        }
+        SortOrder::Sample => {
+            // Sort by sample name (alphabetically), then by target order
+            rows.sort_by(|a, b| {
+                a.sample_name.cmp(b.sample_name)
+                    .then_with(|| a.target.cmp(b.target))
+            });
+        }
+        SortOrder::Containment => {
+            // Sort by containment1 (descending)
+            rows.sort_by(|a, b| {
+                b.result.containment1
+                    .partial_cmp(&a.result.containment1)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+        }
+    }
+
+    // Output sorted rows
+    for row in &rows {
+        let target_with_info = format!(
+            "{} ({})",
+            row.result.target,
+            format_bp(row.result.length)
+        );
+
+        let mut output_row = format!(
+            "{:<50} | {:<20} | {:>11.1}%",
+            truncate_string(&target_with_info, 50),
+            truncate_string(&row.sample_display, 20),
+            row.result.containment1 * 100.0
+        );
+        for threshold in &thresholds {
+            let containment = row.result
+                .containment_at_threshold
+                .get(threshold)
+                .unwrap_or(&0.0);
+            output_row.push_str(&format!(" | {:>13.1}%", containment * 100.0));
+        }
+        output_row.push_str(&format!(
+            " | {:>18.0}",
+            row.result.median_nz_abundance,
+        ));
+        writeln!(writer, "{}", output_row)?;
+    }
+
+    // Output TOTAL rows (grouped by sample, after regular rows)
+    // For now, let's append TOTAL rows at the end
+    for sample in &report.samples {
+        let sample_display = if sample.reads_files.len() > 1 {
+            format!("{} ({} files)", sample.sample_name, sample.reads_files.len())
+        } else {
+            sample.sample_name.clone()
+        };
+
+        let mut total_row = format!(
+            "{:<50} | {:<20} | {:>11.1}%",
+            "TOTAL",
+            truncate_string(&sample_display, 20),
+            sample.total_stats.total_containment1 * 100.0
+        );
+        for threshold in &thresholds {
+            let containment = sample
+                .total_stats
+                .total_containment_at_threshold
+                .get(threshold)
+                .unwrap_or(&0.0);
+            total_row.push_str(&format!(" | {:>13.1}%", containment * 100.0));
+        }
+        total_row.push_str(&format!(
+            " | {:>18.0}",
+            sample.total_stats.total_median_nz_abundance,
+        ));
+        writeln!(writer, "{}", total_row)?;
     }
 
     Ok(())
@@ -1260,8 +1418,8 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     let mut thresholds = report.parameters.abundance_thresholds.clone();
     thresholds.sort_unstable();
 
-    // Build header with sample column first
-    let mut header = "sample,target,containment1,containment1_hits".to_string();
+    // Build header with target column first
+    let mut header = "target,sample,containment1,containment1_hits".to_string();
     for threshold in &thresholds {
         header.push_str(&format!(",containment{},containment{}_hits", threshold, threshold));
     }
@@ -1273,7 +1431,7 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
         for result in &sample.targets {
             let mut row = format!(
                 "{},{},{:.5},{}",
-                sample.sample_name, result.target, result.containment1,
+                result.target, sample.sample_name, result.containment1,
                 result.contained_minimizers  // Use contained_minimizers for threshold 1 hits
             );
             for threshold in &thresholds {
@@ -1296,99 +1454,31 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
             ));
             writeln!(writer, "{}", row)?;
         }
-    }
 
-    Ok(())
-}
-
-fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
-    let mut thresholds = report.parameters.abundance_thresholds.clone();
-    thresholds.sort_unstable();
-
-    // Build header with sample column first
-    let mut header = format!(
-        "{:<20} | {:<50} | {:>12} ",
-        "sample", "target", "containment1"
-    );
-    for threshold in &thresholds {
-        header.push_str(&format!("| {:>14} ", format!("containment{}", threshold)));
-    }
-    header.push_str(&format!(
-        "| {:>17}",
-        "median_nz_abundance"
-    ));
-
-    let separator = "-".repeat(header.len());
-
-    // Output header
-    writeln!(writer)?;
-    writeln!(writer, "{}", header)?;
-    writeln!(writer, "{}", separator)?;
-
-    // Output data rows for all samples
-    for sample in &report.samples {
-        // If we have multiple files per sample (dir case), show count
-        let sample_display = if sample.reads_files.len() > 1 {
-            format!("{} ({} files)", sample.sample_name, sample.reads_files.len())
-        } else {
-            sample.sample_name.clone()
-        };
-
-        for result in &sample.targets {
-            // Format target with length in parentheses
-            let target_with_info = format!(
-                "{} ({})",
-                result.target,
-                format_bp(result.length)
-            );
-
-            let mut row = format!(
-                "{:<20} | {:<50} | {:>11.1}% ",
-                truncate_string(&sample_display, 20),
-                truncate_string(&target_with_info, 50),
-                result.containment1 * 100.0
-            );
-            for threshold in &thresholds {
-                let containment = result
-                    .containment_at_threshold
-                    .get(threshold)
-                    .unwrap_or(&0.0);
-                row.push_str(&format!("| {:>13.1}% ", containment * 100.0));
-            }
-            row.push_str(&format!(
-                "| {:>17.0}",
-                result.median_nz_abundance,
-            ));
-            writeln!(writer, "{}", row)?;
-        }
-    }
-
-    // Overall statistics
-    writeln!(writer)?;
-    writeln!(writer, "Overall:")?;
-    for sample in &report.samples {
-        let mut overall_msg = format!(
-            "  {}: containment1={:.1}%",
+        // Add TOTAL row for this sample
+        let mut total_row = format!(
+            "{},{},{:.5},{}",
+            "TOTAL",
             sample.sample_name,
-            sample.overall_stats.overall_containment1 * 100.0
+            sample.total_stats.total_containment1,
+            sample.total_stats.total_contained_minimizers
         );
         for threshold in &thresholds {
             let containment = sample
-                .overall_stats
-                .overall_containment_at_threshold
+                .total_stats
+                .total_containment_at_threshold
                 .get(threshold)
                 .unwrap_or(&0.0);
-            overall_msg.push_str(&format!(
-                ", containment{}={:.1}%",
-                threshold,
-                containment * 100.0
-            ));
+            let hits = (containment * sample.total_stats.total_minimizers as f64).round() as usize;
+            total_row.push_str(&format!(",{:.5},{}", containment, hits));
         }
-        overall_msg.push_str(&format!(
-            ", median_nz_abundance={:.0}",
-            sample.overall_stats.overall_median_nz_abundance,
+        total_row.push_str(&format!(
+            ",0,{},{},{:.0}",
+            sample.total_stats.total_minimizers,
+            sample.total_stats.total_contained_minimizers,
+            sample.total_stats.total_median_nz_abundance,
         ));
-        writeln!(writer, "{}", overall_msg)?;
+        writeln!(writer, "{}", total_row)?;
     }
 
     Ok(())
