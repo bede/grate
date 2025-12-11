@@ -80,6 +80,7 @@ pub struct CoverageResult {
     pub median_abundance: f64,
     pub abundance_histogram: Vec<(CountDepth, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
+    pub hits_at_threshold: HashMap<usize, usize>,     // threshold -> hit count
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sample_name: Option<String>, // Only used in multi-sample mode
 }
@@ -713,11 +714,16 @@ fn calculate_containment_statistics(
 
             // Calculate containment at threshold
             let mut containment_at_threshold = HashMap::new();
+            let mut hits_at_threshold = HashMap::new();
             for &threshold in abundance_thresholds {
                 let count_at_threshold = abundances
                     .iter()
                     .filter(|&&a| a >= threshold as CountDepth)
                     .count();
+
+                // Store the hit count
+                hits_at_threshold.insert(threshold, count_at_threshold);
+
                 let containment_value = if total_minimizers > 0 {
                     count_at_threshold as f64 / total_minimizers as f64
                 } else {
@@ -735,6 +741,7 @@ fn calculate_containment_statistics(
                 median_abundance,
                 abundance_histogram,
                 containment_at_threshold,
+                hits_at_threshold,
                 sample_name: sample_name.clone(),
             }
         })
@@ -1254,9 +1261,9 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     thresholds.sort_unstable();
 
     // Build header with sample column first
-    let mut header = "sample,target,containment1".to_string();
+    let mut header = "sample,target,containment1,containment1_hits".to_string();
     for threshold in &thresholds {
-        header.push_str(&format!(",containment{}", threshold));
+        header.push_str(&format!(",containment{},containment{}_hits", threshold, threshold));
     }
     header.push_str(",length_bp,total_minimizers,contained_minimizers,median_abundance");
     writeln!(writer, "{}", header)?;
@@ -1265,15 +1272,20 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     for sample in &report.samples {
         for result in &sample.targets {
             let mut row = format!(
-                "{},{},{:.5}",
-                sample.sample_name, result.target, result.containment1
+                "{},{},{:.5},{}",
+                sample.sample_name, result.target, result.containment1,
+                result.contained_minimizers  // Use contained_minimizers for threshold 1 hits
             );
             for threshold in &thresholds {
                 let containment = result
                     .containment_at_threshold
                     .get(threshold)
                     .unwrap_or(&0.0);
-                row.push_str(&format!(",{:.5}", containment));
+                let hits = result
+                    .hits_at_threshold
+                    .get(threshold)
+                    .unwrap_or(&0);
+                row.push_str(&format!(",{:.5},{}", containment, hits));
             }
             row.push_str(&format!(
                 ",{},{},{},{:.0}",

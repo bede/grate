@@ -86,9 +86,10 @@ def main():
 
         # Construct containment column name from abundance threshold
         containment_col = f"containment{args.abundance_threshold}"
+        hits_col = f"containment{args.abundance_threshold}_hits"
 
         # Ensure required columns exist
-        required_cols = {"target", containment_col, "median_abundance"}
+        required_cols = {"target", containment_col, hits_col, "median_abundance"}
         missing = [c for c in required_cols if c not in df.columns]
         if missing:
             print(f"ERROR: Input CSV missing required columns: {', '.join(missing)}")
@@ -101,7 +102,7 @@ def main():
             sys.exit(1)
 
         # Coerce numeric columns in case they're strings
-        for c in (containment_col, "median_abundance", "length_bp", "contained_minimizers"):
+        for c in (containment_col, hits_col, "median_abundance", "length_bp", "contained_minimizers"):
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
 
@@ -162,6 +163,7 @@ def main():
                     "target:N",
                     alt.Tooltip(f"{sample_col}:N", title="sample"),
                     alt.Tooltip(f"{containment_col}:Q", title="containment"),
+                    alt.Tooltip(f"{hits_col}:Q", title="hits", format=",.0f"),
                     alt.Tooltip("median_abundance:Q", title="median_abundance"),
                     alt.Tooltip("length_bp:Q", title="length_bp", format=",.0f") if "length_bp" in plot_df.columns else alt.value(None),
                     alt.Tooltip("contained_minimizers:Q", title="contained_minimizers", format=",.0f")
