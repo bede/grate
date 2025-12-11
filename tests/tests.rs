@@ -7,8 +7,8 @@ fn test_multisample_processing() {
     let config = CoverageConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
         reads_paths: vec![
-            PathBuf::from("data/rsviruses17900.1k.fastq.zst"),
-            PathBuf::from("data/rsviruses17900.1k.fastq.zst"),
+            vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
+            vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
         ],
         sample_names: vec!["sample1".to_string(), "sample2".to_string()],
         kmer_length: 31,
@@ -34,8 +34,8 @@ fn test_multisample_report_structure() {
     let config = CoverageConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
         reads_paths: vec![
-            PathBuf::from("data/rsviruses17900.1k.fastq.zst"),
-            PathBuf::from("data/rsviruses17900.1k.fastq.zst"),
+            vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
+            vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
         ],
         sample_names: vec!["sample_a".to_string(), "sample_b".to_string()],
         kmer_length: 31,
@@ -67,7 +67,7 @@ fn test_sort_alphabetical() {
     let temp_output = NamedTempFile::new().unwrap();
     let config = CoverageConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
-        reads_paths: vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
+        reads_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
         kmer_length: 31,
         window_size: 15,
@@ -97,7 +97,7 @@ fn test_sort_containment() {
     let temp_output = NamedTempFile::new().unwrap();
     let config = CoverageConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
-        reads_paths: vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
+        reads_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
         kmer_length: 31,
         window_size: 15,

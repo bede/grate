@@ -118,7 +118,7 @@ pub struct TimingStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SampleResults {
     pub sample_name: String,
-    pub reads_file: String,
+    pub reads_files: Vec<String>,  // Multiple files per sample
     pub targets: Vec<CoverageResult>,
     pub overall_stats: OverallStats,
     pub timing: TimingStats,
@@ -144,7 +144,7 @@ pub enum OutputFormat {
 
 pub struct CoverageConfig {
     pub targets_path: PathBuf,
-    pub reads_paths: Vec<PathBuf>,
+    pub reads_paths: Vec<Vec<PathBuf>>,  // Each sample is a Vec of file paths
     pub sample_names: Vec<String>,
     pub kmer_length: u8,
     pub window_size: u8,
@@ -776,7 +776,7 @@ fn format_bp_per_sec(bp_per_sec: f64) -> String {
 /// Process a single sample's reads and calculate statistics
 fn process_single_sample(
     _idx: usize,
-    reads_path: &Path,
+    reads_paths: &[PathBuf],  // Multiple files per sample
     sample_name: &str,
     targets: &[TargetInfo],
     targets_minimizers: Arc<MinimizerSet>,
@@ -786,16 +786,60 @@ fn process_single_sample(
     let quiet_sample = config.quiet || config.reads_paths.len() > 1;
 
     let reads_start = Instant::now();
-    let (abundance_map, total_reads, total_bp) = process_reads_file(
-        reads_path,
-        targets_minimizers,
-        config.kmer_length,
-        config.window_size,
-        config.threads,
-        quiet_sample,
-        config.limit_bp,
-    )?;
+
+    // Initialize empty abundance map based on k-mer length
+    let mut combined_abundance_map = if config.kmer_length <= 32 {
+        AbundanceMap::U64(HashMap::new())
+    } else {
+        AbundanceMap::U128(HashMap::new())
+    };
+    let mut total_reads = 0u64;
+    let mut total_bp = 0u64;
+
+    // Process each file and accumulate results
+    for reads_path in reads_paths {
+        let (file_abundance_map, file_reads, file_bp) = process_reads_file(
+            reads_path,
+            Arc::clone(&targets_minimizers),
+            config.kmer_length,
+            config.window_size,
+            config.threads,
+            quiet_sample,
+            config.limit_bp.map(|limit| limit.saturating_sub(total_bp)),
+        )?;
+
+        // Merge abundance maps
+        match (&mut combined_abundance_map, file_abundance_map) {
+            (AbundanceMap::U64(combined), AbundanceMap::U64(new)) => {
+                for (minimizer, count) in new {
+                    combined.entry(minimizer)
+                        .and_modify(|e| *e = e.saturating_add(count))
+                        .or_insert(count);
+                }
+            }
+            (AbundanceMap::U128(combined), AbundanceMap::U128(new)) => {
+                for (minimizer, count) in new {
+                    combined.entry(minimizer)
+                        .and_modify(|e| *e = e.saturating_add(count))
+                        .or_insert(count);
+                }
+            }
+            _ => panic!("Mismatch between AbundanceMap types"),
+        }
+
+        total_reads += file_reads;
+        total_bp += file_bp;
+
+        // Check if limit reached
+        if let Some(limit) = config.limit_bp {
+            if total_bp >= limit {
+                break;
+            }
+        }
+    }
+
     let reads_time = reads_start.elapsed();
+    let abundance_map = combined_abundance_map;
 
     // Calculate coverage statistics for this sample
     let analysis_start = Instant::now();
@@ -852,11 +896,13 @@ fn process_single_sample(
 
     Ok(SampleResults {
         sample_name: sample_name.to_string(),
-        reads_file: if reads_path.to_string_lossy() == "-" {
-            "stdin".to_string()
-        } else {
-            reads_path.to_string_lossy().to_string()
-        },
+        reads_files: reads_paths.iter().map(|p| {
+            if p.to_string_lossy() == "-" {
+                "stdin".to_string()
+            } else {
+                p.to_string_lossy().to_string()
+            }
+        }).collect(),
         targets: coverage_results,
         overall_stats: OverallStats {
             total_targets: targets.len(),
@@ -1075,10 +1121,10 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
         .par_iter()
         .zip(&config.sample_names)
         .enumerate()
-        .map(|(idx, (reads_path, sample_name))| {
+        .map(|(idx, (reads_paths, sample_name))| {
             let result = process_single_sample(
                 idx,
-                reads_path,
+                reads_paths,  // Now a &Vec<PathBuf>
                 sample_name,
                 &targets,
                 Arc::clone(&targets_minimizers),
@@ -1269,10 +1315,17 @@ fn output_table(writer: &mut dyn Write, report: &Report) -> Result<()> {
 
     // Output data rows for all samples
     for sample in &report.samples {
+        // If we have multiple files per sample (dir case), show count
+        let sample_display = if sample.reads_files.len() > 1 {
+            format!("{} ({} files)", sample.sample_name, sample.reads_files.len())
+        } else {
+            sample.sample_name.clone()
+        };
+
         for result in &sample.targets {
             let mut row = format!(
                 "{:<20} | {:<30} | {:>11.1}% ",
-                truncate_string(&sample.sample_name, 20),
+                truncate_string(&sample_display, 20),
                 truncate_string(&result.target, 30),
                 result.containment1 * 100.0
             );

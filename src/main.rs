@@ -7,7 +7,7 @@ const DEFAULT_KMER_LENGTH: u8 = 31;
 const DEFAULT_WINDOW_SIZE: u8 = 31;
 
 /// Derive sample name from file path by stripping directory and extensions
-fn derive_sample_name(path: &Path) -> String {
+fn derive_sample_name(path: &Path, is_directory: bool) -> String {
     // Handle stdin
     if path.to_string_lossy() == "-" {
         return "stdin".to_string();
@@ -19,6 +19,12 @@ fn derive_sample_name(path: &Path) -> String {
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
 
+    // For directories, use the directory name directly
+    if is_directory {
+        return filename.to_string();
+    }
+
+    // For files, strip known extensions
     let mut name = filename.to_string();
 
     // Strip known extensions in order (handles chained extensions like .fastq.gz)
@@ -67,6 +73,104 @@ fn validate_sample_names(names: &[String]) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Find all fastx files in a directory (non-recursive, following symlinks)
+fn find_fastx_files_in_dir(dir_path: &Path) -> Result<Vec<PathBuf>> {
+    // Extensions to match
+    const FASTX_EXTENSIONS: &[&str] = &[
+        ".fasta", ".fa", ".fastq", ".fq",
+        ".fasta.gz", ".fa.gz", ".fastq.gz", ".fq.gz",
+        ".fasta.xz", ".fa.xz", ".fastq.xz", ".fq.xz",
+        ".fasta.zst", ".fa.zst", ".fastq.zst", ".fq.zst",
+    ];
+
+    let mut fastx_files = Vec::new();
+
+    // Read directory entries
+    let entries = std::fs::read_dir(dir_path)
+        .with_context(|| format!("Failed to read directory: {}", dir_path.display()))?;
+
+    for entry in entries {
+        let entry = entry.with_context(||
+            format!("Failed to read directory entry in {}", dir_path.display()))?;
+
+        let path = entry.path();
+
+        // Skip hidden files (starting with '.')
+        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+            if name.starts_with('.') {
+                continue;
+            }
+        }
+
+        // Follow symlinks via metadata()
+        let metadata = std::fs::metadata(&path)
+            .with_context(|| format!("Failed to access: {}", path.display()))?;
+
+        // Only process files (not subdirectories)
+        if !metadata.is_file() {
+            continue;
+        }
+
+        // Check if file has fastx extension (case-insensitive)
+        let path_str = path.to_string_lossy().to_lowercase();
+        if FASTX_EXTENSIONS.iter().any(|ext| path_str.ends_with(ext)) {
+            fastx_files.push(path);
+        }
+    }
+
+    // Error if no fastx files found
+    if fastx_files.is_empty() {
+        return Err(anyhow::anyhow!(
+            "Directory contains no fastx files: {}. Expected files with extensions: {}",
+            dir_path.display(),
+            FASTX_EXTENSIONS.join(", ")
+        ));
+    }
+
+    // Sort for deterministic ordering
+    fastx_files.sort();
+
+    Ok(fastx_files)
+}
+
+/// Expand sample inputs (files and directories) into lists of files per sample
+fn expand_sample_inputs(inputs: &[PathBuf]) -> Result<(Vec<Vec<PathBuf>>, Vec<bool>)> {
+    let mut expanded_samples = Vec::new();
+    let mut is_directory = Vec::new();
+
+    for input in inputs {
+        // Check stdin special case
+        if input.to_string_lossy() == "-" {
+            expanded_samples.push(vec![input.clone()]);
+            is_directory.push(false);
+            continue;
+        }
+
+        // Check path exists
+        if !input.exists() {
+            return Err(anyhow::anyhow!("Path does not exist: {}", input.display()));
+        }
+
+        let metadata = std::fs::metadata(input)
+            .with_context(|| format!("Failed to access path: {}", input.display()))?;
+
+        if metadata.is_file() {
+            expanded_samples.push(vec![input.clone()]);
+            is_directory.push(false);
+        } else if metadata.is_dir() {
+            let files = find_fastx_files_in_dir(input)?;
+            expanded_samples.push(files);
+            is_directory.push(true);
+        } else {
+            return Err(anyhow::anyhow!(
+                "Path is neither a regular file nor directory: {}", input.display()
+            ));
+        }
+    }
+
+    Ok((expanded_samples, is_directory))
 }
 
 /// Parse sample string with K/M/G/T suffix into bp count
@@ -187,20 +291,26 @@ fn main() -> Result<()> {
             limit,
             sort,
         } => {
+            // Expand directories to lists of files
+            let (expanded_reads, is_directory) = expand_sample_inputs(&reads)?;
+
             // Derive or validate sample names
             let derived_sample_names: Vec<String> = if let Some(names) = sample_names {
                 // User-provided names
-                if names.len() != reads.len() {
+                if names.len() != expanded_reads.len() {
                     return Err(anyhow::anyhow!(
-                        "Number of sample names ({}) must match number of read files ({})",
+                        "Number of sample names ({}) must match number of samples ({})",
                         names.len(),
-                        reads.len()
+                        expanded_reads.len()
                     ));
                 }
                 names.clone()
             } else {
-                // Derive from filenames
-                reads.iter().map(|p| derive_sample_name(p)).collect()
+                // Derive from filenames/directory names
+                reads.iter()
+                    .zip(&is_directory)
+                    .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
+                    .collect()
             };
 
             // Validate uniqueness
@@ -252,7 +362,7 @@ fn main() -> Result<()> {
 
             let config = grate::CoverageConfig {
                 targets_path: targets.clone(),
-                reads_paths: reads.clone(),
+                reads_paths: expanded_reads,
                 sample_names: derived_sample_names,
                 kmer_length: *kmer_length,
                 window_size: *window_size,
