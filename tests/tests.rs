@@ -1,10 +1,10 @@
-use grate::{CoverageConfig, OutputFormat, SortOrder};
+use grate::{ContainmentConfig, OutputFormat, SortOrder};
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
 #[test]
 fn test_multisample_processing() {
-    let config = CoverageConfig {
+    let config = ContainmentConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
         reads_paths: vec![
             vec![PathBuf::from("data/rsviruses17900.10k.fastq.zst")],
@@ -23,7 +23,7 @@ fn test_multisample_processing() {
         sort_order: SortOrder::Original,
     };
 
-    assert!(grate::run_coverage_analysis(&config).is_ok());
+    assert!(grate::run_containment_analysis(&config).is_ok());
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn test_multisample_report_structure() {
     let temp_output = NamedTempFile::new().unwrap();
     let output_path = temp_output.path().to_path_buf();
 
-    let config = CoverageConfig {
+    let config = ContainmentConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
         reads_paths: vec![
             vec![PathBuf::from("data/rsviruses17900.10k.fastq.zst")],
@@ -50,7 +50,7 @@ fn test_multisample_report_structure() {
         sort_order: SortOrder::Original,
     };
 
-    grate::run_coverage_analysis(&config).unwrap();
+    grate::run_containment_analysis(&config).unwrap();
 
     let json_str = std::fs::read_to_string(&output_path).unwrap();
     let report: grate::Report = serde_json::from_str(&json_str).unwrap();
@@ -65,7 +65,7 @@ fn test_multisample_report_structure() {
 #[test]
 fn test_sort_target() {
     let temp_output = NamedTempFile::new().unwrap();
-    let config = CoverageConfig {
+    let config = ContainmentConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
         reads_paths: vec![vec![PathBuf::from("data/rsviruses17900.10k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
@@ -81,7 +81,7 @@ fn test_sort_target() {
         sort_order: SortOrder::Target,
     };
 
-    grate::run_coverage_analysis(&config).unwrap();
+    grate::run_containment_analysis(&config).unwrap();
     let report: grate::Report =
         serde_json::from_str(&std::fs::read_to_string(temp_output.path()).unwrap()).unwrap();
     let targets = &report.samples[0].targets;
@@ -95,7 +95,7 @@ fn test_sort_target() {
 #[test]
 fn test_sort_containment() {
     let temp_output = NamedTempFile::new().unwrap();
-    let config = CoverageConfig {
+    let config = ContainmentConfig {
         targets_path: PathBuf::from("data/zmrp21.combined-segments.fa"),
         reads_paths: vec![vec![PathBuf::from("data/rsviruses17900.10k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
@@ -111,7 +111,7 @@ fn test_sort_containment() {
         sort_order: SortOrder::Containment,
     };
 
-    grate::run_coverage_analysis(&config).unwrap();
+    grate::run_containment_analysis(&config).unwrap();
     let report: grate::Report =
         serde_json::from_str(&std::fs::read_to_string(temp_output.path()).unwrap()).unwrap();
     let targets = &report.samples[0].targets;

@@ -1,6 +1,6 @@
 # Grate
 
-Fast estimation of target reference DNA sequence containment (~coverage) and median abundance (~depth).
+A fork of [Deacon](https://github.com/bede/deacon).
 
 ## Install
 
@@ -11,60 +11,62 @@ RUSTFLAGS="-C target-cpu=native" cargo install --git https://github.com/bede/gra
 ## Usage
 
 ```bash
-# One samples
-grate cov refs.fa reads.fastq.gz
+# One sample
+grate con refs.fa reads.fastq.gz
 
 # Many samples
-grate cov refs.fa reads1.fastq.gz reads2.fastq.gz reads3.fastq.gz…
+grate con refs.fa reads1.fastq.gz reads2/ reads3.fa.zst…
 
-# CSV output, needed for plotting
-grate cov -f csv refs.fa reads.fastq.gz > results.csv
+# Stdin
+zstdcat reads3.fq.zst | grate con refs.fa
+
+# CSV output for plotting
+grate con -f csv refs.fa reads.fastq.gz > results.csv
 
 # Plotting (requires uv)
-./plot.py results.csv
-uv run plot.py results.csv
+uv run plot/con.py results.csv
 
-# See plotting options
-./plot.py --help
+# View plotting options
+uv run ./plot/con.py --help
 ```
 
-The plotting script is a self-contained uv script that automatically installs its dependencies (pandas, altair, vl-convert-python) when run. You need [uv](https://docs.astral.sh/uv/) installed.
+Run the plotting scripts with [uv](https://docs.astral.sh/uv/) to automatically handle dependencies.
 
 ### CLI Reference
 
 ```bash
-$ grate cov -h
-Estimate containment and abundance of target sequence(s) in read file(s) or stream
+$ grate con -h
+Calculate minimizer containment & abundance in fastx files or directories thereof
 
-Usage: grate cov [OPTIONS] <TARGETS> <READS>...
+Usage: grate con [OPTIONS] <TARGETS> <SAMPLES>...
 
 Arguments:
-  <TARGETS>   Path to fasta file containing target sequence record(s)
-  <READS>...  Path(s) to fastx file(s) containing reads (or - for stdin). Multiple files are treated as separate samples
+  <TARGETS>     Path to fasta file containing target sequence record(s)
+  <SAMPLES>...  Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample
 
 Options:
-      --sample-names <SAMPLE_NAMES>
-          Sample names for read files (optional, defaults to filename without extensions)
   -k, --kmer-length <KMER_LENGTH>
           Minimizer length (1-61) [default: 31]
   -w, --window-size <WINDOW_SIZE>
-          Minimizer window size [default: 15]
-  -t, --threads <THREADS>
-          Number of execution threads (0 = auto) [default: 8]
-  -o, --output <OUTPUT>
-          Path to output file (- for stdout) [default: -]
-  -q, --quiet
-          Suppress progress reporting
-  -f, --format <FORMAT>
-          Output format [default: table] [possible values: table, csv, json]
+          Minimizer window size [default: 31]
   -a, --abundance-thresholds <ABUNDANCE_THRESHOLDS>
           Comma-separated abundance thresholds for containment calculation [default: 10]
   -d, --discriminatory
-          Retain only minimizers exclusive to each target
+          Consider only minimizers unique to each target
+  -t, --threads <THREADS>
+          Number of execution threads (0 = auto) [default: 8]
   -l, --limit <LIMIT>
           Terminate read processing after approximately this many bases (e.g. 50M, 10G)
-      --sort <SORT>
-          Sort order for results: o=original (default), a=alphabetical, c=containment (max first) [default: o] [possible values: o, a, c]
+  -o, --output <OUTPUT>
+          Path to output file (- for stdout) [default: -]
+  -f, --format <FORMAT>
+          Output format [default: table] [possible values: table, csv, json]
+  -n, --names <SAMPLE_NAMES>
+          Comma-separated sample names (default is file/dir name without extension)
+  -s, --sort <SORT>
+          Sort displayed results: o=original, t=target, s=sample, c=containment (descending) [default: o] [possible values: o, t, s, c]
+  -q, --quiet
+          Suppress progress reporting
   -h, --help
           Print help
 ```

@@ -205,18 +205,15 @@ struct Cli {
 #[derive(Subcommand)]
 enum Commands {
     /// Calculate minimizer containment & abundance in fastx files or directories thereof
-    Cov {
+    Con {
         /// Path to fasta file containing target sequence record(s)
         targets: PathBuf,
 
-        /// Path(s) to fastx file(s)/directories thereof (- for stdin). Multiple files/dirs treated as distinct samples
+        /// Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample.
         #[arg(required = true)]
-        reads: Vec<PathBuf>,
+        samples: Vec<PathBuf>,
 
-        /// Sample names for read files (optional, defaults to filename without extensions)
-        #[arg(long = "sample-names", value_delimiter = ',')]
-        sample_names: Option<Vec<String>>,
-
+        // Algorithm parameters
         /// Minimizer length (1-61)
         #[arg(short = 'k', long = "kmer-length", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
         kmer_length: u8,
@@ -224,22 +221,6 @@ enum Commands {
         /// Minimizer window size
         #[arg(short = 'w', long = "window-size", default_value_t = DEFAULT_WINDOW_SIZE)]
         window_size: u8,
-
-        /// Number of execution threads (0 = auto)
-        #[arg(short = 't', long = "threads", default_value_t = 8)]
-        threads: usize,
-
-        /// Path to output file (- for stdout)
-        #[arg(short = 'o', long = "output", default_value = "-")]
-        output: String,
-
-        /// Suppress progress reporting
-        #[arg(short = 'q', long = "quiet", default_value_t = false)]
-        quiet: bool,
-
-        /// Output format
-        #[arg(short = 'f', long = "format", default_value = "table", value_parser = ["table", "csv", "json"])]
-        format: String,
 
         /// Comma-separated abundance thresholds for containment calculation
         #[arg(
@@ -250,17 +231,39 @@ enum Commands {
         )]
         abundance_thresholds: Vec<usize>,
 
-        /// Retain only minimizers exclusive to each target
+        /// Consider only minimizers unique to each target
         #[arg(short = 'd', long = "discriminatory", default_value_t = false)]
         discriminatory: bool,
+
+        // Processing options
+        /// Number of execution threads (0 = auto)
+        #[arg(short = 't', long = "threads", default_value_t = 8)]
+        threads: usize,
 
         /// Terminate read processing after approximately this many bases (e.g. 50M, 10G)
         #[arg(short = 'l', long = "limit")]
         limit: Option<String>,
 
-        /// Sort order for results: o=original, t=target, s=sample, c=containment (descending)
-        #[arg(long = "sort", default_value = "o", value_parser = ["o", "t", "s", "c"])]
+        // Output options
+        /// Path to output file (- for stdout)
+        #[arg(short = 'o', long = "output", default_value = "-")]
+        output: String,
+
+        /// Output format
+        #[arg(short = 'f', long = "format", default_value = "table", value_parser = ["table", "csv", "json"])]
+        format: String,
+
+        /// Comma-separated sample names (default is file/dir name without extension)
+        #[arg(short = 'n', long = "names", value_delimiter = ',')]
+        sample_names: Option<Vec<String>>,
+
+        /// Sort displayed results: o=original, t=target, s=sample, c=containment (descending)
+        #[arg(short = 's', long = "sort", default_value = "o", value_parser = ["o", "t", "s", "c"])]
         sort: String,
+
+        /// Suppress progress reporting
+        #[arg(short = 'q', long = "quiet", default_value_t = false)]
+        quiet: bool,
     },
 }
 
@@ -276,9 +279,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match &cli.command {
-        Commands::Cov {
+        Commands::Con {
             targets,
-            reads,
+            samples,
             sample_names,
             kmer_length,
             window_size,
@@ -292,7 +295,7 @@ fn main() -> Result<()> {
             sort,
         } => {
             // Expand directories to lists of files
-            let (expanded_reads, is_directory) = expand_sample_inputs(&reads)?;
+            let (expanded_reads, is_directory) = expand_sample_inputs(&samples)?;
 
             // Derive or validate sample names
             let derived_sample_names: Vec<String> = if let Some(names) = sample_names {
@@ -307,7 +310,7 @@ fn main() -> Result<()> {
                 names.clone()
             } else {
                 // Derive from filenames/directory names
-                reads.iter()
+                samples.iter()
                     .zip(&is_directory)
                     .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
                     .collect()
@@ -361,7 +364,7 @@ fn main() -> Result<()> {
                 _ => unreachable!("clap should have validated the sort order"),
             };
 
-            let config = grate::CoverageConfig {
+            let config = grate::ContainmentConfig {
                 targets_path: targets.clone(),
                 reads_paths: expanded_reads,
                 sample_names: derived_sample_names,
@@ -383,7 +386,7 @@ fn main() -> Result<()> {
 
             config
                 .execute()
-                .context("Failed to run coverage analysis")?;
+                .context("Failed to run containment analysis")?;
         }
     }
 

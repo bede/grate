@@ -1,17 +1,17 @@
 //! # Grate
 //!
-//! A fast minimizer-based coverage analysis tool for genomic sequences.
+//! A fast minimizer-based containment analysis tool for genomic sequences.
 //!
-//! Grate analyzes the coverage of minimizers from reference sequences in read datasets,
-//! providing detailed statistics on coverage depth and breadth per target sequence.
+//! Grate analyzes the containment of minimizers from reference sequences in read datasets,
+//! providing detailed statistics on containment and abundance per target sequence.
 //!
 
-pub mod coverage;
+pub mod containment;
 pub mod minimizers;
 
 // Re-export the main functionality
-pub use coverage::{
-    run_coverage_analysis, CoverageConfig, CoverageParameters, CoverageResult, OutputFormat,
+pub use containment::{
+    run_containment_analysis, ContainmentConfig, ContainmentParameters, ContainmentResult, OutputFormat,
     TotalStats, Report, SampleResults, SortOrder, TargetInfo, TimingStats,
 };
 

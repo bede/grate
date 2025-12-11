@@ -72,7 +72,7 @@ pub struct TargetInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoverageResult {
+pub struct ContainmentResult {
     pub target: String,
     pub length: usize,
     pub total_minimizers: usize,
@@ -87,7 +87,7 @@ pub struct CoverageResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CoverageParameters {
+pub struct ContainmentParameters {
     pub kmer_length: u8,
     pub window_size: u8,
     pub threads: usize,
@@ -121,7 +121,7 @@ pub struct TimingStats {
 pub struct SampleResults {
     pub sample_name: String,
     pub reads_files: Vec<String>,  // Multiple files per sample
-    pub targets: Vec<CoverageResult>,
+    pub targets: Vec<ContainmentResult>,
     pub total_stats: TotalStats,
     pub timing: TimingStats,
 }
@@ -131,7 +131,7 @@ pub struct SampleResults {
 pub struct Report {
     pub version: String,
     pub targets_file: String,
-    pub parameters: CoverageParameters,
+    pub parameters: ContainmentParameters,
     pub samples: Vec<SampleResults>,
     pub total_timing: TimingStats,
 }
@@ -144,7 +144,7 @@ pub enum OutputFormat {
     Json,
 }
 
-pub struct CoverageConfig {
+pub struct ContainmentConfig {
     pub targets_path: PathBuf,
     pub reads_paths: Vec<Vec<PathBuf>>,  // Each sample is a Vec of file paths
     pub sample_names: Vec<String>,
@@ -160,9 +160,9 @@ pub struct CoverageConfig {
     pub sort_order: SortOrder,
 }
 
-impl CoverageConfig {
+impl ContainmentConfig {
     pub fn execute(&self) -> Result<()> {
-        run_coverage_analysis(self)
+        run_containment_analysis(self)
     }
 }
 
@@ -634,7 +634,7 @@ fn process_reads_file(
         };
         let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
         eprintln!(
-            "Reads: {} records ({}), found {} of {} target minimizers ({})",
+            "Reads: {} records ({}), found {} of {} distinct target minimizers ({})",
             stats.total_seqs,
             format_bp(stats.total_bp as usize),
             unique_minimizers,
@@ -651,7 +651,7 @@ fn calculate_containment_statistics(
     abundance_map: &AbundanceMap,
     abundance_thresholds: &[usize],
     sample_name: Option<String>,
-) -> Vec<CoverageResult> {
+) -> Vec<ContainmentResult> {
     targets
         .iter()
         .map(|target| {
@@ -733,7 +733,7 @@ fn calculate_containment_statistics(
                 containment_at_threshold.insert(threshold, containment_value);
             }
 
-            CoverageResult {
+            ContainmentResult {
                 target: target.name.clone(),
                 length: target.length,
                 total_minimizers,
@@ -788,7 +788,7 @@ fn process_single_sample(
     sample_name: &str,
     targets: &[TargetInfo],
     targets_minimizers: Arc<MinimizerSet>,
-    config: &CoverageConfig,
+    config: &ContainmentConfig,
 ) -> Result<SampleResults> {
     // Silence per-sample progress for >1 sample
     let quiet_sample = config.quiet || config.reads_paths.len() > 1;
@@ -849,9 +849,9 @@ fn process_single_sample(
     let reads_time = reads_start.elapsed();
     let abundance_map = combined_abundance_map;
 
-    // Calculate coverage statistics for this sample
+    // Calculate containment statistics for this sample
     let analysis_start = Instant::now();
-    let coverage_results = calculate_containment_statistics(
+    let containment_results = calculate_containment_statistics(
         targets,
         &abundance_map,
         &config.abundance_thresholds,
@@ -860,8 +860,8 @@ fn process_single_sample(
     let analysis_time = analysis_start.elapsed();
 
     // Overall stats for this sample
-    let total_minimizers: usize = coverage_results.iter().map(|r| r.total_minimizers).sum();
-    let total_contained_minimizers: usize = coverage_results
+    let total_minimizers: usize = containment_results.iter().map(|r| r.total_minimizers).sum();
+    let total_contained_minimizers: usize = containment_results
         .iter()
         .map(|r| r.contained_minimizers)
         .sum();
@@ -872,7 +872,7 @@ fn process_single_sample(
     };
 
     let total_median_nz_abundance = if total_minimizers > 0 {
-        coverage_results
+        containment_results
             .iter()
             .map(|r| r.median_nz_abundance * r.total_minimizers as f64)
             .sum::<f64>()
@@ -887,7 +887,7 @@ fn process_single_sample(
     // Calculate overall containment at each threshold
     let mut total_containment_at_threshold = HashMap::new();
     for &threshold in &config.abundance_thresholds {
-        let total_at_threshold: usize = coverage_results
+        let total_at_threshold: usize = containment_results
             .iter()
             .map(|r| {
                 let containment = r.containment_at_threshold.get(&threshold).unwrap_or(&0.0);
@@ -911,7 +911,7 @@ fn process_single_sample(
                 p.to_string_lossy().to_string()
             }
         }).collect(),
-        targets: coverage_results,
+        targets: containment_results,
         total_stats: TotalStats {
             total_targets: targets.len(),
             total_minimizers,
@@ -933,7 +933,7 @@ fn process_single_sample(
     })
 }
 
-pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
+pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -976,7 +976,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
             }
         ));
 
-        eprintln!("Grate v{}; mode: cov; options: {}", version, options);
+        eprintln!("Grate v{}; mode: con; options: {}", version, options);
     }
 
     // Process targets file
@@ -989,7 +989,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     )?;
     let targets_time = targets_start.elapsed();
 
-    // Count minimizers shared by multiple targets
+    // Count minimizers shared between targets
     if !config.quiet {
         eprint!("Counting shared minimizers…\r");
     }
@@ -1170,7 +1170,7 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     let report = Report {
         version: format!("grate {}", version),
         targets_file: config.targets_path.to_string_lossy().to_string(),
-        parameters: CoverageParameters {
+        parameters: ContainmentParameters {
             kmer_length: config.kmer_length,
             window_size: config.window_size,
             threads: config.threads,
@@ -1198,8 +1198,8 @@ pub fn run_coverage_analysis(config: &CoverageConfig) -> Result<()> {
     Ok(())
 }
 
-/// Sort coverage results based on the specified sort order (per-sample sorting)
-fn sort_results(results: &mut [CoverageResult], sort_order: SortOrder) {
+/// Sort containment results based on the specified sort order (per-sample sorting)
+fn sort_results(results: &mut [ContainmentResult], sort_order: SortOrder) {
     match sort_order {
         SortOrder::Original => {
             // No sorting needed - keep original order
@@ -1274,7 +1274,7 @@ struct TableRow<'a> {
     target: &'a str,
     sample_name: &'a str,
     sample_display: String,
-    result: &'a CoverageResult,
+    result: &'a ContainmentResult,
 }
 
 /// Output table with cross-sample sorting
@@ -1288,13 +1288,13 @@ fn output_table_sorted(
 
     // Build header with target column first
     let mut header = format!(
-        "{:<50} | {:<20} | {:>12}",
+        "{:<50} | {:<20} | {:>13}",
         "target", "sample", "containment1"
     );
     for threshold in &thresholds {
-        header.push_str(&format!(" | containment{}", threshold));
+        header.push_str(&format!(" | {:>15}", format!("containment{}", threshold)));
     }
-    header.push_str(" | median_nz_abundance");
+    header.push_str(&format!(" | {:>18}", "median_nz_abundance"));
 
     let separator = "-".repeat(header.len());
 
@@ -1362,7 +1362,7 @@ fn output_table_sorted(
         );
 
         let mut output_row = format!(
-            "{:<50} | {:<20} | {:>11.1}%",
+            "{:<50} | {:<20} | {:>12.2}%",
             truncate_string(&target_with_info, 50),
             truncate_string(&row.sample_display, 20),
             row.result.containment1 * 100.0
@@ -1372,7 +1372,7 @@ fn output_table_sorted(
                 .containment_at_threshold
                 .get(threshold)
                 .unwrap_or(&0.0);
-            output_row.push_str(&format!(" | {:>13.1}%", containment * 100.0));
+            output_row.push_str(&format!(" | {:>14.2}%", containment * 100.0));
         }
         output_row.push_str(&format!(
             " | {:>18.0}",
@@ -1391,7 +1391,7 @@ fn output_table_sorted(
         };
 
         let mut total_row = format!(
-            "{:<50} | {:<20} | {:>11.1}%",
+            "{:<50} | {:<20} | {:>12.2}%",
             "TOTAL",
             truncate_string(&sample_display, 20),
             sample.total_stats.total_containment1 * 100.0
@@ -1402,7 +1402,7 @@ fn output_table_sorted(
                 .total_containment_at_threshold
                 .get(threshold)
                 .unwrap_or(&0.0);
-            total_row.push_str(&format!(" | {:>13.1}%", containment * 100.0));
+            total_row.push_str(&format!(" | {:>14.2}%", containment * 100.0));
         }
         total_row.push_str(&format!(
             " | {:>18.0}",
