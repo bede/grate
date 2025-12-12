@@ -97,8 +97,10 @@ def main():
                         help="Maximum depth to display (default: auto-detect)")
     parser.add_argument("--min-depth", type=int, default=1,
                         help="Minimum depth to display (default: 1, excludes zero-depth)")
-    parser.add_argument("--linear", action="store_true",
-                        help="Use linear scale for y-axis instead of log scale")
+    parser.add_argument("--log-scale", action="store_true",
+                        help="Use log scale for y-axis")
+    parser.add_argument("--bandwidth", type=float, default=1.0,
+                        help="Bandwidth for kernel density estimation smoothing (default: 1.0)")
 
     args = parser.parse_args()
 
@@ -186,32 +188,57 @@ def main():
 
         hist_df = pd.DataFrame(rows)
 
-        # Calculate frequency (normalize counts within each target-sample group)
-        hist_df["frequency"] = hist_df.groupby(["target", "sample"])["count"].transform(
-            lambda x: x / x.sum()
-        )
-
         if args.debug:
-            print(f"\nExpanded histogram data:")
+            print(f"\nHistogram data:")
             print(f"  Shape: {hist_df.shape}")
             print(f"  Depth range: {hist_df['depth'].min()} to {hist_df['depth'].max()}")
             print(f"  First few rows:")
             print(hist_df.head())
 
+        # Expand data for KDE: repeat each depth by its count
+        expanded_rows = []
+        for _, row in hist_df.iterrows():
+            for _ in range(int(row["count"])):
+                expanded_rows.append({
+                    "target": row["target"],
+                    "display_name": row["display_name"],
+                    "sort_key": row["sort_key"],
+                    "sample": row["sample"],
+                    "depth": row["depth"]
+                })
+
+        kde_df = pd.DataFrame(expanded_rows)
+
+        # Add total count per group for scaling density to frequency
+        kde_df['total_count'] = kde_df.groupby(['target', 'sample'])['depth'].transform('count')
+
+        if args.debug:
+            print(f"\nExpanded data for KDE:")
+            print(f"  Shape: {kde_df.shape}")
+            print(f"  Total minimizers: {len(kde_df)}")
+
         # Ordering
-        hist_df = hist_df.sort_values(["sort_key", "sample", "depth"])
-        sample_order = sorted(hist_df["sample"].dropna().astype(str).unique(), key=natural_sort_key)
-        target_order = sorted(hist_df["display_name"].dropna().astype(str).unique(), key=natural_sort_key)
+        sample_order = sorted(kde_df["sample"].dropna().astype(str).unique(), key=natural_sort_key)
+        target_order = sorted(kde_df["display_name"].dropna().astype(str).unique(), key=natural_sort_key)
 
         # --- Plot ---
         alt.data_transformers.enable("json")
 
         # Determine y-axis scale
-        y_scale = alt.Scale(type="linear") if args.linear else alt.Scale(type="log")
+        y_scale = alt.Scale(type="log") if args.log_scale else alt.Scale(type="linear")
 
         base = (
-            alt.Chart(hist_df)
-            .mark_line(point=True, strokeWidth=2)
+            alt.Chart(kde_df)
+            .transform_density(
+                density="depth",
+                groupby=["target", "display_name", "sample", "total_count"],
+                bandwidth=args.bandwidth,
+                as_=["depth", "density"]
+            )
+            .transform_calculate(
+                frequency="datum.density * datum.total_count"
+            )
+            .mark_line(strokeWidth=2, interpolate="monotone")
             .encode(
                 x=alt.X("depth:Q",
                        title="Abundance",
@@ -222,18 +249,17 @@ def main():
                 color=alt.Color("sample:N",
                               title="Sample",
                               sort=sample_order,
-                              scale=alt.Scale(scheme="category10")),
+                              scale=alt.Scale(scheme="category20")),
                 tooltip=[
-                    alt.Tooltip("target:N", title="target"),
-                    alt.Tooltip("sample:N", title="sample"),
-                    alt.Tooltip("depth:Q", title="depth"),
-                    alt.Tooltip("count:Q", title="count", format=",.0f"),
-                    alt.Tooltip("frequency:Q", title="frequency", format=".4f"),
+                    alt.Tooltip("display_name:N", title="Target"),
+                    alt.Tooltip("sample:N", title="Sample"),
+                    alt.Tooltip("depth:Q", title="Abundance", format=".1f"),
+                    alt.Tooltip("frequency:Q", title="Frequency", format=",.1f"),
                 ],
             )
             .properties(
-                width=600,
-                height=80
+                width=700,
+                height=150
             )
         )
 
@@ -242,12 +268,12 @@ def main():
                 row=alt.Row("display_name:N",
                            title=None,
                            sort=target_order,
-                           header=alt.Header(labelAlign="left", labelAnchor="start", labelFontSize=11))
+                           header=alt.Header(labelAlign="left", labelAnchor="start", labelFontSize=12))
             )
             .resolve_scale(y="independent")
             .properties(title=args.title)
             .configure_legend(titleFontSize=12, labelFontSize=11)
-            .configure_axis(labelFontSize=10, titleFontSize=12)
+            .configure_axis(labelFontSize=11, titleFontSize=12)
             .configure_title(fontSize=14)
         )
 
