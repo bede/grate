@@ -1,0 +1,563 @@
+use crate::minimizers::{fill_minimizers, Buffers, KmerHasher, MinimizerVec};
+use crate::containment::{
+    process_targets_file, MinimizerSet, TimingStats, format_bp, format_bp_per_sec
+};
+use anyhow::Result;
+use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
+use paraseq::fastx::Reader;
+use paraseq::parallel::{ParallelProcessor, ParallelReader};
+use paraseq::Record;
+use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+/// Result for a single sample's length histogram
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LengthHistogramResult {
+    pub sample_name: String,
+    pub reads_files: Vec<String>,
+    pub total_reads_processed: u64,
+    pub total_bp_processed: u64,
+    pub reads_with_hits: u64,
+    pub reads_without_hits: u64,
+    pub length_histogram: Vec<(usize, usize)>, // (length, count) pairs
+}
+
+/// Complete report containing all samples
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LengthHistogramReport {
+    pub version: String,
+    pub targets_file: String,
+    pub parameters: LengthHistogramParameters,
+    pub samples: Vec<LengthHistogramResult>,
+    pub timing: TimingStats,
+}
+
+/// Parameters used for analysis
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LengthHistogramParameters {
+    pub kmer_length: u8,
+    pub window_size: u8,
+    pub threads: usize,
+}
+
+/// Configuration for length histogram analysis
+pub struct LengthHistogramConfig {
+    pub targets_path: PathBuf,
+    pub reads_paths: Vec<Vec<PathBuf>>, // Each sample is a Vec of file paths
+    pub sample_names: Vec<String>,
+    pub kmer_length: u8,
+    pub window_size: u8,
+    pub threads: usize,
+    pub output_path: Option<PathBuf>,
+    pub quiet: bool,
+    pub limit_bp: Option<u64>,
+}
+
+impl LengthHistogramConfig {
+    pub fn execute(&self) -> Result<()> {
+        run_length_histogram_analysis(self)
+    }
+}
+
+fn reader_with_inferred_batch_size(
+    in_path: Option<&Path>,
+) -> Result<Reader<Box<dyn std::io::Read + Send>>> {
+    let mut reader = paraseq::fastx::Reader::from_optional_path(in_path)?;
+    reader.update_batch_size_in_bp(256 * 1024)?;
+    Ok(reader)
+}
+
+#[derive(Clone, Default, Debug)]
+struct ProcessingStats {
+    total_seqs: u64,
+    total_bp: u64,
+    last_reported: u64,
+}
+
+/// Processor for collecting read lengths with minimizer hits
+#[derive(Clone)]
+struct LengthHistogramProcessor {
+    kmer_length: u8,
+    window_size: u8,
+    hasher: KmerHasher,
+    targets_minimizers: Arc<MinimizerSet>,
+
+    // Local buffers
+    buffers: Buffers,
+    local_stats: ProcessingStats,
+    local_histogram: HashMap<usize, usize>, // length -> count
+    local_reads_with_hits: u64,
+    local_reads_without_hits: u64,
+
+    // Global state
+    global_stats: Arc<Mutex<ProcessingStats>>,
+    global_histogram: Arc<Mutex<HashMap<usize, usize>>>,
+    global_reads_with_hits: Arc<Mutex<u64>>,
+    global_reads_without_hits: Arc<Mutex<u64>>,
+    spinner: Option<Arc<Mutex<ProgressBar>>>,
+    start_time: Instant,
+    limit_bp: Option<u64>,
+}
+
+impl LengthHistogramProcessor {
+    fn new(
+        kmer_length: u8,
+        window_size: u8,
+        targets_minimizers: Arc<MinimizerSet>,
+        spinner: Option<Arc<Mutex<ProgressBar>>>,
+        start_time: Instant,
+        limit_bp: Option<u64>,
+    ) -> Self {
+        let buffers = if kmer_length <= 32 {
+            Buffers::new_u64()
+        } else {
+            Buffers::new_u128()
+        };
+
+        Self {
+            kmer_length,
+            window_size,
+            hasher: KmerHasher::new(kmer_length as usize),
+            targets_minimizers,
+            buffers,
+            local_stats: ProcessingStats::default(),
+            local_histogram: HashMap::new(),
+            local_reads_with_hits: 0,
+            local_reads_without_hits: 0,
+            global_stats: Arc::new(Mutex::new(ProcessingStats::default())),
+            global_histogram: Arc::new(Mutex::new(HashMap::new())),
+            global_reads_with_hits: Arc::new(Mutex::new(0)),
+            global_reads_without_hits: Arc::new(Mutex::new(0)),
+            spinner,
+            start_time,
+            limit_bp,
+        }
+    }
+
+    fn update_spinner(&self) {
+        if let Some(ref spinner) = self.spinner {
+            let stats = self.global_stats.lock();
+            let elapsed = self.start_time.elapsed();
+            let reads_per_sec = stats.total_seqs as f64 / elapsed.as_secs_f64();
+            let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
+
+            spinner.lock().set_message(format!(
+                "Processing reads: {} reads ({}). {:.0} reads/s ({})",
+                stats.total_seqs,
+                format_bp(stats.total_bp as usize),
+                reads_per_sec,
+                format_bp_per_sec(bp_per_sec)
+            ));
+        }
+    }
+}
+
+impl<Rf: Record> ParallelProcessor<Rf> for LengthHistogramProcessor {
+    fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
+        // Check if we've reached sample limit
+        if let Some(limit) = self.limit_bp {
+            let global_bp = self.global_stats.lock().total_bp;
+            if global_bp >= limit {
+                return Err(paraseq::parallel::ProcessError::IoError(
+                    std::io::Error::new(std::io::ErrorKind::Interrupted, "Sample limit reached"),
+                ));
+            }
+        }
+
+        let seq = record.seq();
+        let read_length = seq.len();
+        self.local_stats.total_seqs += 1;
+        self.local_stats.total_bp += read_length as u64;
+
+        fill_minimizers(
+            &seq,
+            &self.hasher,
+            self.kmer_length,
+            self.window_size,
+            &mut self.buffers,
+        );
+
+        // Check if ANY minimizer hits the reference set (early termination)
+        let has_hit = match (&self.buffers.minimizers, &*self.targets_minimizers) {
+            (MinimizerVec::U64(vec), MinimizerSet::U64(targets_set)) => {
+                vec.iter().any(|minimizer| targets_set.contains(minimizer))
+            }
+            (MinimizerVec::U128(vec), MinimizerSet::U128(targets_set)) => {
+                vec.iter().any(|minimizer| targets_set.contains(minimizer))
+            }
+            _ => panic!("Mismatch between MinimizerVec and MinimizerSet types"),
+        };
+
+        if has_hit {
+            *self.local_histogram.entry(read_length).or_insert(0) += 1;
+            self.local_reads_with_hits += 1;
+        } else {
+            self.local_reads_without_hits += 1;
+        }
+
+        Ok(())
+    }
+
+    fn on_batch_complete(&mut self) -> paraseq::parallel::Result<()> {
+        // Merge local histogram into global
+        {
+            let mut global_hist = self.global_histogram.lock();
+            for (&length, &count) in &self.local_histogram {
+                *global_hist.entry(length).or_insert(0) += count;
+            }
+            self.local_histogram.clear();
+        }
+
+        // Merge hit counts
+        {
+            *self.global_reads_with_hits.lock() += self.local_reads_with_hits;
+            *self.global_reads_without_hits.lock() += self.local_reads_without_hits;
+            self.local_reads_with_hits = 0;
+            self.local_reads_without_hits = 0;
+        }
+
+        // Update global stats
+        {
+            let mut stats = self.global_stats.lock();
+            stats.total_seqs += self.local_stats.total_seqs;
+            stats.total_bp += self.local_stats.total_bp;
+
+            // Update spinner every 0.1 Gbp
+            let current_progress = stats.total_bp / 100_000_000;
+            if current_progress > stats.last_reported {
+                drop(stats);
+                self.update_spinner();
+                self.global_stats.lock().last_reported = current_progress;
+            }
+
+            self.local_stats = ProcessingStats::default();
+        }
+
+        Ok(())
+    }
+}
+
+fn process_reads_file(
+    reads_path: &Path,
+    targets_minimizers: Arc<MinimizerSet>,
+    kmer_length: u8,
+    window_size: u8,
+    threads: usize,
+    quiet: bool,
+    limit_bp: Option<u64>,
+) -> Result<(HashMap<usize, usize>, u64, u64, u64, u64)> {
+    let in_path = if reads_path.to_string_lossy() == "-" {
+        None
+    } else {
+        Some(reads_path)
+    };
+    let reader = reader_with_inferred_batch_size(in_path)?;
+
+    // Progress bar
+    let spinner = if !quiet {
+        let pb = ProgressBar::with_draw_target(None, ProgressDrawTarget::stderr());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
+                .template("{msg}")?,
+        );
+        pb.set_message("Processing reads: 0 reads (0bp)");
+        Some(Arc::new(Mutex::new(pb)))
+    } else {
+        None
+    };
+
+    let start_time = Instant::now();
+    let mut processor = LengthHistogramProcessor::new(
+        kmer_length,
+        window_size,
+        targets_minimizers,
+        spinner.clone(),
+        start_time,
+        limit_bp,
+    );
+
+    // Process reads - may terminate early if sample limit reached
+    let process_result = reader.process_parallel(&mut processor, threads);
+
+    // Check if we stopped due to sampling
+    let stopped_early = if let Err(ref e) = process_result {
+        e.to_string().contains("Sample limit reached")
+    } else {
+        false
+    };
+
+    // If it's not a sample stop, propagate the error
+    if !stopped_early {
+        process_result?;
+    }
+
+    // Finish spinner
+    if let Some(ref pb) = spinner {
+        pb.lock().finish_with_message("");
+    }
+
+    let stats = processor.global_stats.lock().clone();
+    let histogram = Arc::try_unwrap(processor.global_histogram)
+        .unwrap()
+        .into_inner();
+    let reads_with_hits = *processor.global_reads_with_hits.lock();
+    let reads_without_hits = *processor.global_reads_without_hits.lock();
+
+    if !quiet {
+        let elapsed = start_time.elapsed();
+        let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
+        eprintln!(
+            "Reads: {} records ({}), {} with hits, {} without hits ({})",
+            stats.total_seqs,
+            format_bp(stats.total_bp as usize),
+            reads_with_hits,
+            reads_without_hits,
+            format_bp_per_sec(bp_per_sec)
+        );
+    }
+
+    Ok((
+        histogram,
+        stats.total_seqs,
+        stats.total_bp,
+        reads_with_hits,
+        reads_without_hits,
+    ))
+}
+
+/// Process a single sample's reads and calculate length histogram
+fn process_single_sample(
+    _idx: usize,
+    reads_paths: &[PathBuf],
+    sample_name: &str,
+    targets_minimizers: Arc<MinimizerSet>,
+    config: &LengthHistogramConfig,
+) -> Result<LengthHistogramResult> {
+    // Silence per-sample progress for >1 sample
+    let quiet_sample = config.quiet || config.reads_paths.len() > 1;
+
+    // Initialize empty histogram
+    let mut combined_histogram: HashMap<usize, usize> = HashMap::new();
+    let mut total_reads = 0u64;
+    let mut total_bp = 0u64;
+    let mut total_reads_with_hits = 0u64;
+    let mut total_reads_without_hits = 0u64;
+
+    // Process each file and accumulate results
+    for reads_path in reads_paths {
+        let (file_histogram, file_reads, file_bp, file_with_hits, file_without_hits) =
+            process_reads_file(
+                reads_path,
+                Arc::clone(&targets_minimizers),
+                config.kmer_length,
+                config.window_size,
+                config.threads,
+                quiet_sample,
+                config.limit_bp.map(|limit| limit.saturating_sub(total_bp)),
+            )?;
+
+        // Merge histograms
+        for (length, count) in file_histogram {
+            *combined_histogram.entry(length).or_insert(0) += count;
+        }
+
+        total_reads += file_reads;
+        total_bp += file_bp;
+        total_reads_with_hits += file_with_hits;
+        total_reads_without_hits += file_without_hits;
+
+        // Check if limit reached
+        if let Some(limit) = config.limit_bp {
+            if total_bp >= limit {
+                break;
+            }
+        }
+    }
+
+    // Convert histogram to sorted vec
+    let mut length_histogram: Vec<(usize, usize)> = combined_histogram.into_iter().collect();
+    length_histogram.sort_by_key(|(length, _)| *length);
+
+    Ok(LengthHistogramResult {
+        sample_name: sample_name.to_string(),
+        reads_files: reads_paths
+            .iter()
+            .map(|p| {
+                if p.to_string_lossy() == "-" {
+                    "stdin".to_string()
+                } else {
+                    p.to_string_lossy().to_string()
+                }
+            })
+            .collect(),
+        total_reads_processed: total_reads,
+        total_bp_processed: total_bp,
+        reads_with_hits: total_reads_with_hits,
+        reads_without_hits: total_reads_without_hits,
+        length_histogram,
+    })
+}
+
+pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<()> {
+    let start_time = Instant::now();
+    let version = env!("CARGO_PKG_VERSION").to_string();
+
+    if !config.quiet {
+        let mut options = format!(
+            "k={}, w={}, threads={}",
+            config.kmer_length, config.window_size, config.threads
+        );
+
+        if config.reads_paths.len() > 1 {
+            options.push_str(&format!(", samples={}", config.reads_paths.len()));
+        }
+
+        if let Some(limit) = config.limit_bp {
+            options.push_str(&format!(", limit={}", format_bp(limit as usize)));
+        }
+
+        eprintln!("Grate v{}; mode: len; options: {}", version, options);
+    }
+
+    // Process targets file
+    let targets_start = Instant::now();
+    let targets = process_targets_file(
+        &config.targets_path,
+        config.kmer_length,
+        config.window_size,
+        config.quiet,
+    )?;
+    let targets_time = targets_start.elapsed();
+
+    // Build set of all unique minimizers across targets
+    if !config.quiet {
+        eprint!("Building minimizer set…\r");
+    }
+    let targets_minimizers = if config.kmer_length <= 32 {
+        use crate::containment::RapidHashSet;
+        let mut set = RapidHashSet::default();
+        for target in &targets {
+            if let MinimizerSet::U64(target_set) = &target.minimizers {
+                set.extend(target_set.iter());
+            }
+        }
+        MinimizerSet::U64(set)
+    } else {
+        use crate::containment::RapidHashSet;
+        let mut set = RapidHashSet::default();
+        for target in &targets {
+            if let MinimizerSet::U128(target_set) = &target.minimizers {
+                set.extend(target_set.iter());
+            }
+        }
+        MinimizerSet::U128(set)
+    };
+
+    let total_target_minimizers = targets_minimizers.len();
+    let total_bp: usize = targets.iter().map(|t| t.length).sum();
+
+    if !config.quiet {
+        eprint!("\x1B[2K\r"); // Clear line
+        eprintln!(
+            "Targets: {} records ({}), {} unique minimizers",
+            targets.len(),
+            format_bp(total_bp),
+            total_target_minimizers
+        );
+    }
+
+    let targets_minimizers = Arc::new(targets_minimizers);
+
+    // Process each sample in parallel
+    use rayon::prelude::*;
+
+    let is_multisample = config.reads_paths.len() > 1;
+    let completed = if is_multisample && !config.quiet {
+        eprint!(
+            "\x1B[2K\rReads: processed 0 of {}…",
+            config.reads_paths.len()
+        );
+        Some(Arc::new(Mutex::new(0usize)))
+    } else {
+        if !config.quiet {
+            eprint!("\x1B[2K\r");
+        }
+        None
+    };
+
+    let sample_results: Vec<LengthHistogramResult> = config
+        .reads_paths
+        .par_iter()
+        .zip(&config.sample_names)
+        .enumerate()
+        .map(|(idx, (reads_paths, sample_name))| {
+            let result = process_single_sample(
+                idx,
+                reads_paths,
+                sample_name,
+                Arc::clone(&targets_minimizers),
+                config,
+            );
+
+            // Report completion for multisample runs
+            if let Some(ref counter) = completed {
+                let mut count = counter.lock();
+                *count += 1;
+                eprint!(
+                    "\rReads: processed {} of {}…",
+                    *count,
+                    config.reads_paths.len()
+                );
+            }
+
+            result
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    if is_multisample && !config.quiet {
+        eprintln!();
+    }
+
+    let reads_time = start_time.elapsed().as_secs_f64() - targets_time.as_secs_f64();
+    let total_time = start_time.elapsed();
+
+    // Create report
+    let report = LengthHistogramReport {
+        version: format!("grate {}", version),
+        targets_file: config.targets_path.to_string_lossy().to_string(),
+        parameters: LengthHistogramParameters {
+            kmer_length: config.kmer_length,
+            window_size: config.window_size,
+            threads: config.threads,
+        },
+        samples: sample_results,
+        timing: TimingStats {
+            reference_processing_time: targets_time.as_secs_f64(),
+            reads_processing_time: reads_time,
+            analysis_time: 0.0,
+            total_time: total_time.as_secs_f64(),
+            reads_per_second: 0.0,
+            bp_per_second: 0.0,
+        },
+    };
+
+    // Output JSON
+    let writer: Box<dyn Write> = if let Some(path) = &config.output_path {
+        Box::new(BufWriter::new(File::create(path)?))
+    } else {
+        Box::new(BufWriter::new(io::stdout()))
+    };
+
+    let mut writer = writer;
+    serde_json::to_writer_pretty(&mut writer, &report)?;
+    writeln!(writer)?;
+
+    Ok(())
+}

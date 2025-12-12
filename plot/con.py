@@ -25,7 +25,6 @@ def main():
     parser = argparse.ArgumentParser(description="Plot Grate CSV file (single CSV; one or many samples)")
     parser.add_argument("input_csv", help="Input CSV file containing one or many samples (must include a sample column)")
     parser.add_argument("--output-plot", help="Output plot filename (default: <input_prefix>.png)")
-    parser.add_argument("--output-csv", help="(Re)written CSV filename (default: <input_prefix>.csv)")
     parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
     parser.add_argument("--debug", action="store_true", help="Enable debug output")
     parser.add_argument("--title", default="Containment analysis (Grate)",
@@ -49,19 +48,11 @@ def main():
     input_prefix = os.path.splitext(input_filename)[0]
     if args.output_plot is None:
         args.output_plot = f"{input_prefix}.png"
-    if args.output_csv is None:
-        args.output_csv = f"{input_prefix}.csv"
 
     # Check if output files exist and require --force to overwrite
-    existing_files = []
-    if os.path.exists(args.output_plot):
-        existing_files.append(args.output_plot)
-    if os.path.exists(args.output_csv):
-        existing_files.append(args.output_csv)
-
-    if existing_files and not args.force:
-        print(f"ERROR: Output file(s) already exist: {', '.join(existing_files)}")
-        print("Use --force to overwrite existing files")
+    if os.path.exists(args.output_plot) and not args.force:
+        print(f"ERROR: Output file already exists: {args.output_plot}")
+        print("Use --force to overwrite existing file")
         sys.exit(1)
 
     try:
@@ -107,10 +98,6 @@ def main():
         for c in (containment_col, hits_col, "median_nz_abundance", "length_bp", "contained_minimizers"):
             if c in df.columns:
                 df[c] = pd.to_numeric(df[c], errors="coerce")
-
-        # Keep a (re)written copy for reproducibility
-        df.to_csv(args.output_csv, index=False)
-        print(f"CSV saved to: {args.output_csv}")
 
         # --- Prep for plotting ---
         plot_df = df.copy()
