@@ -79,10 +79,22 @@ fn validate_sample_names(names: &[String]) -> Result<()> {
 fn find_fastx_files_in_dir(dir_path: &Path) -> Result<Vec<PathBuf>> {
     // Extensions to match
     const FASTX_EXTENSIONS: &[&str] = &[
-        ".fasta", ".fa", ".fastq", ".fq",
-        ".fasta.gz", ".fa.gz", ".fastq.gz", ".fq.gz",
-        ".fasta.xz", ".fa.xz", ".fastq.xz", ".fq.xz",
-        ".fasta.zst", ".fa.zst", ".fastq.zst", ".fq.zst",
+        ".fasta",
+        ".fa",
+        ".fastq",
+        ".fq",
+        ".fasta.gz",
+        ".fa.gz",
+        ".fastq.gz",
+        ".fq.gz",
+        ".fasta.xz",
+        ".fa.xz",
+        ".fastq.xz",
+        ".fq.xz",
+        ".fasta.zst",
+        ".fa.zst",
+        ".fastq.zst",
+        ".fq.zst",
     ];
 
     let mut fastx_files = Vec::new();
@@ -92,8 +104,8 @@ fn find_fastx_files_in_dir(dir_path: &Path) -> Result<Vec<PathBuf>> {
         .with_context(|| format!("Failed to read directory: {}", dir_path.display()))?;
 
     for entry in entries {
-        let entry = entry.with_context(||
-            format!("Failed to read directory entry in {}", dir_path.display()))?;
+        let entry = entry
+            .with_context(|| format!("Failed to read directory entry in {}", dir_path.display()))?;
 
         let path = entry.path();
 
@@ -165,7 +177,8 @@ fn expand_sample_inputs(inputs: &[PathBuf]) -> Result<(Vec<Vec<PathBuf>>, Vec<bo
             is_directory.push(true);
         } else {
             return Err(anyhow::anyhow!(
-                "Path is neither a regular file nor directory: {}", input.display()
+                "Path is neither a regular file nor directory: {}",
+                input.display()
             ));
         }
     }
@@ -350,7 +363,8 @@ fn main() -> Result<()> {
                 names.clone()
             } else {
                 // Derive from filenames/directory names
-                samples.iter()
+                samples
+                    .iter()
                     .zip(&is_directory)
                     .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
                     .collect()
@@ -455,7 +469,8 @@ fn main() -> Result<()> {
                 names.clone()
             } else {
                 // Derive from filenames/directory names
-                samples.iter()
+                samples
+                    .iter()
                     .zip(&is_directory)
                     .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
                     .collect()

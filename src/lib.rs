@@ -12,8 +12,8 @@ pub mod minimizers;
 
 // Re-export the main functionality
 pub use containment::{
-    run_containment_analysis, ContainmentConfig, ContainmentParameters, ContainmentResult, OutputFormat,
-    TotalStats, Report, SampleResults, SortOrder, TargetInfo, TimingStats,
+    run_containment_analysis, ContainmentConfig, ContainmentParameters, ContainmentResult,
+    OutputFormat, Report, SampleResults, SortOrder, TargetInfo, TimingStats, TotalStats,
 };
 
 pub use length::{

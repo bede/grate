@@ -1,7 +1,7 @@
-use crate::minimizers::{fill_minimizers, Buffers, KmerHasher, MinimizerVec};
 use crate::containment::{
-    process_targets_file, MinimizerSet, TimingStats, format_bp, format_bp_per_sec
+    format_bp, format_bp_per_sec, process_targets_file, MinimizerSet, TimingStats,
 };
+use crate::minimizers::{fill_minimizers, Buffers, KmerHasher, MinimizerVec};
 use anyhow::Result;
 use indicatif::{ProgressBar, ProgressDrawTarget, ProgressStyle};
 use paraseq::fastx::Reader;
@@ -148,7 +148,7 @@ impl LengthHistogramProcessor {
             let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
 
             spinner.lock().set_message(format!(
-                "Processing reads: {} reads ({}). {:.0} reads/s ({})",
+                "Processing sample: {} reads ({}). {:.0} reads/s ({})",
                 stats.total_seqs,
                 format_bp(stats.total_bp as usize),
                 reads_per_sec,
@@ -267,7 +267,7 @@ fn process_reads_file(
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
                 .template("{msg}")?,
         );
-        pb.set_message("Processing reads: 0 reads (0bp)");
+        pb.set_message("Processing sample: 0 reads (0bp)");
         Some(Arc::new(Mutex::new(pb)))
     } else {
         None
@@ -314,7 +314,7 @@ fn process_reads_file(
         let elapsed = start_time.elapsed();
         let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
         eprintln!(
-            "Reads: {} records ({}), {} with hits, {} without hits ({})",
+            "Sample: {} records ({}), {} with hits, {} without hits ({})",
             stats.total_seqs,
             format_bp(stats.total_bp as usize),
             reads_with_hits,
@@ -481,7 +481,7 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
     let is_multisample = config.reads_paths.len() > 1;
     let completed = if is_multisample && !config.quiet {
         eprint!(
-            "\x1B[2K\rReads: processed 0 of {}…",
+            "\x1B[2K\rSamples: processed 0 of {}…",
             config.reads_paths.len()
         );
         Some(Arc::new(Mutex::new(0usize)))
@@ -511,7 +511,7 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
                 let mut count = counter.lock();
                 *count += 1;
                 eprint!(
-                    "\rReads: processed {} of {}…",
+                    "\rSamples: processed {} of {}…",
                     *count,
                     config.reads_paths.len()
                 );

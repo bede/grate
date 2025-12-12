@@ -37,10 +37,10 @@ pub type RapidHashSet<T> = HashSet<T, FixedRapidHasher>;
 /// Sort order for results
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SortOrder {
-    Original,     // Original order from reference file (default)
-    Target,       // Alphabetical by target name
-    Sample,       // Alphabetical by sample name
-    Containment,  // Descending by containment1 (highest first)
+    Original,    // Original order from reference file (default)
+    Target,      // Alphabetical by target name
+    Sample,      // Alphabetical by sample name
+    Containment, // Descending by containment1 (highest first)
 }
 
 /// Zero-cost (hopefully?) abstraction over u64 and u128 minimizer sets
@@ -81,7 +81,7 @@ pub struct ContainmentResult {
     pub median_nz_abundance: f64,
     pub abundance_histogram: Vec<(CountDepth, usize)>, // (abundance, count)
     pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
-    pub hits_at_threshold: HashMap<usize, usize>,     // threshold -> hit count
+    pub hits_at_threshold: HashMap<usize, usize>,      // threshold -> hit count
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sample_name: Option<String>, // Only used in multi-sample mode
 }
@@ -120,7 +120,7 @@ pub struct TimingStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SampleResults {
     pub sample_name: String,
-    pub reads_files: Vec<String>,  // Multiple files per sample
+    pub reads_files: Vec<String>, // Multiple files per sample
     pub targets: Vec<ContainmentResult>,
     pub total_stats: TotalStats,
     pub timing: TimingStats,
@@ -146,7 +146,7 @@ pub enum OutputFormat {
 
 pub struct ContainmentConfig {
     pub targets_path: PathBuf,
-    pub reads_paths: Vec<Vec<PathBuf>>,  // Each sample is a Vec of file paths
+    pub reads_paths: Vec<Vec<PathBuf>>, // Each sample is a Vec of file paths
     pub sample_names: Vec<String>,
     pub kmer_length: u8,
     pub window_size: u8,
@@ -432,7 +432,7 @@ impl ReadsProcessor {
             let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
 
             spinner.lock().set_message(format!(
-                "Processing reads: {} reads ({}). {:.0} reads/s ({})",
+                "Processing sample: {} reads ({}). {:.0} reads/s ({})",
                 stats.total_seqs,
                 format_bp(stats.total_bp as usize),
                 reads_per_sec,
@@ -573,7 +573,7 @@ fn process_reads_file(
                 .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"])
                 .template("{msg}")?,
         );
-        pb.set_message("Processing reads: 0 reads (0bp)");
+        pb.set_message("Processing sample: 0 reads (0bp)");
         Some(Arc::new(Mutex::new(pb)))
     } else {
         None
@@ -634,7 +634,7 @@ fn process_reads_file(
         };
         let bp_per_sec = stats.total_bp as f64 / elapsed.as_secs_f64();
         eprintln!(
-            "Reads: {} records ({}), found {} of {} distinct target minimizers ({})",
+            "Sample: {} records ({}), found {} of {} distinct target minimizers ({})",
             stats.total_seqs,
             format_bp(stats.total_bp as usize),
             unique_minimizers,
@@ -784,7 +784,7 @@ pub fn format_bp_per_sec(bp_per_sec: f64) -> String {
 /// Process a single sample's reads and calculate statistics
 fn process_single_sample(
     _idx: usize,
-    reads_paths: &[PathBuf],  // Multiple files per sample
+    reads_paths: &[PathBuf], // Multiple files per sample
     sample_name: &str,
     targets: &[TargetInfo],
     targets_minimizers: Arc<MinimizerSet>,
@@ -820,14 +820,16 @@ fn process_single_sample(
         match (&mut combined_abundance_map, file_abundance_map) {
             (AbundanceMap::U64(combined), AbundanceMap::U64(new)) => {
                 for (minimizer, count) in new {
-                    combined.entry(minimizer)
+                    combined
+                        .entry(minimizer)
                         .and_modify(|e| *e = e.saturating_add(count))
                         .or_insert(count);
                 }
             }
             (AbundanceMap::U128(combined), AbundanceMap::U128(new)) => {
                 for (minimizer, count) in new {
-                    combined.entry(minimizer)
+                    combined
+                        .entry(minimizer)
                         .and_modify(|e| *e = e.saturating_add(count))
                         .or_insert(count);
                 }
@@ -904,13 +906,16 @@ fn process_single_sample(
 
     Ok(SampleResults {
         sample_name: sample_name.to_string(),
-        reads_files: reads_paths.iter().map(|p| {
-            if p.to_string_lossy() == "-" {
-                "stdin".to_string()
-            } else {
-                p.to_string_lossy().to_string()
-            }
-        }).collect(),
+        reads_files: reads_paths
+            .iter()
+            .map(|p| {
+                if p.to_string_lossy() == "-" {
+                    "stdin".to_string()
+                } else {
+                    p.to_string_lossy().to_string()
+                }
+            })
+            .collect(),
         targets: containment_results,
         total_stats: TotalStats {
             total_targets: targets.len(),
@@ -1112,7 +1117,7 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
     let completed = if is_multisample && !config.quiet {
         // Give us a blank line to overwrite
         eprint!(
-            "\x1B[2K\rReads: processed 0 of {}…",
+            "\x1B[2K\rSamples: processed 0 of {}…",
             config.reads_paths.len()
         );
         Some(Arc::new(Mutex::new(0usize)))
@@ -1132,7 +1137,7 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
         .map(|(idx, (reads_paths, sample_name))| {
             let result = process_single_sample(
                 idx,
-                reads_paths,  // Now a &Vec<PathBuf>
+                reads_paths, // Now a &Vec<PathBuf>
                 sample_name,
                 &targets,
                 Arc::clone(&targets_minimizers),
@@ -1144,7 +1149,7 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
                 let mut count = counter.lock();
                 *count += 1;
                 eprint!(
-                    "\rReads: processed {} of {}…",
+                    "\rSamples: processed {} of {}…",
                     *count,
                     config.reads_paths.len()
                 );
@@ -1308,7 +1313,11 @@ fn output_table_sorted(
 
     for sample in &report.samples {
         let sample_display = if sample.reads_files.len() > 1 {
-            format!("{} ({} files)", sample.sample_name, sample.reads_files.len())
+            format!(
+                "{} ({} files)",
+                sample.sample_name,
+                sample.reads_files.len()
+            )
         } else {
             sample.sample_name.clone()
         };
@@ -1332,21 +1341,24 @@ fn output_table_sorted(
         SortOrder::Target => {
             // Sort by target name (alphabetically), then by sample order
             rows.sort_by(|a, b| {
-                a.target.cmp(b.target)
+                a.target
+                    .cmp(b.target)
                     .then_with(|| a.sample_name.cmp(b.sample_name))
             });
         }
         SortOrder::Sample => {
             // Sort by sample name (alphabetically), then by target order
             rows.sort_by(|a, b| {
-                a.sample_name.cmp(b.sample_name)
+                a.sample_name
+                    .cmp(b.sample_name)
                     .then_with(|| a.target.cmp(b.target))
             });
         }
         SortOrder::Containment => {
             // Sort by containment1 (descending)
             rows.sort_by(|a, b| {
-                b.result.containment1
+                b.result
+                    .containment1
                     .partial_cmp(&a.result.containment1)
                     .unwrap_or(std::cmp::Ordering::Equal)
             });
@@ -1355,11 +1367,7 @@ fn output_table_sorted(
 
     // Output sorted rows
     for row in &rows {
-        let target_with_info = format!(
-            "{} ({})",
-            row.result.target,
-            format_bp(row.result.length)
-        );
+        let target_with_info = format!("{} ({})", row.result.target, format_bp(row.result.length));
 
         let mut output_row = format!(
             "{:<50} | {:<20} | {:>12.2}%",
@@ -1368,16 +1376,14 @@ fn output_table_sorted(
             row.result.containment1 * 100.0
         );
         for threshold in &thresholds {
-            let containment = row.result
+            let containment = row
+                .result
                 .containment_at_threshold
                 .get(threshold)
                 .unwrap_or(&0.0);
             output_row.push_str(&format!(" | {:>14.2}%", containment * 100.0));
         }
-        output_row.push_str(&format!(
-            " | {:>18.0}",
-            row.result.median_nz_abundance,
-        ));
+        output_row.push_str(&format!(" | {:>18.0}", row.result.median_nz_abundance,));
         writeln!(writer, "{}", output_row)?;
     }
 
@@ -1385,7 +1391,11 @@ fn output_table_sorted(
     // For now, let's append TOTAL rows at the end
     for sample in &report.samples {
         let sample_display = if sample.reads_files.len() > 1 {
-            format!("{} ({} files)", sample.sample_name, sample.reads_files.len())
+            format!(
+                "{} ({} files)",
+                sample.sample_name,
+                sample.reads_files.len()
+            )
         } else {
             sample.sample_name.clone()
         };
@@ -1421,7 +1431,10 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
     // Build header with target column first
     let mut header = "target,sample,containment1,containment1_hits".to_string();
     for threshold in &thresholds {
-        header.push_str(&format!(",containment{},containment{}_hits", threshold, threshold));
+        header.push_str(&format!(
+            ",containment{},containment{}_hits",
+            threshold, threshold
+        ));
     }
     header.push_str(",length_bp,total_minimizers,contained_minimizers,median_nz_abundance");
     writeln!(writer, "{}", header)?;
@@ -1431,18 +1444,17 @@ fn output_csv(writer: &mut dyn Write, report: &Report) -> Result<()> {
         for result in &sample.targets {
             let mut row = format!(
                 "{},{},{:.5},{}",
-                result.target, sample.sample_name, result.containment1,
-                result.contained_minimizers  // Use contained_minimizers for threshold 1 hits
+                result.target,
+                sample.sample_name,
+                result.containment1,
+                result.contained_minimizers // Use contained_minimizers for threshold 1 hits
             );
             for threshold in &thresholds {
                 let containment = result
                     .containment_at_threshold
                     .get(threshold)
                     .unwrap_or(&0.0);
-                let hits = result
-                    .hits_at_threshold
-                    .get(threshold)
-                    .unwrap_or(&0);
+                let hits = result.hits_at_threshold.get(threshold).unwrap_or(&0);
                 row.push_str(&format!(",{:.5},{}", containment, hits));
             }
             row.push_str(&format!(
