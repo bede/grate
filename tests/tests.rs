@@ -138,6 +138,7 @@ fn test_length_histogram() {
         output_path: Some(temp_output.path().to_path_buf()),
         quiet: true,
         limit_bp: None,
+        include_all_reads: false,
     };
 
     grate::run_length_histogram_analysis(&config).unwrap();

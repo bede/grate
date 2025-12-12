@@ -280,7 +280,7 @@ enum Commands {
     },
     /// Generate length histogram for reads with minimizer hits
     Len {
-        /// Path to fasta file containing target sequence record(s)
+        /// Path to fasta file containing target sequence record(s) (- to disable target filtering)
         targets: PathBuf,
 
         /// Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample.
@@ -508,6 +508,9 @@ fn main() -> Result<()> {
                 None
             };
 
+            // Detect if user wants all reads (no target filtering)
+            let include_all_reads = targets.to_string_lossy() == "-";
+
             let config = grate::LengthHistogramConfig {
                 targets_path: targets.clone(),
                 reads_paths: expanded_reads,
@@ -522,6 +525,7 @@ fn main() -> Result<()> {
                 },
                 quiet: *quiet,
                 limit_bp,
+                include_all_reads,
             };
 
             config

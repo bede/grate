@@ -57,6 +57,7 @@ pub struct LengthHistogramConfig {
     pub output_path: Option<PathBuf>,
     pub quiet: bool,
     pub limit_bp: Option<u64>,
+    pub include_all_reads: bool, // true when targets_path == "-" (no filtering)
 }
 
 impl LengthHistogramConfig {
@@ -87,6 +88,7 @@ struct LengthHistogramProcessor {
     window_size: u8,
     hasher: KmerHasher,
     targets_minimizers: Arc<MinimizerSet>,
+    include_all_reads: bool,
 
     // Local buffers
     buffers: Buffers,
@@ -110,6 +112,7 @@ impl LengthHistogramProcessor {
         kmer_length: u8,
         window_size: u8,
         targets_minimizers: Arc<MinimizerSet>,
+        include_all_reads: bool,
         spinner: Option<Arc<Mutex<ProgressBar>>>,
         start_time: Instant,
         limit_bp: Option<u64>,
@@ -125,6 +128,7 @@ impl LengthHistogramProcessor {
             window_size,
             hasher: KmerHasher::new(kmer_length as usize),
             targets_minimizers,
+            include_all_reads,
             buffers,
             local_stats: ProcessingStats::default(),
             local_histogram: HashMap::new(),
@@ -175,23 +179,28 @@ impl<Rf: Record> ParallelProcessor<Rf> for LengthHistogramProcessor {
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += read_length as u64;
 
-        fill_minimizers(
-            &seq,
-            &self.hasher,
-            self.kmer_length,
-            self.window_size,
-            &mut self.buffers,
-        );
+        let has_hit = if self.include_all_reads {
+            // Include all reads when no target filtering
+            true
+        } else {
+            fill_minimizers(
+                &seq,
+                &self.hasher,
+                self.kmer_length,
+                self.window_size,
+                &mut self.buffers,
+            );
 
-        // Check if ANY minimizer hits the reference set (early termination)
-        let has_hit = match (&self.buffers.minimizers, &*self.targets_minimizers) {
-            (MinimizerVec::U64(vec), MinimizerSet::U64(targets_set)) => {
-                vec.iter().any(|minimizer| targets_set.contains(minimizer))
+            // Check if ANY minimizer hits the reference set (early termination)
+            match (&self.buffers.minimizers, &*self.targets_minimizers) {
+                (MinimizerVec::U64(vec), MinimizerSet::U64(targets_set)) => {
+                    vec.iter().any(|minimizer| targets_set.contains(minimizer))
+                }
+                (MinimizerVec::U128(vec), MinimizerSet::U128(targets_set)) => {
+                    vec.iter().any(|minimizer| targets_set.contains(minimizer))
+                }
+                _ => panic!("Mismatch between MinimizerVec and MinimizerSet types"),
             }
-            (MinimizerVec::U128(vec), MinimizerSet::U128(targets_set)) => {
-                vec.iter().any(|minimizer| targets_set.contains(minimizer))
-            }
-            _ => panic!("Mismatch between MinimizerVec and MinimizerSet types"),
         };
 
         if has_hit {
@@ -250,6 +259,7 @@ fn process_reads_file(
     window_size: u8,
     threads: usize,
     quiet: bool,
+    include_all_reads: bool,
     limit_bp: Option<u64>,
 ) -> Result<(HashMap<usize, usize>, u64, u64, u64, u64)> {
     let in_path = if reads_path.to_string_lossy() == "-" {
@@ -278,6 +288,7 @@ fn process_reads_file(
         kmer_length,
         window_size,
         targets_minimizers,
+        include_all_reads,
         spinner.clone(),
         start_time,
         limit_bp,
@@ -360,6 +371,7 @@ fn process_single_sample(
                 config.window_size,
                 config.threads,
                 quiet_sample,
+                config.include_all_reads,
                 config.limit_bp.map(|limit| limit.saturating_sub(total_bp)),
             )?;
 
@@ -426,54 +438,69 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
         eprintln!("Grate v{}; mode: len; options: {}", version, options);
     }
 
-    // Process targets file
-    let targets_start = Instant::now();
-    let targets = process_targets_file(
-        &config.targets_path,
-        config.kmer_length,
-        config.window_size,
-        config.quiet,
-    )?;
-    let targets_time = targets_start.elapsed();
-
-    // Build set of all unique minimizers across targets
-    if !config.quiet {
-        eprint!("Building minimizer set…\r");
-    }
-    let targets_minimizers = if config.kmer_length <= 32 {
-        use crate::containment::RapidHashSet;
-        let mut set = RapidHashSet::default();
-        for target in &targets {
-            if let MinimizerSet::U64(target_set) = &target.minimizers {
-                set.extend(target_set.iter());
-            }
+    // Process targets file OR skip if including all reads
+    let (targets_minimizers, targets_time) = if config.include_all_reads {
+        if !config.quiet {
+            eprintln!("Targets: none (target filtering disabled)");
         }
-        MinimizerSet::U64(set)
+        // Create empty set - won't be used
+        use crate::containment::RapidHashSet;
+        let empty_set = if config.kmer_length <= 32 {
+            MinimizerSet::U64(RapidHashSet::default())
+        } else {
+            MinimizerSet::U128(RapidHashSet::default())
+        };
+        (Arc::new(empty_set), std::time::Duration::from_secs(0))
     } else {
-        use crate::containment::RapidHashSet;
-        let mut set = RapidHashSet::default();
-        for target in &targets {
-            if let MinimizerSet::U128(target_set) = &target.minimizers {
-                set.extend(target_set.iter());
-            }
+        // Process targets file
+        let targets_start = Instant::now();
+        let targets = process_targets_file(
+            &config.targets_path,
+            config.kmer_length,
+            config.window_size,
+            config.quiet,
+        )?;
+        let targets_time = targets_start.elapsed();
+
+        // Build set of all unique minimizers across targets
+        if !config.quiet {
+            eprint!("Building minimizer set…\r");
         }
-        MinimizerSet::U128(set)
+        let targets_minimizers = if config.kmer_length <= 32 {
+            use crate::containment::RapidHashSet;
+            let mut set = RapidHashSet::default();
+            for target in &targets {
+                if let MinimizerSet::U64(target_set) = &target.minimizers {
+                    set.extend(target_set.iter());
+                }
+            }
+            MinimizerSet::U64(set)
+        } else {
+            use crate::containment::RapidHashSet;
+            let mut set = RapidHashSet::default();
+            for target in &targets {
+                if let MinimizerSet::U128(target_set) = &target.minimizers {
+                    set.extend(target_set.iter());
+                }
+            }
+            MinimizerSet::U128(set)
+        };
+
+        let total_target_minimizers = targets_minimizers.len();
+        let total_bp: usize = targets.iter().map(|t| t.length).sum();
+
+        if !config.quiet {
+            eprint!("\x1B[2K\r"); // Clear line
+            eprintln!(
+                "Targets: {} records ({}), {} unique minimizers",
+                targets.len(),
+                format_bp(total_bp),
+                total_target_minimizers
+            );
+        }
+
+        (Arc::new(targets_minimizers), targets_time)
     };
-
-    let total_target_minimizers = targets_minimizers.len();
-    let total_bp: usize = targets.iter().map(|t| t.length).sum();
-
-    if !config.quiet {
-        eprint!("\x1B[2K\r"); // Clear line
-        eprintln!(
-            "Targets: {} records ({}), {} unique minimizers",
-            targets.len(),
-            format_bp(total_bp),
-            total_target_minimizers
-        );
-    }
-
-    let targets_minimizers = Arc::new(targets_minimizers);
 
     // Process each sample in parallel
     use rayon::prelude::*;
@@ -531,7 +558,11 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
     // Create report
     let report = LengthHistogramReport {
         version: format!("grate {}", version),
-        targets_file: config.targets_path.to_string_lossy().to_string(),
+        targets_file: if config.include_all_reads {
+            "none (target filtering disabled)".to_string()
+        } else {
+            config.targets_path.to_string_lossy().to_string()
+        },
         parameters: LengthHistogramParameters {
             kmer_length: config.kmer_length,
             window_size: config.window_size,
