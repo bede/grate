@@ -86,12 +86,12 @@ def parse_histogram(hist_data):
 def main():
     parser = argparse.ArgumentParser(description="Plot Grate minimizer abundance histograms")
     parser.add_argument("input_file", help="Input JSON or CSV file containing histogram data")
-    parser.add_argument("--output-plot", help="Output plot filename (default: <input_prefix>_hist.png)")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
-    parser.add_argument("--title", default="Minimizer abundance histograms",
+    parser.add_argument("-o", "--output", help="Output plot filename (default: <input_prefix>-hist.png)")
+    parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing output files")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("-t", "--title", default="Minimizer abundance histograms",
                         help="Plot title (default: %(default)s)")
-    parser.add_argument("--short-names", action="store_true",
+    parser.add_argument("-s", "--short-names", action="store_true",
                         help="Remove accession prefix (before first space) from target names")
     parser.add_argument("--max-depth", type=int, default=None,
                         help="Maximum depth to display (default: auto-detect)")
@@ -99,7 +99,7 @@ def main():
                         help="Minimum depth to display (default: 1, excludes zero-depth)")
     parser.add_argument("--log-scale", action="store_true",
                         help="Use log scale for y-axis")
-    parser.add_argument("--bandwidth", type=float, default=1.0,
+    parser.add_argument("-b", "--bandwidth", type=float, default=1.0,
                         help="Bandwidth for kernel density estimation smoothing (default: 1.0)")
 
     args = parser.parse_args()
@@ -107,12 +107,12 @@ def main():
     # Auto-generate output filename from input prefix if not specified
     input_filename = os.path.basename(args.input_file)
     input_prefix = os.path.splitext(input_filename)[0]
-    if args.output_plot is None:
-        args.output_plot = f"{input_prefix}-hist.png"
+    if args.output is None:
+        args.output = f"{input_prefix}-hist.png"
 
     # Check if output file exists and require --force to overwrite
-    if os.path.exists(args.output_plot) and not args.force:
-        print(f"ERROR: Output file already exists: {args.output_plot}")
+    if os.path.exists(args.output) and not args.force:
+        print(f"ERROR: Output file already exists: {args.output}")
         print("Use --force to overwrite existing files")
         sys.exit(1)
 
@@ -277,8 +277,8 @@ def main():
             .configure_title(fontSize=14)
         )
 
-        chart.save(args.output_plot, scale_factor=2.0)
-        print(f"Plot saved to: {args.output_plot}")
+        chart.save(args.output, scale_factor=2.0)
+        print(f"Plot saved to: {args.output}")
 
     except Exception as e:
         print(f"Error creating plot: {e}")

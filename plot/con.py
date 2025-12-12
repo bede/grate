@@ -24,16 +24,16 @@ def natural_sort_key(text):
 def main():
     parser = argparse.ArgumentParser(description="Plot Grate CSV file (single CSV; one or many samples)")
     parser.add_argument("input_csv", help="Input CSV file containing one or many samples (must include a sample column)")
-    parser.add_argument("--output-plot", help="Output plot filename (default: <input_prefix>.png)")
-    parser.add_argument("--force", action="store_true", help="Overwrite existing output files")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
-    parser.add_argument("--title", default="Containment analysis (Grate)",
+    parser.add_argument("-o", "--output", help="Output plot filename (default: <input_prefix>.png)")
+    parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing output files")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("-t", "--title", default="Containment analysis (Grate)",
                         help="Plot title (default: %(default)s)")
-    parser.add_argument("--short-names", action="store_true",
+    parser.add_argument("-s", "--short-names", action="store_true",
                         help="Remove accession prefix (before first space) from target names")
     parser.add_argument("--sample-column", default="sample",
                         help="Name of the column that identifies samples (default: 'sample')")
-    parser.add_argument("--abundance-threshold", type=int, default=1,
+    parser.add_argument("-a", "--abundance-threshold", type=int, default=1,
                         help="Abundance threshold for containment column to plot (default: %(default)s for containment1)")
     parser.add_argument("--no-depth", action="store_true",
                         help="Disable depth labels on the plot")
@@ -46,12 +46,12 @@ def main():
     # Use only the filename (not path) and output to current directory
     input_filename = os.path.basename(args.input_csv)
     input_prefix = os.path.splitext(input_filename)[0]
-    if args.output_plot is None:
-        args.output_plot = f"{input_prefix}.png"
+    if args.output is None:
+        args.output = f"{input_prefix}.png"
 
     # Check if output files exist and require --force to overwrite
-    if os.path.exists(args.output_plot) and not args.force:
-        print(f"ERROR: Output file already exists: {args.output_plot}")
+    if os.path.exists(args.output) and not args.force:
+        print(f"ERROR: Output file already exists: {args.output}")
         print("Use --force to overwrite existing file")
         sys.exit(1)
 
@@ -191,8 +191,8 @@ def main():
             .resolve_scale(y="shared")
         )
 
-        chart.save(args.output_plot, scale_factor=2.0)
-        print(f"Plot saved to: {args.output_plot}")
+        chart.save(args.output, scale_factor=2.0)
+        print(f"Plot saved to: {args.output}")
 
     except Exception as e:
         print(f"Error creating plot: {e}")

@@ -1,0 +1,232 @@
+#!/usr/bin/env -S uv run
+# /// script
+# dependencies = [
+#   "pandas",
+#   "altair",
+#   "vl-convert-python",
+# ]
+# ///
+
+import argparse
+import json
+import os
+import re
+import sys
+
+import altair as alt
+import pandas as pd
+
+
+def natural_sort_key(text):
+    """Generate a sort key for natural sorting of strings with numbers."""
+    return tuple(int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", str(text)))
+
+
+def load_data(input_file):
+    """Load length histogram data from JSON file."""
+    with open(input_file, 'r') as f:
+        data = json.load(f)
+
+    rows = []
+    # Extract data from JSON structure
+    for sample in data.get("samples", []):
+        sample_name = sample.get("sample_name", "unknown")
+        length_histogram = sample.get("length_histogram", [])
+
+        # Expand histogram to long format
+        for length, count in length_histogram:
+            rows.append({
+                "sample": sample_name,
+                "length": length,
+                "count": count
+            })
+
+    return pd.DataFrame(rows)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Plot read length distributions from Grate len output"
+    )
+    parser.add_argument("input_file", help="Input JSON file from 'grate len'")
+    parser.add_argument("-o", "--output", help="Output PNG filename (default: <input_prefix>-lenhist.png)")
+    parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing output files")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
+    parser.add_argument("-t", "--title", default="Read length distribution",
+                        help="Plot title (default: %(default)s)")
+    parser.add_argument("--log-scale", action="store_true",
+                        help="Use log scale for y-axis")
+    parser.add_argument("--min-length", type=int, default=None,
+                        help="Minimum read length to display")
+    parser.add_argument("--max-length", type=int, default=None,
+                        help="Maximum read length to display")
+    parser.add_argument("--facet", action="store_true",
+                        help="Facet by sample instead of overlaying")
+    parser.add_argument("-b", "--bandwidth", type=float, default=100.0,
+                        help="Bandwidth for kernel density estimation smoothing (default: 100.0)")
+
+    args = parser.parse_args()
+
+    # Auto-generate output filename from input prefix if not specified
+    input_filename = os.path.basename(args.input_file)
+    input_prefix = os.path.splitext(input_filename)[0]
+
+    if args.output is None:
+        args.output = f"{input_prefix}-lenhist.png"
+
+    # Check if output file exists and require --force to overwrite
+    if os.path.exists(args.output) and not args.force:
+        print(f"ERROR: Output file already exists: {args.output}")
+        print("Use --force to overwrite existing files")
+        sys.exit(1)
+
+    try:
+        # --- Load & validate ---
+        if not os.path.exists(args.input_file):
+            print(f"ERROR: File {args.input_file} does not exist")
+            sys.exit(1)
+
+        if os.path.getsize(args.input_file) == 0:
+            print(f"ERROR: File {args.input_file} is empty")
+            sys.exit(1)
+
+        df = load_data(args.input_file)
+
+        if args.debug:
+            print(f"\n{args.input_file}:")
+            print(f"  Columns: {list(df.columns)}")
+            print(f"  Shape: {df.shape}")
+            print("  First few rows:")
+            print(df.head())
+
+        if df.empty:
+            print("ERROR: Input file has no data")
+            sys.exit(1)
+
+        # Ensure required columns exist
+        required_cols = {"sample", "length", "count"}
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            print(f"ERROR: Data missing required columns: {', '.join(missing)}")
+            sys.exit(1)
+
+        # Apply length filters
+        if args.min_length is not None:
+            df = df[df["length"] >= args.min_length]
+        if args.max_length is not None:
+            df = df[df["length"] <= args.max_length]
+
+        if df.empty:
+            print("ERROR: No data remaining after applying length filters")
+            sys.exit(1)
+
+        # Expand data for KDE: repeat each length by its count
+        expanded_rows = []
+        for _, row in df.iterrows():
+            for _ in range(int(row["count"])):
+                expanded_rows.append({
+                    "sample": row["sample"],
+                    "length": row["length"]
+                })
+
+        kde_df = pd.DataFrame(expanded_rows)
+
+        # Add total count per group for scaling density to frequency
+        kde_df['total_count'] = kde_df.groupby(['sample'])['length'].transform('count')
+
+        if args.debug:
+            print(f"\nExpanded data for KDE:")
+            print(f"  Shape: {kde_df.shape}")
+            print(f"  Total reads: {len(kde_df)}")
+
+        if args.debug:
+            print(f"\nFiltered data:")
+            print(f"  Shape: {df.shape}")
+            print(f"  Length range: {df['length'].min()} to {df['length'].max()}")
+            print(f"  Samples: {df['sample'].unique().tolist()}")
+
+        # Ordering
+        sample_order = sorted(df["sample"].dropna().astype(str).unique(), key=natural_sort_key)
+
+        # --- Plot ---
+        alt.data_transformers.enable("json")
+
+        # Determine y-axis scale
+        y_scale = alt.Scale(type="log") if args.log_scale else alt.Scale(type="linear")
+
+        # Base chart with KDE
+        base = (
+            alt.Chart(kde_df)
+            .transform_density(
+                density="length",
+                groupby=["sample", "total_count"],
+                bandwidth=args.bandwidth,
+                as_=["length", "density"]
+            )
+            .transform_calculate(
+                frequency="datum.density * datum.total_count"
+            )
+            .mark_line(strokeWidth=2, interpolate="monotone")
+            .encode(
+                x=alt.X("length:Q",
+                       title="Read length (bp)",
+                       scale=alt.Scale(zero=False)),
+                y=alt.Y("frequency:Q",
+                       title="Frequency",
+                       scale=y_scale),
+                color=alt.Color("sample:N",
+                              title="Sample",
+                              sort=sample_order,
+                              scale=alt.Scale(scheme="category20")),
+                tooltip=[
+                    alt.Tooltip("sample:N", title="Sample"),
+                    alt.Tooltip("length:Q", title="Length (bp)", format=".1f"),
+                    alt.Tooltip("frequency:Q", title="Frequency", format=",.1f"),
+                ],
+            )
+        )
+
+        if args.facet:
+            # Faceted by sample
+            chart = (
+                base.properties(
+                    width=700,
+                    height=200
+                )
+                .facet(
+                    row=alt.Row("sample:N",
+                               title=None,
+                               sort=sample_order,
+                               header=alt.Header(labelAlign="left", labelAnchor="start", labelFontSize=12))
+                )
+                .resolve_scale(y="independent")
+                .properties(title=args.title)
+                .configure_legend(titleFontSize=12, labelFontSize=11)
+                .configure_axis(labelFontSize=11, titleFontSize=12)
+                .configure_title(fontSize=14)
+            )
+        else:
+            # Overlay all samples on one plot
+            chart = (
+                base.properties(
+                    width=800,
+                    height=500,
+                    title=args.title
+                )
+                .configure_legend(titleFontSize=12, labelFontSize=11)
+                .configure_axis(labelFontSize=11, titleFontSize=12)
+                .configure_title(fontSize=14)
+            )
+
+        chart.save(args.output, scale_factor=2.0)
+        print(f"Plot saved to: {args.output}")
+
+    except Exception as e:
+        print(f"Error creating plot: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
