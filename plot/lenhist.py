@@ -56,10 +56,8 @@ def main():
                         help="Plot title (default: %(default)s)")
     parser.add_argument("--log-scale", action="store_true",
                         help="Use log scale for y-axis")
-    parser.add_argument("--min-length", type=int, default=None,
-                        help="Minimum read length to display")
-    parser.add_argument("--max-length", type=int, default=None,
-                        help="Maximum read length to display")
+    parser.add_argument("--max-len", type=int, default=None,
+                        help="Maximum x-axis limit")
     parser.add_argument("--facet", action="store_true",
                         help="Facet by sample instead of overlaying")
     parser.add_argument("-b", "--bandwidth", type=float, default=100.0,
@@ -110,16 +108,6 @@ def main():
             print(f"ERROR: Data missing required columns: {', '.join(missing)}")
             sys.exit(1)
 
-        # Apply length filters
-        if args.min_length is not None:
-            df = df[df["length"] >= args.min_length]
-        if args.max_length is not None:
-            df = df[df["length"] <= args.max_length]
-
-        if df.empty:
-            print("ERROR: No data remaining after applying length filters")
-            sys.exit(1)
-
         # Expand data for KDE: repeat each length by its count
         expanded_rows = []
         for _, row in df.iterrows():
@@ -138,12 +126,8 @@ def main():
             print(f"\nExpanded data for KDE:")
             print(f"  Shape: {kde_df.shape}")
             print(f"  Total reads: {len(kde_df)}")
-
-        if args.debug:
-            print(f"\nFiltered data:")
-            print(f"  Shape: {df.shape}")
-            print(f"  Length range: {df['length'].min()} to {df['length'].max()}")
-            print(f"  Samples: {df['sample'].unique().tolist()}")
+            print(f"  Length range: {kde_df['length'].min()} to {kde_df['length'].max()}")
+            print(f"  Samples: {kde_df['sample'].unique().tolist()}")
 
         # Ordering
         sample_order = sorted(df["sample"].dropna().astype(str).unique(), key=natural_sort_key)
@@ -153,6 +137,11 @@ def main():
 
         # Determine y-axis scale
         y_scale = alt.Scale(type="log") if args.log_scale else alt.Scale(type="linear")
+
+        # Determine x-axis scale
+        x_scale_kwargs = {"zero": False}
+        if args.max_len is not None:
+            x_scale_kwargs["domain"] = [0, args.max_len]
 
         # Base chart with KDE
         base = (
@@ -166,11 +155,11 @@ def main():
             .transform_calculate(
                 frequency="datum.density * datum.total_count"
             )
-            .mark_line(strokeWidth=2, interpolate="monotone")
+            .mark_line(strokeWidth=2, interpolate="monotone", clip=True)
             .encode(
                 x=alt.X("length:Q",
                        title="Read length (bp)",
-                       scale=alt.Scale(zero=False)),
+                       scale=alt.Scale(**x_scale_kwargs)),
                 y=alt.Y("frequency:Q",
                        title="Frequency",
                        scale=y_scale),
