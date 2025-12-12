@@ -10,16 +10,10 @@
 import argparse
 import json
 import os
-import re
 import sys
 
 import altair as alt
 import pandas as pd
-
-
-def natural_sort_key(text):
-    """Generate a sort key for natural sorting of strings with numbers."""
-    return tuple(int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", str(text)))
 
 
 def load_data(input_file):
@@ -150,10 +144,8 @@ def main():
             df["display_name"] = df["target"].apply(
                 lambda x: str(x).split(" ", 1)[1] if isinstance(x, str) and " " in x else x
             )
-            df["sort_key"] = df["display_name"].apply(natural_sort_key)
         else:
             df["display_name"] = df["target"]
-            df["sort_key"] = df["target"].apply(natural_sort_key)
 
         # Parse histogram data and expand to long format
         rows = []
@@ -174,7 +166,6 @@ def main():
                     rows.append({
                         "target": row["target"],
                         "display_name": row["display_name"],
-                        "sort_key": row["sort_key"],
                         "sample": row["sample"],
                         "depth": depth,
                         "count": count
@@ -202,7 +193,6 @@ def main():
                 expanded_rows.append({
                     "target": row["target"],
                     "display_name": row["display_name"],
-                    "sort_key": row["sort_key"],
                     "sample": row["sample"],
                     "depth": row["depth"]
                 })
@@ -217,9 +207,9 @@ def main():
             print(f"  Shape: {kde_df.shape}")
             print(f"  Total minimizers: {len(kde_df)}")
 
-        # Ordering
-        sample_order = sorted(kde_df["sample"].dropna().astype(str).unique(), key=natural_sort_key)
-        target_order = sorted(kde_df["display_name"].dropna().astype(str).unique(), key=natural_sort_key)
+        # Ordering: preserve data order (order of first appearance in data file)
+        sample_order = kde_df["sample"].dropna().astype(str).unique().tolist()
+        target_order = kde_df["display_name"].dropna().astype(str).unique().tolist()
 
         # --- Plot ---
         alt.data_transformers.enable("json")

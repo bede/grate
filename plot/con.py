@@ -9,16 +9,10 @@
 
 import argparse
 import os
-import re
 import sys
 
 import altair as alt
 import pandas as pd
-
-
-def natural_sort_key(text):
-    """Generate a sort key for natural sorting of strings with numbers."""
-    return tuple(int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", str(text)))
 
 
 def main():
@@ -120,21 +114,22 @@ def main():
             plot_df["display_name"] = plot_df["target"].apply(
                 lambda x: str(x).split(" ", 1)[1] if isinstance(x, str) and " " in x else x
             )
-            plot_df["sort_key"] = plot_df["display_name"].apply(natural_sort_key)
         else:
             plot_df["display_name"] = plot_df["target"]
-            plot_df["sort_key"] = plot_df["target"].apply(natural_sort_key)
 
-        # Ordering
-        plot_df = plot_df.sort_values(["sort_key", sample_col])
-        plot_df = plot_df.drop("sort_key", axis=1)
+        # Ordering: preserve data order (order of first appearance in CSV)
+        # Use pandas .unique() which preserves order of appearance
+        sample_order = plot_df[sample_col].dropna().astype(str).unique().tolist()
+        target_order = plot_df["display_name"].dropna().astype(str).unique().tolist()
 
-        sample_order = sorted(plot_df[sample_col].dropna().astype(str).unique(), key=natural_sort_key)
-        target_order = sorted(plot_df["display_name"].dropna().astype(str).unique(), key=natural_sort_key)
+        # Sort dataframe by target order for consistent bar grouping
+        plot_df["target_idx"] = plot_df["display_name"].apply(lambda x: target_order.index(x) if x in target_order else -1)
+        plot_df = plot_df.sort_values(["target_idx", sample_col])
+        plot_df = plot_df.drop("target_idx", axis=1)
 
-        # Text labels for median depth
+        # Text labels for median abundance
         plot_df["depth_label"] = plot_df["median_nz_abundance"].apply(
-            lambda x: f"med(depth): {x:.0f}" if pd.notna(x) and float(x) > 0 else ""
+            lambda x: f"med(abund): {x:.0f}" if pd.notna(x) and float(x) > 0 else ""
         )
 
         # --- Plot ---

@@ -10,16 +10,10 @@
 import argparse
 import json
 import os
-import re
 import sys
 
 import altair as alt
 import pandas as pd
-
-
-def natural_sort_key(text):
-    """Generate a sort key for natural sorting of strings with numbers."""
-    return tuple(int(c) if c.isdigit() else c.lower() for c in re.split(r"(\d+)", str(text)))
 
 
 def load_data(input_file):
@@ -129,8 +123,8 @@ def main():
             print(f"  Length range: {kde_df['length'].min()} to {kde_df['length'].max()}")
             print(f"  Samples: {kde_df['sample'].unique().tolist()}")
 
-        # Ordering
-        sample_order = sorted(df["sample"].dropna().astype(str).unique(), key=natural_sort_key)
+        # Ordering: preserve data order (order of first appearance in data file)
+        sample_order = df["sample"].dropna().astype(str).unique().tolist()
 
         # --- Plot ---
         alt.data_transformers.enable("json")

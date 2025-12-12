@@ -1129,7 +1129,7 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
         None
     };
 
-    let sample_results: Vec<SampleResults> = config
+    let mut sample_results_with_idx: Vec<(usize, SampleResults)> = config
         .reads_paths
         .par_iter()
         .zip(&config.sample_names)
@@ -1155,9 +1155,16 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
                 );
             }
 
-            result
+            result.map(|r| (idx, r))
         })
         .collect::<Result<Vec<_>>>()?;
+
+    // Sort by original index to maintain CLI argument order
+    sample_results_with_idx.sort_by_key(|(idx, _)| *idx);
+    let sample_results: Vec<SampleResults> = sample_results_with_idx
+        .into_iter()
+        .map(|(_, result)| result)
+        .collect();
 
     if is_multisample && !config.quiet {
         eprintln!();
