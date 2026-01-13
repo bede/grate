@@ -33,6 +33,8 @@ def main():
                         help="Disable depth labels on the plot")
     parser.add_argument("--totals", action="store_true",
                         help="Plot only TOTAL rows (aggregate stats per sample)")
+    parser.add_argument("--totals-label",
+                        help="Custom label to replace 'TOTAL' when plotting totals")
 
     args = parser.parse_args()
 
@@ -116,6 +118,10 @@ def main():
             )
         else:
             plot_df["display_name"] = plot_df["target"]
+
+        # Replace TOTAL label if custom label provided
+        if args.totals_label:
+            plot_df["display_name"] = plot_df["display_name"].replace("TOTAL", args.totals_label)
 
         # Ordering: preserve data order (order of first appearance in CSV)
         # Use pandas .unique() which preserves order of appearance

@@ -278,7 +278,7 @@ enum Commands {
         #[arg(short = 'q', long = "quiet", default_value_t = false)]
         quiet: bool,
     },
-    /// Generate length histogram for reads with minimizer hits
+    /// Generate length histogram for reads with one or more minimizer hits to target sequences
     Len {
         /// Path to fasta file containing target sequence record(s) (- to disable target filtering)
         targets: PathBuf,
