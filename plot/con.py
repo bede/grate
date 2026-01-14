@@ -35,6 +35,8 @@ def main():
                         help="Plot only TOTAL rows (aggregate stats per sample)")
     parser.add_argument("--totals-label",
                         help="Custom label to replace 'TOTAL' when plotting totals")
+    parser.add_argument("--colours", default="category20",
+                        help="Altair colour scheme (default: %(default)s)")
 
     args = parser.parse_args()
 
@@ -151,7 +153,7 @@ def main():
                     f"{sample_col}:N",
                     sort=sample_order,
                     title="",
-                    scale=alt.Scale(scheme="category20"),
+                    scale=alt.Scale(scheme=args.colours),
                 ),
                 yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
                 tooltip=[
