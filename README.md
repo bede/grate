@@ -43,11 +43,13 @@ Run the plotting scripts with [uv](https://docs.astral.sh/uv/) to automatically 
 - `plot/con.py` - Containment bar chart from CSV output
 - `plot/minhist.py` - Abundance distribution histograms from JSON output (one row per target, one line per sample)
 
+![Example containment plot](data/multi.png)
+
 ### CLI Reference
 
 ```bash
 $ grate con -h
-Calculate minimizer containment & abundance in fastx files or directories thereof
+Streaming containment and abundance estimation using minimizers
 
 Usage: grate con [OPTIONS] <TARGETS> <SAMPLES>...
 
