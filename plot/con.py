@@ -17,26 +17,38 @@ import pandas as pd
 
 def main():
     parser = argparse.ArgumentParser(description="Plot Grate CSV file (single CSV; one or many samples)")
+    # Input/output
     parser.add_argument("input_csv", help="Input CSV file containing one or many samples (must include a sample column)")
     parser.add_argument("-o", "--output", help="Output plot filename (default: <input_prefix>.png)")
     parser.add_argument("-f", "--force", action="store_true", help="Overwrite existing output files")
-    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
-    parser.add_argument("-t", "--title", default="Containment analysis (Grate)",
-                        help="Plot title (default: %(default)s)")
-    parser.add_argument("-s", "--short-names", action="store_true",
-                        help="Remove accession prefix (before first space) from target names")
+    parser.add_argument("--format", choices=["png", "html"], default="png",
+                        help="Output format (default: %(default)s)")
+    # Data selection
+    parser.add_argument("-s", "--samples", help="Only plot these samples (comma-separated)")
     parser.add_argument("--sample-column", default="sample",
                         help="Name of the column that identifies samples (default: 'sample')")
-    parser.add_argument("-a", "--abundance-threshold", type=int, default=1,
-                        help="Abundance threshold for containment column to plot (default: %(default)s for containment1)")
-    parser.add_argument("--no-depth", action="store_true",
-                        help="Disable depth labels on the plot")
     parser.add_argument("--totals", action="store_true",
                         help="Plot only TOTAL rows (aggregate stats per sample)")
     parser.add_argument("--totals-label",
                         help="Custom label to replace 'TOTAL' when plotting totals")
-    parser.add_argument("--colours", default="category20",
+    parser.add_argument("-a", "--abundance-threshold", type=int, default=1,
+                        help="Abundance threshold for containment column to plot (default: %(default)s for containment1)")
+    # Plot mode
+    parser.add_argument("-m", "--mode", choices=["bar", "scatter"], default="bar",
+                        help="Plot mode: 'bar' for bar chart, 'scatter' for containment vs abundance (default: %(default)s)")
+    parser.add_argument("--log-y", action="store_true",
+                        help="Use logarithmic scale for y-axis (scatter mode only)")
+    # Appearance
+    parser.add_argument("-t", "--title", default="Containment analysis (Grate)",
+                        help="Plot title (default: %(default)s)")
+    parser.add_argument("--short-names", action="store_true",
+                        help="Remove accession prefix (before first space) from target names")
+    parser.add_argument("-c", "--colours", default="category20",
                         help="Altair colour scheme (default: %(default)s)")
+    parser.add_argument("--no-depth", action="store_true",
+                        help="Disable depth labels on the plot")
+    # Debug
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debug output")
 
     args = parser.parse_args()
 
@@ -45,7 +57,14 @@ def main():
     input_filename = os.path.basename(args.input_csv)
     input_prefix = os.path.splitext(input_filename)[0]
     if args.output is None:
-        args.output = f"{input_prefix}.png"
+        args.output = f"{input_prefix}.{args.format}"
+    else:
+        # Infer format from output extension
+        ext = os.path.splitext(args.output)[1].lower()
+        if ext == ".html":
+            args.format = "html"
+        elif ext == ".png":
+            args.format = "png"
 
     # Check if output files exist and require --force to overwrite
     if os.path.exists(args.output) and not args.force:
@@ -113,6 +132,14 @@ def main():
             print("ERROR: No data to plot after filtering")
             sys.exit(1)
 
+        # Filter to specific samples if requested
+        if args.samples:
+            samples_list = [s.strip() for s in args.samples.split(",")]
+            plot_df = plot_df[plot_df[sample_col].isin(samples_list)]
+            if plot_df.empty:
+                print(f"ERROR: No matching samples found. Available: {df[sample_col].unique().tolist()}")
+                sys.exit(1)
+
         # Display name tweaks
         if args.short_names:
             plot_df["display_name"] = plot_df["target"].apply(
@@ -143,56 +170,89 @@ def main():
         # --- Plot ---
         alt.data_transformers.enable("json")
 
-        bars = (
-            alt.Chart(plot_df)
-            .mark_bar(size=6)
-            .encode(
-                y=alt.Y("display_name:N", title="", sort=target_order),
-                x=alt.X(f"{containment_col}:Q", title=f"Containment at depth ≥ {args.abundance_threshold}", scale=alt.Scale(domain=[0, 1])),
-                color=alt.Color(
-                    f"{sample_col}:N",
-                    sort=sample_order,
-                    title="",
-                    scale=alt.Scale(scheme=args.colours),
-                ),
-                yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
-                tooltip=[
-                    "target:N",
-                    alt.Tooltip(f"{sample_col}:N", title="sample"),
-                    alt.Tooltip(f"{containment_col}:Q", title="containment"),
-                    alt.Tooltip(f"{hits_col}:Q", title="hits", format=",.0f"),
-                    alt.Tooltip("median_nz_abundance:Q", title="median_nz_abundance"),
-                    alt.Tooltip("length_bp:Q", title="length_bp", format=",.0f") if "length_bp" in plot_df.columns else alt.value(None),
-                    alt.Tooltip("contained_minimizers:Q", title="contained_minimizers", format=",.0f")
-                    if "contained_minimizers" in plot_df.columns else alt.value(None),
-                ],
-            )
-        )
-
-        # Conditionally add depth labels
-        if not args.no_depth:
-            text_labels = (
+        if args.mode == "scatter":
+            # Scatter plot: containment vs abundance
+            y_scale = alt.Scale(type="log") if args.log_y else alt.Scale()
+            selection = alt.selection_point(fields=[sample_col], bind="legend")
+            chart = (
                 alt.Chart(plot_df)
-                .mark_text(align="left", baseline="middle", dx=5, fontSize=7, color="black")
+                .mark_circle(size=60)
                 .encode(
-                    y=alt.Y("display_name:N", sort=target_order),
-                    yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
-                    x=alt.value(0),
-                    text="depth_label:N",
+                    x=alt.X(f"{containment_col}:Q", title=f"Containment at depth ≥ {args.abundance_threshold}", scale=alt.Scale(domain=[0, 1])),
+                    y=alt.Y("median_nz_abundance:Q", title="Median non-zero abundance", scale=y_scale),
+                    color=alt.Color(
+                        f"{sample_col}:N",
+                        sort=sample_order,
+                        title="",
+                        scale=alt.Scale(scheme=args.colours),
+                    ),
+                    opacity=alt.condition(selection, alt.value(1), alt.value(0.1)),
+                    tooltip=[
+                        alt.Tooltip("target:N", title="Target"),
+                        alt.Tooltip(f"{sample_col}:N", title="Sample"),
+                        alt.Tooltip("length_bp:Q", title="Length", format=",.0f"),
+                        alt.Tooltip(f"{containment_col}:Q", title="Containment"),
+                        alt.Tooltip("median_nz_abundance:Q", title="Median abundance"),
+                    ],
                 )
+                .add_params(selection)
+                .properties(title=args.title, width=450, height=400)
+                .configure_legend(titleFontSize=14, labelFontSize=12, symbolSize=150)
+                .configure_axis(labelFontSize=12, titleFontSize=14)
+                .configure_title(fontSize=14)
             )
-            chart = bars + text_labels
         else:
-            chart = bars
+            # Bar chart (default)
+            selection = alt.selection_point(fields=[sample_col], bind="legend")
+            bars = (
+                alt.Chart(plot_df)
+                .mark_bar(size=6)
+                .encode(
+                    y=alt.Y("display_name:N", title="", sort=target_order),
+                    x=alt.X(f"{containment_col}:Q", title=f"Containment at depth ≥ {args.abundance_threshold}", scale=alt.Scale(domain=[0, 1])),
+                    color=alt.Color(
+                        f"{sample_col}:N",
+                        sort=sample_order,
+                        title="",
+                        scale=alt.Scale(scheme=args.colours),
+                    ),
+                    yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
+                    opacity=alt.condition(selection, alt.value(1), alt.value(0.1)),
+                    tooltip=[
+                        alt.Tooltip("target:N", title="Target"),
+                        alt.Tooltip(f"{sample_col}:N", title="Sample"),
+                        alt.Tooltip("length_bp:Q", title="Length", format=",.0f"),
+                        alt.Tooltip(f"{containment_col}:Q", title="Containment"),
+                        alt.Tooltip("median_nz_abundance:Q", title="Median abundance"),
+                    ],
+                )
+                .add_params(selection)
+            )
 
-        chart = (
-            chart
-            .properties(title=args.title, width=450, height=alt.Step(7))
-            .configure_legend(titleFontSize=14, labelFontSize=12, symbolSize=150)
-            .configure_axis(labelFontSize=12, titleFontSize=14)
-            .configure_title(fontSize=14)
-            .resolve_scale(y="shared")
-        )
+            # Conditionally add depth labels
+            if not args.no_depth:
+                text_labels = (
+                    alt.Chart(plot_df)
+                    .mark_text(align="left", baseline="middle", dx=5, fontSize=7, color="black")
+                    .encode(
+                        y=alt.Y("display_name:N", sort=target_order),
+                        yOffset=alt.YOffset(f"{sample_col}:N", sort=sample_order),
+                        x=alt.value(0),
+                        text="depth_label:N",
+                    )
+                )
+                chart = bars + text_labels
+            else:
+                chart = bars
+
+            chart = (
+                chart
+                .properties(title=args.title, width=450, height=alt.Step(7))
+                .configure_legend(titleFontSize=14, labelFontSize=12, symbolSize=150)
+                .configure_axis(labelFontSize=12, titleFontSize=14)
+                .configure_title(fontSize=14)
+                .resolve_scale(y="shared")
+            )
 
         chart.save(args.output, scale_factor=2.0)
         print(f"Plot saved to: {args.output}")
