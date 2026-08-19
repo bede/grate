@@ -40,6 +40,11 @@ uv run plot/query.py query.tsv --mode scatter -o query-scatter.html  # Interacti
 skope lenhist groups.sk s1.fq.gz s2.fq.gz > len.tsv
 uv run plot/lenhist.py len.tsv
 
+# Targets can equally be a fastx file (one group), a directory (one group per child),
+# or -i to make each fastx record its own group
+skope lenhist refs.fa s1.fq.gz > len.tsv
+skope lenhist -i refs.fa s1.fq.gz > len.tsv
+
 # Or without group filtering — all reads go to a single "all" bucket
 skope lenhist - s1.fq.gz s2.fq.gz > len.tsv
 
@@ -52,9 +57,15 @@ skope query refs.fa -b background.fa reads.fq.gz
 skope index build-query refs.fa -b background.fa -o refs.sk
 skope query refs.sk reads.fq.gz
 
+# The build commands take targets on stdin too (they have no samples competing for it)
+zstdcat refs.fa.zst | skope index build-query - -o refs.sk
+
 # Build a classification index (.sk) and classify reads against it
 skope index build-classify groups/ -o groups.sk
 skope classify groups.sk reads.fq.gz
+# …or classify straight from fastx, skipping the index
+skope classify groups/ reads.fq.gz
+skope classify refs.fa reads.fq.gz
 
 # View help for any command
 skope query -h
@@ -84,51 +95,33 @@ Run the plotting scripts with [uv](https://docs.astral.sh/uv/) to automatically 
 
 ```bash
 $ skope query -h
-Estimate syncmer containment & abundance in fastx file(s) or directories thereof
+Estimate target containment & abundance in fastx file(s) or directories thereof using open syncmers
 
 Usage: skope query [OPTIONS] <TARGETS> <SAMPLES>...
 
 Arguments:
-  <TARGETS>     Path to fastx file (treated as single target unless -i set), directory of fastx files/subdirs (one target per child file/subdir), or query index (.sk)
+  <TARGETS>     Path to fastx file (single target unless -i), directory of fastx files/subdirs (one target per child file/subdir) or query index (.sk)
   <SAMPLES>...  Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample
 
 Options:
-  -k, --kmer <K>
-          K-mer length (1-61) [default: 31]
-  -s, --smer <S>
-          S-mer length used for syncmer selection (s < k, s must be odd) [default: 9]
-  -i, --individual
-          Treat each fastx record as separate target (default: merge records into one target named after file)
-  -c, --confidence
-          Report confidence intervals, ANI estimates, and patchiness columns
-  -d, --discriminatory
-          Consider only syncmers unique to each target
-  -p, --positions
-          Collect syncmer positions (implied by --confidence and --dump-syncmers)
-  -f, --fraction <FLOAT>
-          Fraction of target syncmers to keep [0, 1] [default: 1]
-  -a, --abundance-thresholds <INT,...>
-          Comma-separated additional abundance thresholds for containment estimation [default: 10]
-  -b, --background <BACKGROUND>
-          Path to fastx file(s) whose syncmers we wish to drop from our targets
-  -l, --limit <BASES>
-          Terminate processing after approximately this many bases (e.g. 50M, 10G)
-  -t, --threads <THREADS>
-          Number of execution threads (0 = auto) [default: 8]
-  -o, --output <OUTPUT>
-          Path to output file (- for stdout) [default: -]
-  -n, --names <NAME,...>
-          Comma-separated sample names (default is file/dir name without extension)
-      --sort <SORT>
-          Sort displayed results: containment, target, sample, input [default: containment] [possible values: containment, target, sample, input]
-      --dump-syncmers <FILE>
-          Dump selected target syncmers to TSV file (target, position, kmer)
-      --no-total
-          Suppress TOTAL summary rows in output
-  -q, --quiet
-          Suppress progress reporting
-  -h, --help
-          Print help
+  -k, --kmer <K>                        K-mer length (1-61) [default: 31]
+  -s, --smer <S>                        S-mer length used for syncmer selection (s < k, s must be odd) [default: 9]
+  -i, --individual                      Treat each fastx record as separate target (default: merge records into one target)
+  -c, --confidence                      Report confidence intervals, ANI estimates, and patchiness columns
+  -d, --discriminatory                  Consider only syncmers unique to each target
+  -p, --positions                       Collect syncmer positions (implied by --confidence and --dump-syncmers)
+  -f, --fraction <FLOAT>                Fraction of target syncmers to keep [0, 1] [default: 1]
+  -a, --abundance-thresholds <INT,...>  Comma-separated additional abundance thresholds for containment estimation [default: 10]
+  -b, --background <BACKGROUND>         Path to fastx file(s) whose syncmers we wish to drop from our targets
+  -l, --limit <BASES>                   Terminate processing after approximately this many bases (e.g. 50M, 10G)
+  -t, --threads <THREADS>               Number of execution threads (0 = auto) [default: 8]
+  -o, --output <OUTPUT>                 Path to output file (- for stdout) [default: -]
+  -n, --names <NAME,...>                Comma-separated sample names (default is file/dir name without extension)
+      --sort <SORT>                     Sort results [default: containment] [possible values: containment, target, sample, input]
+      --dump-syncmers <FILE>            Dump selected target syncmers to TSV file (target, position, kmer)
+      --no-total                        Suppress TOTAL summary rows in output
+  -q, --quiet                           Suppress progress reporting
+  -h, --help                            Print help
 ```
 
 **Classify** <sup>alpha</sup>
@@ -137,15 +130,16 @@ Options:
 $ skope classify -h
 Classify sequences into groups by syncmer content
 
-Usage: skope classify [OPTIONS] <INDEX> <SAMPLES>...
+Usage: skope classify [OPTIONS] <TARGETS> <SAMPLES>...
 
 Arguments:
-  <INDEX>       Path to .sk classification index file or directory of fastx files/subdirectories (one group per top-level file or directory)
+  <TARGETS>     Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir) or classification index (.sk)
   <SAMPLES>...  Path(s) to fastx files/dirs (- for stdin)
 
 Options:
-  -k, --kmer <K>                       K-mer length (only used when index is a directory) (1-61, must be odd) [default: 31]
-  -s, --smer <S>                       S-mer length (only used when index is a directory) [default: 9]
+  -i, --individual                     Treat each fastx record as a separate group (single fastx file only)
+  -k, --kmer <K>                       K-mer length, ignored when targets is a prebuilt index (1-61, must be odd) [default: 31]
+  -s, --smer <S>                       S-mer length used for open syncmer selection, ignored when targets is a prebuilt index [default: 9]
   -d, --discriminatory                 Consider only syncmers unique to each group
   -a, --abs-threshold <ABS_THRESHOLD>  Minimum absolute number of syncmer hits for a match [default: 1]
   -r, --rel-threshold <REL_THRESHOLD>  Minimum relative proportion (0.0-1.0) of syncmer hits for a match [default: 0]
@@ -154,6 +148,33 @@ Options:
   -o, --output <OUTPUT>                Path to output file (- for stdout) [default: -]
   -n, --names <NAME,...>               Comma-separated sample names (default is file/dir name without extension)
       --per-seq                        Output per-sequence classifications instead of summary
+  -q, --quiet                          Suppress progress reporting
+  -h, --help                           Print help
+```
+
+**Lenhist** <sup>alpha</sup>
+
+```bash
+$ skope lenhist -h
+Generate per-group length histograms based on syncmer classification
+
+Usage: skope lenhist [OPTIONS] <TARGETS> <SAMPLES>...
+
+Arguments:
+  <TARGETS>     Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir), classification index (.sk), or - to disable group filtering (single "all" bucket)
+  <SAMPLES>...  Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample
+
+Options:
+  -i, --individual                     Treat each fastx record as a separate group (single fastx file only)
+  -k, --kmer <K>                       K-mer length, ignored when targets is a prebuilt index (1-61, must be odd) [default: 31]
+  -s, --smer <S>                       S-mer length used for open syncmer selection, ignored when targets is a prebuilt index [default: 9]
+  -d, --discriminatory                 Consider only syncmers unique to each group
+  -a, --abs-threshold <ABS_THRESHOLD>  Minimum absolute number of syncmer hits for a match [default: 1]
+  -r, --rel-threshold <REL_THRESHOLD>  Minimum relative proportion (0.0-1.0) of syncmer hits for a match [default: 0]
+  -l, --limit <BASES>                  Terminate processing after approximately this many bases (e.g. 50M, 10G)
+  -t, --threads <THREADS>              Number of execution threads (0 = auto) [default: 8]
+  -o, --output <OUTPUT>                Path to output file (- for stdout) [default: -]
+  -n, --names <NAME,...>               Comma-separated sample names (default is file/dir name without extension)
   -q, --quiet                          Suppress progress reporting
   -h, --help                           Print help
 ```

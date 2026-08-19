@@ -1,6 +1,6 @@
 use skope::{
     BuildClassifyConfig, ClassifyConfig, ContainmentConfig, LengthHistogramConfig, SortOrder,
-    discover_sequence_groups,
+    discover_target_groups,
 };
 use std::path::PathBuf;
 use tempfile::{NamedTempFile, TempDir};
@@ -32,7 +32,7 @@ fn test_multisample_processing() {
         individual: true,
     };
 
-    assert!(skope::run_containment_analysis(&config).is_ok());
+    assert!(skope::run_query(&config).is_ok());
 }
 
 #[test]
@@ -65,7 +65,7 @@ fn test_multisample_report_structure() {
         individual: true,
     };
 
-    skope::run_containment_analysis(&config).unwrap();
+    skope::run_query(&config).unwrap();
 
     let tsv_str = std::fs::read_to_string(&output_path).unwrap();
     let lines: Vec<&str> = tsv_str.lines().collect();
@@ -159,7 +159,7 @@ fn test_confidence_outputs_ani_and_patchiness_columns() {
         individual: true,
     };
 
-    skope::run_containment_analysis(&config).unwrap();
+    skope::run_query(&config).unwrap();
     let tsv_str = std::fs::read_to_string(temp_output.path()).unwrap();
     let lines: Vec<&str> = tsv_str.lines().collect();
     let header_cols: Vec<&str> = lines[0].split('\t').collect();
@@ -213,7 +213,7 @@ fn test_sort_target() {
         individual: true,
     };
 
-    skope::run_containment_analysis(&config).unwrap();
+    skope::run_query(&config).unwrap();
     let tsv_str = std::fs::read_to_string(temp_output.path()).unwrap();
     let lines: Vec<&str> = tsv_str.lines().collect();
 
@@ -261,7 +261,7 @@ fn test_sort_containment() {
         individual: true,
     };
 
-    skope::run_containment_analysis(&config).unwrap();
+    skope::run_query(&config).unwrap();
     let tsv_str = std::fs::read_to_string(temp_output.path()).unwrap();
     let lines: Vec<&str> = tsv_str.lines().collect();
 
@@ -308,17 +308,19 @@ fn test_sort_containment() {
 #[test]
 fn test_length_histogram() {
     // Wrap the viruses fasta in a temp dir so it's treated as a single group "viruses"
-    let groups_dir = TempDir::new().unwrap();
+    let targets_path = TempDir::new().unwrap();
     std::fs::copy(
         "data/zmrp21.viruses.fa",
-        groups_dir.path().join("viruses.fa"),
+        targets_path.path().join("viruses.fa"),
     )
     .unwrap();
 
     let temp_output = NamedTempFile::new().unwrap();
 
     let config = LengthHistogramConfig {
-        index_path: groups_dir.path().to_path_buf(),
+        individual: false,
+        k_s_from_cli: false,
+        targets_path: targets_path.path().to_path_buf(),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
         kmer_length: 31,
@@ -330,10 +332,10 @@ fn test_length_histogram() {
         output_path: Some(temp_output.path().to_path_buf()),
         quiet: true,
         limit_bp: None,
-        include_all_seqs: false,
+        no_filter: false,
     };
 
-    skope::run_length_histogram_analysis(&config).unwrap();
+    skope::run_lenhist(&config).unwrap();
 
     // Verify TSV output has new per-group header and data rows
     let content = std::fs::read_to_string(temp_output.path()).unwrap();
@@ -356,7 +358,9 @@ fn test_length_histogram_all_seqs() {
     let temp_output = NamedTempFile::new().unwrap();
 
     let config = LengthHistogramConfig {
-        index_path: PathBuf::from("-"),
+        individual: false,
+        k_s_from_cli: false,
+        targets_path: PathBuf::from("-"),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
         kmer_length: 31,
@@ -368,10 +372,10 @@ fn test_length_histogram_all_seqs() {
         output_path: Some(temp_output.path().to_path_buf()),
         quiet: true,
         limit_bp: None,
-        include_all_seqs: true,
+        no_filter: true,
     };
 
-    skope::run_length_histogram_analysis(&config).unwrap();
+    skope::run_lenhist(&config).unwrap();
 
     let content = std::fs::read_to_string(temp_output.path()).unwrap();
     let lines: Vec<&str> = content.lines().collect();
@@ -396,7 +400,7 @@ const SEQ_B: &str =
     "GTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCAGTCA";
 
 #[test]
-fn test_discover_sequence_groups_mixed_layout() {
+fn test_discover_target_groups_mixed_layout() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
 
@@ -414,7 +418,7 @@ fn test_discover_sequence_groups_mixed_layout() {
     // Hidden file inside subdir (skipped)
     write_fasta(&root.join("class_b/.skip.fa"), "x", SEQ_A);
 
-    let groups = discover_sequence_groups(root).unwrap();
+    let groups = discover_target_groups(root).unwrap();
     assert_eq!(groups.len(), 2);
     assert_eq!(groups[0].name, "class_a");
     assert_eq!(groups[0].files.len(), 1);
@@ -426,39 +430,39 @@ fn test_discover_sequence_groups_mixed_layout() {
 }
 
 #[test]
-fn test_discover_sequence_groups_nested_subdir_errors() {
+fn test_discover_target_groups_nested_subdir_errors() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     std::fs::create_dir_all(root.join("class_a/nested")).unwrap();
     write_fasta(&root.join("class_a/part1.fa"), "a", SEQ_A);
 
-    let err = discover_sequence_groups(root).unwrap_err();
+    let err = discover_target_groups(root).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("Nested subdirectory"), "got: {}", msg);
 }
 
 #[test]
-fn test_discover_sequence_groups_empty_subdir_errors() {
+fn test_discover_target_groups_empty_subdir_errors() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     std::fs::create_dir(root.join("class_a")).unwrap();
     std::fs::write(root.join("class_a/notes.txt"), b"no fastx here").unwrap();
 
-    let err = discover_sequence_groups(root).unwrap_err();
+    let err = discover_target_groups(root).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("no fastx files"), "got: {}", msg);
     assert!(msg.contains("class_a"), "got: {}", msg);
 }
 
 #[test]
-fn test_discover_sequence_groups_duplicate_name_errors() {
+fn test_discover_target_groups_duplicate_name_errors() {
     let dir = TempDir::new().unwrap();
     let root = dir.path();
     write_fasta(&root.join("foo.fa"), "f", SEQ_A);
     std::fs::create_dir(root.join("foo")).unwrap();
     write_fasta(&root.join("foo/inner.fa"), "i", SEQ_B);
 
-    let err = discover_sequence_groups(root).unwrap_err();
+    let err = discover_target_groups(root).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("Duplicate group name"), "got: {}", msg);
     assert!(msg.contains("foo"), "got: {}", msg);
@@ -498,7 +502,7 @@ fn test_query_directory_mixed_layout() {
         no_total: true,
         individual: false,
     };
-    skope::run_containment_analysis(&config).unwrap();
+    skope::run_query(&config).unwrap();
 
     let content = std::fs::read_to_string(output.path()).unwrap();
     let target_names: Vec<&str> = content
@@ -581,11 +585,11 @@ fn test_dump_syncmers_respects_discriminatory() {
     };
 
     let plain_dump = NamedTempFile::new().unwrap();
-    skope::run_containment_analysis(&make_config(false, plain_dump.path().to_path_buf())).unwrap();
+    skope::run_query(&make_config(false, plain_dump.path().to_path_buf())).unwrap();
     let plain = parse_dump(plain_dump.path());
 
     let disc_dump = NamedTempFile::new().unwrap();
-    skope::run_containment_analysis(&make_config(true, disc_dump.path().to_path_buf())).unwrap();
+    skope::run_query(&make_config(true, disc_dump.path().to_path_buf())).unwrap();
     let disc = parse_dump(disc_dump.path());
 
     let plain_a = &plain["tA"];
@@ -626,14 +630,15 @@ fn test_classify_build_mixed_layout() {
 
     let idx_out = NamedTempFile::new().unwrap();
     let config = BuildClassifyConfig {
-        groups_dir: root.to_path_buf(),
+        individual: false,
+        targets_path: root.to_path_buf(),
         kmer_length: 15,
         smer_length: 7,
         threads: 1,
         output_path: Some(idx_out.path().to_path_buf()),
         quiet: true,
     };
-    skope::build_classification_index(&config).unwrap();
+    skope::run_build_classify(&config).unwrap();
 
     // Index file should exist and be non-empty
     let meta = std::fs::metadata(idx_out.path()).unwrap();
@@ -645,7 +650,8 @@ fn test_classify_build_mixed_layout() {
 
     let classify_out = NamedTempFile::new().unwrap();
     let cfg = ClassifyConfig {
-        index_path: idx_out.path().to_path_buf(),
+        individual: false,
+        targets_path: idx_out.path().to_path_buf(),
         sample_paths: vec![vec![sample.path().to_path_buf()]],
         sample_names: vec!["s".to_string()],
         kmer_length: 15,
@@ -676,14 +682,15 @@ fn test_classify_too_many_groups_errors() {
 
     let idx_out = NamedTempFile::new().unwrap();
     let config = BuildClassifyConfig {
-        groups_dir: root.to_path_buf(),
+        individual: false,
+        targets_path: root.to_path_buf(),
         kmer_length: 15,
         smer_length: 7,
         threads: 1,
         output_path: Some(idx_out.path().to_path_buf()),
         quiet: true,
     };
-    let err = skope::build_classification_index(&config).unwrap_err();
+    let err = skope::run_build_classify(&config).unwrap_err();
     let msg = format!("{:#}", err);
     assert!(msg.contains("Too many groups"), "got: {}", msg);
 }
@@ -740,8 +747,51 @@ fn test_fifo_sample_input() {
     );
 }
 
+fn build_index_from_stdin(subcommand: &str, expected_kind: skope::IndexKind) {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let dir = TempDir::new().unwrap();
+    let index = dir.path().join("stdin.sk");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_skope"))
+        .args([
+            "index", subcommand, "-", "-k", "15", "-s", "7", "-t", "1", "-q", "-o",
+        ])
+        .arg(&index)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to execute skope");
+
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!(">target\n{SEQ_A}\n").as_bytes())
+        .unwrap();
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "skope index {subcommand} with stdin failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(skope::read_index_kind(&index), Some(expected_kind));
+}
+
+#[test]
+fn test_build_query_accepts_stdin_targets() {
+    build_index_from_stdin("build-query", skope::IndexKind::Query);
+}
+
+#[test]
+fn test_build_classify_accepts_stdin_targets() {
+    build_index_from_stdin("build-classify", skope::IndexKind::Classify);
+}
+
 fn build_index(targets: PathBuf, background: Vec<PathBuf>, out: PathBuf) {
-    skope::build_query_index(&skope::BuildQueryConfig {
+    skope::run_build_query(&skope::BuildQueryConfig {
         targets_path: targets,
         background_paths: background,
         kmer_length: 15,
@@ -757,7 +807,7 @@ fn build_index(targets: PathBuf, background: Vec<PathBuf>, out: PathBuf) {
 }
 
 fn query_to_tsv(targets_path: PathBuf, sample: &std::path::Path, out: &std::path::Path) {
-    skope::run_containment_analysis(&ContainmentConfig {
+    skope::run_query(&ContainmentConfig {
         background_paths: Vec::new(),
         positions: false,
         targets_path,
@@ -809,7 +859,7 @@ fn test_query_index_matches_fastx() {
 // Deterministic pseudo-random DNA for thinning tests
 fn pseudo_dna_string(n: usize, seed: u64) -> String {
     let mut x = seed | 1;
-    let bases = [b'A', b'C', b'G', b'T'];
+    let bases = *b"ACGT";
     (0..n)
         .map(|_| {
             x = x
@@ -821,7 +871,7 @@ fn pseudo_dna_string(n: usize, seed: u64) -> String {
 }
 
 fn build_index_frac(targets: PathBuf, out: PathBuf, fraction: f64) {
-    skope::build_query_index(&skope::BuildQueryConfig {
+    skope::run_build_query(&skope::BuildQueryConfig {
         targets_path: targets,
         background_paths: vec![],
         kmer_length: 15,
@@ -842,7 +892,7 @@ fn query_frac(
     out: &std::path::Path,
     fraction: f64,
 ) {
-    skope::run_containment_analysis(&ContainmentConfig {
+    skope::run_query(&ContainmentConfig {
         background_paths: Vec::new(),
         positions: false,
         targets_path,
@@ -914,4 +964,279 @@ fn test_query_index_background_masks_everything() {
         .position(|h| h == "target_kmers")
         .unwrap();
     assert_eq!(lines[1].split('\t').nth(tk).unwrap(), "0");
+}
+
+// ── Uniform <TARGETS> resolution ──────────────────────────────────────────────
+
+fn lenhist_groups(
+    targets_path: PathBuf,
+    individual: bool,
+    sample: &std::path::Path,
+) -> Vec<String> {
+    let out = NamedTempFile::new().unwrap();
+    skope::run_lenhist(&LengthHistogramConfig {
+        targets_path,
+        individual,
+        k_s_from_cli: false,
+        sample_paths: vec![vec![sample.to_path_buf()]],
+        sample_names: vec!["s".to_string()],
+        kmer_length: 15,
+        smer_length: 7,
+        abs_threshold: 1,
+        rel_threshold: 0.0,
+        discriminatory: false,
+        threads: 1,
+        output_path: Some(out.path().to_path_buf()),
+        quiet: true,
+        limit_bp: None,
+        no_filter: false,
+    })
+    .unwrap();
+
+    let content = std::fs::read_to_string(out.path()).unwrap();
+    let mut groups: Vec<String> = content
+        .lines()
+        .skip(1)
+        .map(|line| line.split('\t').nth(1).unwrap().to_string())
+        .collect();
+    groups.sort();
+    groups.dedup();
+    groups
+}
+
+#[test]
+fn test_lenhist_accepts_bare_fastx_file() {
+    // Regression: a fastx file was rejected as "not a skope classification index"
+    let dir = TempDir::new().unwrap();
+    let (targets, sample) = (dir.path().join("segments.fa"), dir.path().join("s.fa"));
+    let seq = pseudo_dna_string(500, 11);
+    write_fasta(&targets, "seg_L", &seq);
+    write_fasta(&sample, "r1", &seq);
+
+    // Records merge into one group named after the file
+    assert_eq!(
+        lenhist_groups(targets, false, &sample),
+        vec!["segments".to_string()]
+    );
+}
+
+#[test]
+fn test_lenhist_individual_splits_records() {
+    let dir = TempDir::new().unwrap();
+    let (targets, sample) = (dir.path().join("segments.fa"), dir.path().join("s.fa"));
+    let (seg_l, seg_m) = (pseudo_dna_string(500, 11), pseudo_dna_string(500, 29));
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&targets).unwrap();
+        writeln!(f, ">seg_L\n{seg_l}\n>seg_M\n{seg_m}").unwrap();
+    }
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&sample).unwrap();
+        writeln!(f, ">r1\n{seg_l}\n>r2\n{seg_m}").unwrap();
+    }
+
+    assert_eq!(
+        lenhist_groups(targets.clone(), false, &sample),
+        vec!["segments".to_string()],
+        "without --individual the records merge into one group"
+    );
+    assert_eq!(
+        lenhist_groups(targets, true, &sample),
+        vec!["seg_L".to_string(), "seg_M".to_string()],
+        "with --individual each record becomes its own group"
+    );
+}
+
+#[test]
+fn test_classify_accepts_bare_fastx_file() {
+    let dir = TempDir::new().unwrap();
+    let (targets, sample, out) = (
+        dir.path().join("refs.fa"),
+        dir.path().join("s.fa"),
+        dir.path().join("o.tsv"),
+    );
+    let seq = pseudo_dna_string(500, 11);
+    write_fasta(&targets, "r1", &seq);
+    write_fasta(&sample, "s1", &seq);
+
+    skope::run_classification(&ClassifyConfig {
+        targets_path: targets,
+        individual: false,
+        sample_paths: vec![vec![sample]],
+        sample_names: vec!["s".to_string()],
+        kmer_length: 15,
+        smer_length: 7,
+        abs_threshold: 1,
+        rel_threshold: 0.0,
+        threads: 1,
+        limit_bp: None,
+        output_path: Some(out.clone()),
+        per_seq: false,
+        discriminatory: false,
+        quiet: true,
+    })
+    .unwrap();
+
+    // The one group is named after the file, and the matching read lands in it
+    let content = std::fs::read_to_string(out).unwrap();
+    let row = content
+        .lines()
+        .find(|line| line.split('\t').nth(1) == Some("refs"))
+        .unwrap_or_else(|| panic!("no 'refs' group row in: {content}"));
+    assert_eq!(
+        row.split('\t').nth(3),
+        Some("1"),
+        "expected the read classified into 'refs': {content}"
+    );
+}
+
+#[test]
+fn test_build_classify_accepts_bare_fastx_file() {
+    let dir = TempDir::new().unwrap();
+    let (targets, index) = (dir.path().join("refs.fa"), dir.path().join("i.sk"));
+    write_fasta(&targets, "r1", SEQ_A);
+
+    skope::run_build_classify(&BuildClassifyConfig {
+        targets_path: targets,
+        individual: false,
+        kmer_length: 15,
+        smer_length: 7,
+        threads: 1,
+        output_path: Some(index.clone()),
+        quiet: true,
+    })
+    .unwrap();
+
+    assert_eq!(
+        skope::read_index_kind(&index),
+        Some(skope::IndexKind::Classify)
+    );
+}
+
+#[test]
+fn test_wrong_index_kind_names_both_kinds() {
+    let dir = TempDir::new().unwrap();
+    let (targets, query_index, classify_index) = (
+        dir.path().join("t.fa"),
+        dir.path().join("q.sk"),
+        dir.path().join("c.sk"),
+    );
+    write_fasta(&targets, "t1", SEQ_A);
+    build_index(targets.clone(), vec![], query_index.clone());
+    skope::run_build_classify(&BuildClassifyConfig {
+        targets_path: targets,
+        individual: false,
+        kmer_length: 15,
+        smer_length: 7,
+        threads: 1,
+        output_path: Some(classify_index.clone()),
+        quiet: true,
+    })
+    .unwrap();
+
+    let err = skope::resolve_targets(
+        &query_index,
+        skope::IndexKind::Classify,
+        skope::StdinTargets::Reject,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("is a skope query index, not a classification index"),
+        "got: {err}"
+    );
+
+    let err = skope::resolve_targets(
+        &classify_index,
+        skope::IndexKind::Query,
+        skope::StdinTargets::Reject,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        err.contains("is a skope classification index, not a query index"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn test_resolve_targets_input_forms() {
+    let dir = TempDir::new().unwrap();
+    let file = dir.path().join("t.fa");
+    write_fasta(&file, "t1", SEQ_A);
+
+    // Single fastx file: one group named after the file
+    match skope::resolve_targets(&file, skope::IndexKind::Query, skope::StdinTargets::Reject)
+        .unwrap()
+    {
+        skope::TargetSource::File(group) => {
+            assert_eq!(group.name, "t");
+            assert_eq!(group.files, vec![file.clone()]);
+        }
+        other => panic!("expected File, got {other:?}"),
+    }
+
+    // Directory: one group per child
+    let groups_dir = TempDir::new().unwrap();
+    write_fasta(&groups_dir.path().join("a.fa"), "a1", SEQ_A);
+    write_fasta(&groups_dir.path().join("b.fa"), "b1", SEQ_B);
+    match skope::resolve_targets(
+        groups_dir.path(),
+        skope::IndexKind::Query,
+        skope::StdinTargets::Reject,
+    )
+    .unwrap()
+    {
+        skope::TargetSource::Directory(groups) => {
+            let names: Vec<&str> = groups.iter().map(|g| g.name.as_str()).collect();
+            assert_eq!(names, vec!["a", "b"]);
+        }
+        other => panic!("expected Directory, got {other:?}"),
+    }
+
+    // Prebuilt index
+    let index = dir.path().join("i.sk");
+    build_index(file, vec![], index.clone());
+    assert!(matches!(
+        skope::resolve_targets(&index, skope::IndexKind::Query, skope::StdinTargets::Reject)
+            .unwrap(),
+        skope::TargetSource::Index(_)
+    ));
+
+    // stdin: rejected where the samples already claim `-`, accepted by the build commands
+    let dash = std::path::Path::new("-");
+    let err = skope::resolve_targets(dash, skope::IndexKind::Query, skope::StdinTargets::Reject)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cannot be read from stdin"), "got: {err}");
+
+    match skope::resolve_targets(dash, skope::IndexKind::Query, skope::StdinTargets::Accept)
+        .unwrap()
+    {
+        skope::TargetSource::File(group) => assert_eq!(group.name, "stdin"),
+        other => panic!("expected File, got {other:?}"),
+    }
+
+    // Neither fastx nor index
+    let junk = dir.path().join("notes.txt");
+    std::fs::write(&junk, "not a sequence file at all\n").unwrap();
+    let err = skope::resolve_targets(
+        &junk,
+        skope::IndexKind::Classify,
+        skope::StdinTargets::Reject,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("is not a fastx file"), "got: {err}");
+
+    // Missing path
+    let err = skope::resolve_targets(
+        &dir.path().join("nope.fa"),
+        skope::IndexKind::Query,
+        skope::StdinTargets::Reject,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(err.contains("does not exist"), "got: {err}");
 }

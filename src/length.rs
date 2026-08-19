@@ -1,12 +1,13 @@
 use crate::classify::{
-    Classification, ClassificationIndex, apply_discriminatory_filter, build_index_in_memory,
-    classify_seq_kmers, load_index,
+    Classification, ClassificationIndex, apply_discriminatory_filter, build_classification_index,
+    classify_seq_kmers, load_classification_index,
 };
 use crate::query::TimingStats;
 use crate::syncmers::{Buffers, KmerHasher};
 use crate::{
-    ProcessingStats, create_spinner, format_bp, format_bp_per_sec, handle_process_result,
-    reader_with_inferred_batch_size, sample_limit_reached_io_error,
+    IndexKind, ProcessingStats, StdinTargets, TargetSource, create_spinner, format_bp,
+    format_bp_per_sec, handle_process_result, reader_with_inferred_batch_size, resolve_targets,
+    sample_limit_reached_io_error,
 };
 use anyhow::Result;
 use indicatif::ProgressBar;
@@ -61,8 +62,11 @@ pub struct LengthHistogramParameters {
 
 /// `lenhist` run settings
 pub struct LengthHistogramConfig {
-    /// Path to .sk index file, directory of groups, or "-" to disable group filtering
-    pub index_path: PathBuf,
+    /// Fastx file, directory of groups, `.sk` index, or `-` to disable group filtering
+    pub targets_path: PathBuf,
+    pub individual: bool,
+    /// True when the user passed -k/-s explicitly, so a prebuilt index can say it ignored them
+    pub k_s_from_cli: bool,
     pub sample_paths: Vec<Vec<PathBuf>>,
     pub sample_names: Vec<String>,
     pub kmer_length: u8,
@@ -74,13 +78,13 @@ pub struct LengthHistogramConfig {
     pub output_path: Option<PathBuf>,
     pub quiet: bool,
     pub limit_bp: Option<u64>,
-    /// True when index_path == "-": no filtering, all reads go to a single "all" bucket
-    pub include_all_seqs: bool,
+    /// True when targets_path == "-": no filtering, all reads go to a single "all" bucket
+    pub no_filter: bool,
 }
 
 impl LengthHistogramConfig {
     pub fn execute(&self) -> Result<()> {
-        run_length_histogram_analysis(self)
+        run_lenhist(self)
     }
 }
 
@@ -102,7 +106,7 @@ struct LengthHistogramProcessor {
     num_groups: usize,
     abs_threshold: u64,
     rel_threshold: f64,
-    include_all_seqs: bool,
+    no_filter: bool,
 
     // Local buffers
     buffers: Buffers,
@@ -127,7 +131,7 @@ impl LengthHistogramProcessor {
         num_groups: usize,
         abs_threshold: u64,
         rel_threshold: f64,
-        include_all_seqs: bool,
+        no_filter: bool,
         global_buckets: Arc<Vec<Mutex<BucketState>>>,
         global_stats: Arc<Mutex<ProcessingStats>>,
         spinner: Option<Arc<Mutex<ProgressBar>>>,
@@ -151,7 +155,7 @@ impl LengthHistogramProcessor {
             num_groups,
             abs_threshold,
             rel_threshold,
-            include_all_seqs,
+            no_filter,
             buffers,
             hits: [0u64; 128],
             local_stats: ProcessingStats::default(),
@@ -198,7 +202,7 @@ impl<Rf: Record> ParallelProcessor<Rf> for LengthHistogramProcessor {
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq_length as u64;
 
-        let bucket_idx = if self.include_all_seqs {
+        let bucket_idx = if self.no_filter {
             0
         } else {
             let (_total_kmers, classification) = classify_seq_kmers(
@@ -277,7 +281,7 @@ fn process_seqs_file(
     rel_threshold: f64,
     threads: usize,
     quiet: bool,
-    include_all_seqs: bool,
+    no_filter: bool,
     limit_bp: Option<u64>,
 ) -> Result<(Vec<BucketState>, u64, u64)> {
     let in_path = if seq_path.to_string_lossy() == "-" {
@@ -308,7 +312,7 @@ fn process_seqs_file(
         num_groups,
         abs_threshold,
         rel_threshold,
-        include_all_seqs,
+        no_filter,
         Arc::clone(&global_buckets),
         Arc::clone(&global_stats),
         spinner.clone(),
@@ -379,7 +383,7 @@ fn process_single_sample(
             config.rel_threshold,
             config.threads,
             quiet_sample,
-            config.include_all_seqs,
+            config.no_filter,
             config.limit_bp.map(|limit| limit.saturating_sub(total_bp)),
         )?;
 
@@ -433,7 +437,7 @@ fn process_single_sample(
     })
 }
 
-pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<()> {
+pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
 
@@ -442,7 +446,7 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
         config.kmer_length, config.smer_length, config.threads
     );
 
-    if !config.include_all_seqs {
+    if !config.no_filter {
         options.push_str(&format!(
             ", abs_threshold={}, rel_threshold={:.2}",
             config.abs_threshold, config.rel_threshold
@@ -464,7 +468,7 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
 
     // Load or build the classification index
     let index_start = Instant::now();
-    let (index, group_names, kmer_length, smer_length, index_source) = if config.include_all_seqs {
+    let (index, group_names, kmer_length, smer_length, index_source) = if config.no_filter {
         if !config.quiet {
             eprintln!("Groups: none (target filtering disabled, single \"all\" bucket)");
         }
@@ -481,57 +485,58 @@ pub fn run_length_histogram_analysis(config: &LengthHistogramConfig) -> Result<(
             config.smer_length,
             "none (target filtering disabled)".to_string(),
         )
-    } else if config.index_path.is_dir() {
-        let (index, group_names) = build_index_in_memory(
-            &config.index_path,
-            config.kmer_length,
-            config.smer_length,
-            config.threads,
-            config.quiet,
-        )?;
-        let src = config.index_path.to_string_lossy().to_string();
-        (
-            index,
-            group_names,
-            config.kmer_length,
-            config.smer_length,
-            src,
-        )
     } else {
-        let (index, group_names, k, s) = load_index(&config.index_path)?;
-        if !config.quiet {
-            eprintln!(
-                "Index: {} k-mers, {} groups, k={}, s={}",
-                index.len(),
-                group_names.len(),
-                k,
-                s,
-            );
-            for (i, name) in group_names.iter().enumerate() {
-                eprintln!("  [{}] {}", i, name);
+        let src = config.targets_path.to_string_lossy().to_string();
+        match resolve_targets(
+            &config.targets_path,
+            IndexKind::Classify,
+            StdinTargets::Reject,
+        )? {
+            TargetSource::Index(path) => {
+                let (index, group_names, k, s) = load_classification_index(&path)?;
+                if !config.quiet {
+                    eprintln!(
+                        "Index: {} k-mers, {} groups, k={}, s={}",
+                        index.len(),
+                        group_names.len(),
+                        k,
+                        s,
+                    );
+                    for (i, name) in group_names.iter().enumerate() {
+                        eprintln!("  [{}] {}", i, name);
+                    }
+                }
+                if config.k_s_from_cli
+                    && (k != config.kmer_length || s != config.smer_length)
+                    && !config.quiet
+                {
+                    eprintln!("Note: using k={k}, s={s} from index (CLI k/s ignored)");
+                }
+                (index, group_names, k, s, src)
+            }
+            source => {
+                let (index, group_names) = build_classification_index(
+                    source.groups(),
+                    &src,
+                    source.splits_records(config.individual),
+                    config.kmer_length,
+                    config.smer_length,
+                    config.threads,
+                    config.quiet,
+                )?;
+                (
+                    index,
+                    group_names,
+                    config.kmer_length,
+                    config.smer_length,
+                    src,
+                )
             }
         }
-        (
-            index,
-            group_names,
-            k,
-            s,
-            config.index_path.to_string_lossy().to_string(),
-        )
     };
 
-    if !config.include_all_seqs
-        && (kmer_length != config.kmer_length || smer_length != config.smer_length)
-        && !config.quiet
-    {
-        eprintln!(
-            "Note: using k={}, s={} from index (CLI k/s ignored)",
-            kmer_length, smer_length
-        );
-    }
-
     let mut index = index;
-    if !config.include_all_seqs && config.discriminatory {
+    if !config.no_filter && config.discriminatory {
         let removed = apply_discriminatory_filter(&mut index);
         if !config.quiet {
             eprintln!(

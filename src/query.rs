@@ -4,9 +4,9 @@ use crate::syncmers::{
     fill_syncmers_with_positions,
 };
 use crate::{
-    ProcessingStats, RapidHashSet, create_spinner, discover_sequence_groups, format_bp,
-    format_bp_per_sec, handle_process_result, reader_with_inferred_batch_size,
-    sample_limit_reached_io_error,
+    ProcessingStats, RapidHashSet, StdinTargets, TargetSource, create_spinner, format_bp,
+    format_bp_per_sec, handle_process_result, reader_for_path, reader_with_inferred_batch_size,
+    resolve_targets, sample_limit_reached_io_error,
 };
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
@@ -250,7 +250,7 @@ pub struct ContainmentConfig {
 
 impl ContainmentConfig {
     pub fn execute(&self) -> Result<()> {
-        run_containment_analysis(self)
+        run_query(self)
     }
 }
 
@@ -443,13 +443,7 @@ fn process_targets_file(
     quiet: bool,
     collect_positions: bool,
 ) -> Result<Vec<TargetInfo>> {
-    let in_path = if targets_path.to_string_lossy() == "-" {
-        None
-    } else {
-        Some(targets_path)
-    };
-
-    let reader = reader_with_inferred_batch_size(in_path)?;
+    let reader = reader_for_path(targets_path)?;
 
     let spinner = create_spinner(quiet)?;
 
@@ -510,18 +504,22 @@ fn merge_targets(targets: Vec<TargetInfo>, name: String) -> Result<TargetInfo> {
     Ok(merged)
 }
 
-/// Process a directory of fastx files/subdirectories as targets
-/// Each top-level fastx file becomes one target (all records merged).
-/// Each subdirectory becomes one target (all fastx files within merged).
-fn process_targets_dir(
-    dir_path: &Path,
+/// Process resolved targets into `TargetInfo`s.
+///
+/// A directory always yields one target per child, named after that child. A single fastx
+/// file yields one target named after the file, unless `--individual` is set or it holds a
+/// single record, in which case records keep their own names.
+fn process_target_groups(
+    source: &TargetSource,
+    individual: bool,
     kmer_length: u8,
     smer_length: u8,
     fmh: FracMinHash,
     quiet: bool,
     collect_positions: bool,
 ) -> Result<Vec<TargetInfo>> {
-    let groups = discover_sequence_groups(dir_path)?;
+    let groups = source.groups();
+    let per_record = matches!(source, TargetSource::File(_));
 
     let mut results: Vec<TargetInfo> = Vec::with_capacity(groups.len());
     for group in groups {
@@ -537,7 +535,11 @@ fn process_targets_dir(
             )?;
             all_targets.extend(targets);
         }
-        results.push(merge_targets(all_targets, group.name)?);
+        if per_record && (individual || all_targets.len() <= 1) {
+            results.extend(all_targets);
+        } else {
+            results.push(merge_targets(all_targets, group.name.clone())?);
+        }
     }
 
     Ok(results)
@@ -1382,7 +1384,7 @@ fn mask_background(
 // ── Query index (.sk, kind = query) ─────────────────────────────────────────
 // Header + wincode metadata, then per target `count` raw entries of `ceil(k/4)` value
 // bytes, each with a trailing u32 position when positions are stored.
-use crate::{INDEX_MAGIC, IndexKind, read_index_kind};
+use crate::{INDEX_MAGIC, IndexKind};
 
 const QUERY_INDEX_VERSION: u8 = 1;
 const QUERY_INDEX_FLAG_POSITIONS: u8 = 0b001;
@@ -1410,11 +1412,6 @@ pub struct BuildQueryConfig {
 struct QueryIndex {
     targets: Vec<TargetInfo>,
     has_positions: bool,
-}
-
-/// True if `path` is a skope query index
-pub fn is_query_index(path: &Path) -> bool {
-    read_index_kind(path) == Some(IndexKind::Query)
 }
 
 /// Read k, s, and the FracMinHash fraction from a query index header without loading entries
@@ -1690,7 +1687,7 @@ fn load_query_index(path: &Path) -> Result<QueryIndex> {
 }
 
 /// Build and serialize a query index (with optional background masking)
-pub fn build_query_index(config: &BuildQueryConfig) -> Result<()> {
+pub fn run_build_query(config: &BuildQueryConfig) -> Result<()> {
     let start = Instant::now();
     let version = env!("CARGO_PKG_VERSION");
     let fraction_str = if config.fraction < 1.0 {
@@ -1705,31 +1702,22 @@ pub fn build_query_index(config: &BuildQueryConfig) -> Result<()> {
 
     let fmh = FracMinHash::from_fraction(config.fraction);
     let collect_positions = config.positions;
-    let mut targets = if config.targets_path.is_dir() {
-        process_targets_dir(
-            &config.targets_path,
-            config.kmer_length,
-            config.smer_length,
-            fmh,
-            config.quiet,
-            collect_positions,
-        )?
-    } else {
-        let per_record = process_targets_file(
-            &config.targets_path,
-            config.kmer_length,
-            config.smer_length,
-            fmh,
-            config.quiet,
-            collect_positions,
-        )?;
-        if config.individual || per_record.len() <= 1 {
-            per_record
-        } else {
-            let name = crate::derive_sample_name(&config.targets_path, false);
-            vec![merge_targets(per_record, name)?]
-        }
-    };
+    let source = resolve_targets(&config.targets_path, IndexKind::Query, StdinTargets::Accept)?;
+    if let TargetSource::Index(path) = &source {
+        return Err(anyhow::anyhow!(
+            "{} is already a skope query index",
+            path.display()
+        ));
+    }
+    let mut targets = process_target_groups(
+        &source,
+        config.individual,
+        config.kmer_length,
+        config.smer_length,
+        fmh,
+        config.quiet,
+        collect_positions,
+    )?;
 
     let mut flags = 0u8;
     if config.positions {
@@ -1779,7 +1767,7 @@ pub fn build_query_index(config: &BuildQueryConfig) -> Result<()> {
     Ok(())
 }
 
-pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
+pub fn run_query(config: &ContainmentConfig) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let abundance_thresholds = normalize_abundance_thresholds(&config.abundance_thresholds);
@@ -1812,21 +1800,8 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
         options.push_str(&format!(", limit={}", format_bp(limit as usize)));
     }
 
-    let is_targets_dir = config.targets_path.is_dir();
-    let index_kind = if is_targets_dir {
-        None
-    } else {
-        read_index_kind(&config.targets_path)
-    };
-    if let Some(kind) = index_kind
-        && kind != IndexKind::Query
-    {
-        return Err(anyhow::anyhow!(
-            "{} is a skope {kind:?} index, not a query index",
-            config.targets_path.display()
-        ));
-    }
-    let from_index = index_kind == Some(IndexKind::Query);
+    let source = resolve_targets(&config.targets_path, IndexKind::Query, StdinTargets::Reject)?;
+    let from_index = matches!(source, TargetSource::Index(_));
     // Prebuilt stored index fraction trumps
     let (fmh, effective_fraction) = if from_index {
         let (_k, _s, index_fraction) = read_query_index_meta(&config.targets_path)?;
@@ -1847,12 +1822,10 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
     eprintln!(
         "Skope v{}; mode: query{}; options: {}",
         version,
-        if from_index {
-            " (from index)"
-        } else if is_targets_dir {
-            " (from directory)"
-        } else {
-            ""
+        match source {
+            TargetSource::Index(_) => " (from index)",
+            TargetSource::Directory(_) => " (from directory)",
+            TargetSource::File(_) => "",
         },
         options
     );
@@ -1861,38 +1834,24 @@ pub fn run_containment_analysis(config: &ContainmentConfig) -> Result<()> {
     let targets_start = Instant::now();
     let need_positions = config.dump_syncmers_path.is_some() || config.confidence;
     let collect_positions = config.positions || need_positions;
-    let mut targets = if from_index {
-        let index = load_query_index(&config.targets_path)?;
+    let mut targets = if let TargetSource::Index(path) = &source {
+        let index = load_query_index(path)?;
         if need_positions && !index.has_positions {
             return Err(anyhow::anyhow!(
                 "Query index built without --positions; cannot use --confidence or --dump-syncmers"
             ));
         }
         index.targets
-    } else if is_targets_dir {
-        process_targets_dir(
-            &config.targets_path,
+    } else {
+        process_target_groups(
+            &source,
+            config.individual,
             config.kmer_length,
             config.smer_length,
             fmh,
             config.quiet,
             collect_positions,
         )?
-    } else {
-        let per_record = process_targets_file(
-            &config.targets_path,
-            config.kmer_length,
-            config.smer_length,
-            fmh,
-            config.quiet,
-            collect_positions,
-        )?;
-        if config.individual || per_record.len() <= 1 {
-            per_record
-        } else {
-            let name = crate::derive_sample_name(&config.targets_path, false);
-            vec![merge_targets(per_record, name)?]
-        }
     };
     let targets_time = targets_start.elapsed();
 

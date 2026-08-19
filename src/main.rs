@@ -1,9 +1,12 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use skope::{derive_sample_name, find_fastx_files, find_fastx_files_recursive, validate_k_s};
+use skope::{
+    derive_sample_name, find_fastx_files, find_fastx_files_recursive, is_special_input_path,
+    validate_k_s,
+};
 
 const DEFAULT_KMER_LENGTH: u8 = 31;
 const DEFAULT_SMER_LENGTH: u8 = 9;
@@ -16,6 +19,21 @@ fn validate_fraction(fraction: f64) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// True when -k or -s were given explicitly on the subcommand at `path`, rather than left at
+/// their clap defaults, so a prebuilt index only reports ignoring values the user chose.
+fn k_s_from_cli(matches: &clap::ArgMatches, path: &[&str]) -> bool {
+    let mut matches = matches;
+    for name in path {
+        match matches.subcommand_matches(name) {
+            Some(sub) => matches = sub,
+            None => return false,
+        }
+    }
+    ["kmer_length", "smer_length"]
+        .iter()
+        .any(|arg| matches.value_source(arg) == Some(clap::parser::ValueSource::CommandLine))
 }
 
 fn validate_sample_names(names: &[String]) -> Result<()> {
@@ -36,25 +54,6 @@ fn validate_sample_names(names: &[String]) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Check if a path is a special input (FIFO / process substitution)
-#[cfg(unix)]
-fn is_special_input_path(path: &Path) -> bool {
-    use std::os::unix::fs::FileTypeExt;
-    let path_str = path.to_string_lossy();
-    if path_str.starts_with("/dev/fd/") || path_str.starts_with("/proc/self/fd/") {
-        return true;
-    }
-    if let Ok(metadata) = std::fs::metadata(path) {
-        return metadata.file_type().is_fifo();
-    }
-    false
-}
-
-#[cfg(not(unix))]
-fn is_special_input_path(_path: &Path) -> bool {
-    false
 }
 
 /// Expand sample inputs (files and directories) into lists of files per sample
@@ -157,11 +156,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum IndexCommands {
-    /// Build a classification index (.sk) from a directory of fastx files/subdirectories (one group per top-level file or directory)
+    /// Build a classification index (.sk) from fastx file(s) or a directory of groups
     #[command(alias = "build")]
     BuildClassify {
-        /// Directory of fastx files/subdirectories, one group per top-level file or directory
-        groups: PathBuf,
+        /// Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir), or - for stdin
+        targets: PathBuf,
+
+        /// Treat each fastx record as a separate group (single fastx file only)
+        #[arg(short = 'i', long = "individual", default_value_t = false)]
+        individual: bool,
 
         /// K-mer length (1-61, must be odd)
         #[arg(short = 'k', long = "kmer", value_name = "K", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
@@ -186,7 +189,7 @@ enum IndexCommands {
 
     /// Build a query index (.sk) from target fastx file(s), optionally masking background syncmers
     BuildQuery {
-        /// Path to fastx file (single target unless -i) or directory (one target per child file/subdir)
+        /// Path to fastx file (single target unless -i), directory of fastx files/subdirs (one target per child file/subdir), or - for stdin
         targets: PathBuf,
 
         /// Path to fastx file(s) whose syncmers we wish to drop from our targets
@@ -210,7 +213,12 @@ enum IndexCommands {
         positions: bool,
 
         /// Fraction of target syncmers to keep [0, 1]
-        #[arg(short = 'f', long = "fraction", value_name = "FLOAT", default_value_t = 1.0)]
+        #[arg(
+            short = 'f',
+            long = "fraction",
+            value_name = "FLOAT",
+            default_value_t = 1.0
+        )]
         fraction: f64,
 
         /// Number of execution threads (0 = auto)
@@ -237,7 +245,7 @@ enum IndexCommands {
 enum Commands {
     /// Estimate target containment & abundance in fastx file(s) or directories thereof using open syncmers
     Query {
-        /// Path to fastx file (treated as single target unless -i set), directory of fastx files/subdirs (one target per child file/subdir), or query index (.sk)
+        /// Path to fastx file (single target unless -i), directory of fastx files/subdirs (one target per child file/subdir) or query index (.sk)
         targets: PathBuf,
 
         /// Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample
@@ -269,7 +277,12 @@ enum Commands {
         positions: bool,
 
         /// Fraction of target syncmers to keep [0, 1]
-        #[arg(short = 'f', long = "fraction", value_name = "FLOAT", default_value_t = 1.0)]
+        #[arg(
+            short = 'f',
+            long = "fraction",
+            value_name = "FLOAT",
+            default_value_t = 1.0
+        )]
         fraction: f64,
 
         /// Comma-separated additional abundance thresholds for containment estimation
@@ -299,7 +312,12 @@ enum Commands {
         output: String,
 
         /// Comma-separated sample names (default is file/dir name without extension)
-        #[arg(short = 'n', long = "names", value_name = "NAME,...", value_delimiter = ',')]
+        #[arg(
+            short = 'n',
+            long = "names",
+            value_name = "NAME,...",
+            value_delimiter = ','
+        )]
         sample_names: Option<Vec<String>>,
 
         /// Sort results
@@ -321,18 +339,22 @@ enum Commands {
 
     /// Classify sequences into groups by syncmer content
     Classify {
-        /// Path to .sk classification index file or directory of fastx files/subdirectories (one group per top-level file or directory)
-        index: PathBuf,
+        /// Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir) or classification index (.sk)
+        targets: PathBuf,
+
+        /// Treat each fastx record as a separate group (single fastx file only)
+        #[arg(short = 'i', long = "individual", default_value_t = false)]
+        individual: bool,
 
         /// Path(s) to fastx files/dirs (- for stdin)
         #[arg(required = true)]
         samples: Vec<PathBuf>,
 
-        /// K-mer length (only used when index is a directory) (1-61, must be odd)
+        /// K-mer length, ignored when targets is a prebuilt index (1-61, must be odd)
         #[arg(short = 'k', long = "kmer", value_name = "K", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
         kmer_length: u8,
 
-        /// S-mer length (only used when index is a directory)
+        /// S-mer length used for open syncmer selection, ignored when targets is a prebuilt index
         #[arg(short = 's', long = "smer", value_name = "S", default_value_t = DEFAULT_SMER_LENGTH)]
         smer_length: u8,
 
@@ -341,11 +363,21 @@ enum Commands {
         discriminatory: bool,
 
         /// Minimum absolute number of syncmer hits for a match
-        #[arg(short = 'a', long = "abs-threshold", value_name = "ABS_THRESHOLD", default_value_t = 1)]
+        #[arg(
+            short = 'a',
+            long = "abs-threshold",
+            value_name = "ABS_THRESHOLD",
+            default_value_t = 1
+        )]
         abs_threshold: u64,
 
         /// Minimum relative proportion (0.0-1.0) of syncmer hits for a match
-        #[arg(short = 'r', long = "rel-threshold", value_name = "REL_THRESHOLD", default_value_t = 0.0)]
+        #[arg(
+            short = 'r',
+            long = "rel-threshold",
+            value_name = "REL_THRESHOLD",
+            default_value_t = 0.0
+        )]
         rel_threshold: f64,
 
         /// Terminate processing after approximately this many bases (e.g. 50M, 10G)
@@ -361,7 +393,12 @@ enum Commands {
         output: String,
 
         /// Comma-separated sample names (default is file/dir name without extension)
-        #[arg(short = 'n', long = "names", value_name = "NAME,...", value_delimiter = ',')]
+        #[arg(
+            short = 'n',
+            long = "names",
+            value_name = "NAME,...",
+            value_delimiter = ','
+        )]
         sample_names: Option<Vec<String>>,
 
         /// Output per-sequence classifications instead of summary
@@ -375,19 +412,23 @@ enum Commands {
 
     /// Generate per-group length histograms based on syncmer classification
     Lenhist {
-        /// Path to .sk classification index file, directory of fastx files/subdirectories (one group per top-level entry), or - to disable group filtering (single "all" bucket)
-        index: PathBuf,
+        /// Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir), classification index (.sk), or - to disable group filtering (single "all" bucket)
+        targets: PathBuf,
+
+        /// Treat each fastx record as a separate group (single fastx file only)
+        #[arg(short = 'i', long = "individual", default_value_t = false)]
+        individual: bool,
 
         /// Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample
         #[arg(required = true)]
         samples: Vec<PathBuf>,
 
         // Algorithm parameters
-        /// K-mer length (only used when index is a directory or -) (1-61, must be odd)
+        /// K-mer length, ignored when targets is a prebuilt index (1-61, must be odd)
         #[arg(short = 'k', long = "kmer", value_name = "K", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
         kmer_length: u8,
 
-        /// S-mer length used for open syncmer selection (only used when index is a directory or -)
+        /// S-mer length used for open syncmer selection, ignored when targets is a prebuilt index
         #[arg(short = 's', long = "smer", value_name = "S", default_value_t = DEFAULT_SMER_LENGTH)]
         smer_length: u8,
 
@@ -396,11 +437,21 @@ enum Commands {
         discriminatory: bool,
 
         /// Minimum absolute number of syncmer hits for a match
-        #[arg(short = 'a', long = "abs-threshold", value_name = "ABS_THRESHOLD", default_value_t = 1)]
+        #[arg(
+            short = 'a',
+            long = "abs-threshold",
+            value_name = "ABS_THRESHOLD",
+            default_value_t = 1
+        )]
         abs_threshold: u64,
 
         /// Minimum relative proportion (0.0-1.0) of syncmer hits for a match
-        #[arg(short = 'r', long = "rel-threshold", value_name = "REL_THRESHOLD", default_value_t = 0.0)]
+        #[arg(
+            short = 'r',
+            long = "rel-threshold",
+            value_name = "REL_THRESHOLD",
+            default_value_t = 0.0
+        )]
         rel_threshold: f64,
 
         // Processing options
@@ -418,7 +469,12 @@ enum Commands {
         output: String,
 
         /// Comma-separated sample names (default is file/dir name without extension)
-        #[arg(short = 'n', long = "names", value_name = "NAME,...", value_delimiter = ',')]
+        #[arg(
+            short = 'n',
+            long = "names",
+            value_name = "NAME,...",
+            value_delimiter = ','
+        )]
         sample_names: Option<Vec<String>>,
 
         /// Suppress progress reporting
@@ -440,12 +496,16 @@ fn main() -> Result<()> {
         );
     }
 
-    let cli = Cli::parse();
+    let matches = Cli::command().get_matches();
+    let cli = Cli::from_arg_matches(&matches)
+        .map_err(|e| e.exit())
+        .unwrap();
 
     match &cli.command {
         Commands::Index(index_cmd) => match index_cmd {
             IndexCommands::BuildClassify {
-                groups,
+                targets,
+                individual,
                 kmer_length,
                 smer_length,
                 threads,
@@ -453,13 +513,6 @@ fn main() -> Result<()> {
                 quiet,
             } => {
                 validate_k_s(*kmer_length, *smer_length)?;
-
-                if !groups.is_dir() {
-                    return Err(anyhow::anyhow!(
-                        "Groups path must be a directory: {}",
-                        groups.display()
-                    ));
-                }
 
                 if *threads > 0 {
                     rayon::ThreadPoolBuilder::new()
@@ -469,7 +522,8 @@ fn main() -> Result<()> {
                 }
 
                 let config = skope::BuildClassifyConfig {
-                    groups_dir: groups.clone(),
+                    targets_path: targets.clone(),
+                    individual: *individual,
                     kmer_length: *kmer_length,
                     smer_length: *smer_length,
                     threads: *threads,
@@ -481,7 +535,7 @@ fn main() -> Result<()> {
                     quiet: *quiet,
                 };
 
-                skope::build_classification_index(&config)
+                skope::run_build_classify(&config)
                     .context("Failed to build classification index")?;
             }
 
@@ -524,7 +578,7 @@ fn main() -> Result<()> {
                     fraction: *fraction,
                 };
 
-                skope::build_query_index(&config).context("Failed to build query index")?;
+                skope::run_build_query(&config).context("Failed to build query index")?;
             }
 
             IndexCommands::Info { index } => {
@@ -533,7 +587,8 @@ fn main() -> Result<()> {
         },
 
         Commands::Classify {
-            index,
+            targets,
+            individual,
             samples,
             sample_names,
             kmer_length,
@@ -568,8 +623,8 @@ fn main() -> Result<()> {
 
             validate_sample_names(&derived_sample_names)?;
 
-            // Only validate k/s when index is a directory
-            if index.is_dir() {
+            // A prebuilt index carries its own k/s; otherwise the CLI values are used
+            if skope::read_index_kind(targets).is_none() {
                 validate_k_s(*kmer_length, *smer_length)?;
             }
 
@@ -587,7 +642,8 @@ fn main() -> Result<()> {
             };
 
             let config = skope::ClassifyConfig {
-                index_path: index.clone(),
+                targets_path: targets.clone(),
+                individual: *individual,
                 sample_paths: expanded_samples,
                 sample_names: derived_sample_names,
                 kmer_length: *kmer_length,
@@ -659,9 +715,12 @@ fn main() -> Result<()> {
             validate_fraction(*fraction)?;
 
             // A prebuilt index carries its own k/s and fraction; else validate CLI k/s
-            let is_index = !targets.is_dir() && skope::is_query_index(targets);
-            let (eff_k, eff_s) = if is_index {
+            let (eff_k, eff_s) = if skope::read_index_kind(targets) == Some(skope::IndexKind::Query)
+            {
                 let (k, s, _fraction) = skope::read_query_index_meta(targets)?;
+                if k_s_from_cli(&matches, &["query"]) && (k, s) != (*kmer_length, *smer_length) {
+                    eprintln!("Note: using k={k}, s={s} from index (CLI k/s ignored)");
+                }
                 (k, s)
             } else {
                 validate_k_s(*kmer_length, *smer_length)?;
@@ -723,7 +782,8 @@ fn main() -> Result<()> {
                 .context("Failed to run containment analysis")?;
         }
         Commands::Lenhist {
-            index,
+            targets,
+            individual,
             samples,
             sample_names,
             kmer_length,
@@ -779,11 +839,13 @@ fn main() -> Result<()> {
                 None
             };
 
-            // Detect if user wants all seqs (no group filtering)
-            let include_all_seqs = index.to_string_lossy() == "-";
+            // `-` keeps its lenhist-specific meaning: no filtering, single "all" bucket
+            let no_filter = targets.to_string_lossy() == "-";
 
             let config = skope::LengthHistogramConfig {
-                index_path: index.clone(),
+                targets_path: targets.clone(),
+                individual: *individual,
+                k_s_from_cli: k_s_from_cli(&matches, &["lenhist"]),
                 sample_paths: expanded_samples,
                 sample_names: derived_sample_names,
                 kmer_length: *kmer_length,
@@ -799,7 +861,7 @@ fn main() -> Result<()> {
                 },
                 quiet: *quiet,
                 limit_bp,
-                include_all_seqs,
+                no_filter,
             };
 
             config

@@ -1,7 +1,8 @@
 use crate::syncmers::{Buffers, KmerHasher, SyncmerVec, fill_syncmers};
 use crate::{
-    FixedRapidHasher, IndexKind, ProcessingStats, create_spinner, format_bp, format_bp_per_sec,
-    handle_process_result, reader_with_inferred_batch_size, sample_limit_reached_io_error,
+    FixedRapidHasher, IndexKind, ProcessingStats, StdinTargets, TargetGroup, TargetSource,
+    create_spinner, format_bp, format_bp_per_sec, handle_process_result, reader_for_path,
+    reader_with_inferred_batch_size, resolve_targets, sample_limit_reached_io_error,
 };
 use anyhow::{Context, Result};
 use indicatif::ProgressBar;
@@ -18,6 +19,10 @@ use std::time::Instant;
 // Index header constants and metadata
 use crate::INDEX_MAGIC;
 const CLASSIFICATION_INDEX_VERSION: u8 = 1;
+/// Maximum groups a classification index can hold, set by the u128 bitmask width
+pub const MAX_GROUPS: usize = 128;
+/// Prefix identifying the `--individual` group-cap error as it crosses the paraseq boundary
+const TOO_MANY_RECORDS_MSG: &str = "Too many records for --individual";
 type ClassificationIndexHeader = ([u8; 4], u8, u8, u8, u8, u8); // magic, kind, version, k, s, num_groups
 
 /// Classification index mapping syncmers to group bitmasks (up to 128 groups)
@@ -84,7 +89,8 @@ struct SampleClassificationResult {
 
 // Configuration structs
 pub struct BuildClassifyConfig {
-    pub groups_dir: PathBuf,
+    pub targets_path: PathBuf,
+    pub individual: bool,
     pub kmer_length: u8,
     pub smer_length: u8,
     pub threads: usize,
@@ -93,7 +99,8 @@ pub struct BuildClassifyConfig {
 }
 
 pub struct ClassifyConfig {
-    pub index_path: PathBuf,
+    pub targets_path: PathBuf,
+    pub individual: bool,
     pub sample_paths: Vec<Vec<PathBuf>>,
     pub sample_names: Vec<String>,
     pub kmer_length: u8,
@@ -126,6 +133,13 @@ struct GroupKmerProcessor {
     global_map_u128: Arc<Mutex<Option<HashMap<u128, u128, FixedRapidHasher>>>>,
     local_stats: ProcessingStats,
     global_stats: Arc<Mutex<ProcessingStats>>,
+
+    /// Source name, used only in the `--individual` group-cap error
+    source: String,
+
+    /// `--individual`: one group per record. Each record's bit is its index in this vec,
+    /// so the run must be single-threaded for the order to be deterministic.
+    individual_names: Option<Arc<Mutex<Vec<String>>>>,
 }
 
 impl GroupKmerProcessor {
@@ -136,6 +150,8 @@ impl GroupKmerProcessor {
         global_map_u64: Arc<Mutex<Option<HashMap<u64, u128, FixedRapidHasher>>>>,
         global_map_u128: Arc<Mutex<Option<HashMap<u128, u128, FixedRapidHasher>>>>,
         global_stats: Arc<Mutex<ProcessingStats>>,
+        individual_names: Option<Arc<Mutex<Vec<String>>>>,
+        source: String,
     ) -> Self {
         let buffers = if kmer_length <= 32 {
             Buffers::new_u64()
@@ -161,12 +177,32 @@ impl GroupKmerProcessor {
             global_map_u128,
             local_stats: ProcessingStats::default(),
             global_stats,
+            source,
+            individual_names,
         }
     }
 }
 
 impl<Rf: Record> ParallelProcessor<Rf> for GroupKmerProcessor {
     fn process_record(&mut self, record: Rf) -> paraseq::parallel::Result<()> {
+        let group_bit = match &self.individual_names {
+            Some(names) => {
+                let mut names = names.lock();
+                if names.len() >= MAX_GROUPS {
+                    return Err(paraseq::parallel::ProcessError::IoError(
+                        std::io::Error::other(format!(
+                            "{TOO_MANY_RECORDS_MSG}: {} has more than {MAX_GROUPS} records, \
+                             the maximum number of groups",
+                            self.source
+                        )),
+                    ));
+                }
+                names.push(String::from_utf8_lossy(record.id()).to_string());
+                1u128 << (names.len() - 1)
+            }
+            None => self.group_bit,
+        };
+
         let seq = record.seq();
         self.local_stats.total_seqs += 1;
         self.local_stats.total_bp += seq.len() as u64;
@@ -183,13 +219,13 @@ impl<Rf: Record> ParallelProcessor<Rf> for GroupKmerProcessor {
             SyncmerVec::U64(vec) => {
                 let local = self.local_map_u64.as_mut().unwrap();
                 for &kmer in vec {
-                    *local.entry(kmer).or_insert(0) |= self.group_bit;
+                    *local.entry(kmer).or_insert(0) |= group_bit;
                 }
             }
             SyncmerVec::U128(vec) => {
                 let local = self.local_map_u128.as_mut().unwrap();
                 for &kmer in vec {
-                    *local.entry(kmer).or_insert(0) |= self.group_bit;
+                    *local.entry(kmer).or_insert(0) |= group_bit;
                 }
             }
         }
@@ -225,29 +261,33 @@ impl<Rf: Record> ParallelProcessor<Rf> for GroupKmerProcessor {
     }
 }
 
-use crate::discover_sequence_groups;
-
-/// Build a classification index in memory from group FASTX files/subdirectories in a directory
-pub(crate) fn build_index_in_memory(
-    groups_dir: &Path,
+/// Build a classification index in memory, one group per `TargetGroup`
+pub(crate) fn build_classification_index(
+    groups: &[TargetGroup],
+    source: &str,
+    individual: bool,
     kmer_length: u8,
     smer_length: u8,
     threads: usize,
     quiet: bool,
 ) -> Result<(ClassificationIndex, Vec<String>)> {
-    let groups = discover_sequence_groups(groups_dir)?;
-
-    if groups.len() > 128 {
+    if groups.len() > MAX_GROUPS {
         return Err(anyhow::anyhow!(
-            "Too many groups: {} (max 128). Each top-level fastx file or subdirectory is one group.",
+            "Too many groups: {} (max {MAX_GROUPS}). Each top-level fastx file or subdirectory is one group.",
             groups.len()
         ));
     }
 
-    let group_names: Vec<String> = groups.iter().map(|g| g.name.clone()).collect();
-
     if !quiet {
-        eprintln!("Groups: {} (from {})", groups.len(), groups_dir.display());
+        eprintln!(
+            "Groups: {} (from {})",
+            if individual {
+                "one per record".to_string()
+            } else {
+                groups.len().to_string()
+            },
+            source
+        );
     }
 
     let global_map_u64: Arc<Mutex<Option<HashMap<u64, u128, FixedRapidHasher>>>> =
@@ -264,6 +304,23 @@ pub(crate) fn build_index_in_memory(
             Arc::new(Mutex::new(None))
         };
 
+    if individual {
+        let names = build_individual_groups(
+            groups,
+            kmer_length,
+            smer_length,
+            Arc::clone(&global_map_u64),
+            Arc::clone(&global_map_u128),
+            quiet,
+        )?;
+        return Ok((
+            finish_index(global_map_u64, global_map_u128, kmer_length, quiet),
+            names,
+        ));
+    }
+
+    let group_names: Vec<String> = groups.iter().map(|g| g.name.clone()).collect();
+
     for (group_idx, group) in groups.iter().enumerate() {
         let group_bit = 1u128 << group_idx;
         let global_stats = Arc::new(Mutex::new(ProcessingStats::default()));
@@ -276,9 +333,11 @@ pub(crate) fn build_index_in_memory(
                 Arc::clone(&global_map_u64),
                 Arc::clone(&global_map_u128),
                 Arc::clone(&global_stats),
+                None,
+                String::new(),
             );
 
-            let reader = reader_with_inferred_batch_size(Some(group_file))?;
+            let reader = reader_for_path(group_file)?;
             reader.process_parallel(&mut processor, threads)?;
         }
 
@@ -319,6 +378,21 @@ pub(crate) fn build_index_in_memory(
         }
     }
 
+    Ok((
+        finish_index(global_map_u64, global_map_u128, kmer_length, quiet),
+        group_names,
+    ))
+}
+
+type GlobalMap<K> = Arc<Mutex<Option<HashMap<K, u128, FixedRapidHasher>>>>;
+
+/// Unwrap the accumulated k-mer maps into a `ClassificationIndex`
+fn finish_index(
+    global_map_u64: GlobalMap<u64>,
+    global_map_u128: GlobalMap<u128>,
+    kmer_length: u8,
+    quiet: bool,
+) -> ClassificationIndex {
     let index = if kmer_length <= 32 {
         let map = Arc::try_unwrap(global_map_u64)
             .unwrap()
@@ -345,10 +419,74 @@ pub(crate) fn build_index_in_memory(
         );
     }
 
-    Ok((index, group_names))
+    index
 }
 
-pub fn build_classification_index(config: &BuildClassifyConfig) -> Result<()> {
+/// Index a single fastx file one group per record (`--individual`), returning the record
+/// names in file order. Single-threaded so those names match the bit indices.
+fn build_individual_groups(
+    groups: &[TargetGroup],
+    kmer_length: u8,
+    smer_length: u8,
+    global_map_u64: GlobalMap<u64>,
+    global_map_u128: GlobalMap<u128>,
+    quiet: bool,
+) -> Result<Vec<String>> {
+    let [group] = groups else {
+        return Err(anyhow::anyhow!(
+            "--individual expects a single fastx file, got {} groups",
+            groups.len()
+        ));
+    };
+    let [file] = group.files.as_slice() else {
+        return Err(anyhow::anyhow!(
+            "--individual expects a single fastx file, got {} files",
+            group.files.len()
+        ));
+    };
+
+    let names = Arc::new(Mutex::new(Vec::new()));
+    let global_stats = Arc::new(Mutex::new(ProcessingStats::default()));
+    let mut processor = GroupKmerProcessor::new(
+        kmer_length,
+        smer_length,
+        0,
+        global_map_u64,
+        global_map_u128,
+        Arc::clone(&global_stats),
+        Some(Arc::clone(&names)),
+        group.name.clone(),
+    );
+
+    let reader = reader_for_path(file)?;
+    // Surface the group-cap error on its own rather than wrapped as an I/O failure
+    if let Err(err) = reader.process_parallel(&mut processor, 1) {
+        return Err(match &err {
+            paraseq::parallel::ProcessError::IoError(io_err)
+                if io_err.to_string().starts_with(TOO_MANY_RECORDS_MSG) =>
+            {
+                anyhow::anyhow!("{io_err}")
+            }
+            _ => err.into(),
+        });
+    }
+    drop(processor);
+
+    let names = Arc::try_unwrap(names).unwrap().into_inner();
+    if !quiet {
+        let stats = global_stats.lock();
+        eprintln!(
+            "  {} records from {} ({})",
+            names.len(),
+            group.name,
+            format_bp(stats.total_bp as usize),
+        );
+    }
+
+    Ok(names)
+}
+
+pub fn run_build_classify(config: &BuildClassifyConfig) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION");
 
@@ -357,8 +495,22 @@ pub fn build_classification_index(config: &BuildClassifyConfig) -> Result<()> {
         version, config.kmer_length, config.smer_length, config.threads
     );
 
-    let (index, group_names) = build_index_in_memory(
-        &config.groups_dir,
+    let source = resolve_targets(
+        &config.targets_path,
+        IndexKind::Classify,
+        StdinTargets::Accept,
+    )?;
+    if let TargetSource::Index(path) = &source {
+        return Err(anyhow::anyhow!(
+            "{} is already a skope classification index",
+            path.display()
+        ));
+    }
+
+    let (index, group_names) = build_classification_index(
+        source.groups(),
+        &config.targets_path.to_string_lossy(),
+        source.splits_records(config.individual),
         config.kmer_length,
         config.smer_length,
         config.threads,
@@ -477,7 +629,9 @@ pub fn print_classification_index_info(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn load_index(path: &Path) -> Result<(ClassificationIndex, Vec<String>, u8, u8)> {
+pub fn load_classification_index(
+    path: &Path,
+) -> Result<(ClassificationIndex, Vec<String>, u8, u8)> {
     let file_bytes =
         fs::read(path).with_context(|| format!("Failed to open index file: {}", path.display()))?;
     let mut cursor = wincode::io::Cursor::new(file_bytes.as_slice());
@@ -591,7 +745,8 @@ fn classify_seq(
     let mut single_match = 0usize;
 
     for (group_idx, &group_hits) in hits[..num_groups].iter().enumerate() {
-        if group_hits >= abs_threshold && (group_hits as f64 / total_kmers as f64) >= rel_threshold {
+        if group_hits >= abs_threshold && (group_hits as f64 / total_kmers as f64) >= rel_threshold
+        {
             matching_mask |= 1u128 << group_idx;
             match_count += 1;
             single_match = group_idx;
@@ -1058,13 +1213,27 @@ pub fn run_classification(config: &ClassifyConfig) -> Result<()> {
     let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION");
 
-    let (index, group_names, kmer_length, smer_length) = if config.index_path.is_dir() {
+    let source = resolve_targets(
+        &config.targets_path,
+        IndexKind::Classify,
+        StdinTargets::Reject,
+    )?;
+
+    let (index, group_names, kmer_length, smer_length) = if !matches!(
+        source,
+        TargetSource::Index(_)
+    ) {
         let limit_str = config
             .limit_bp
             .map_or(String::new(), |v| format!(", limit_bp={}", v));
         eprintln!(
-            "Skope v{}; mode: classify (from directory); options: k={}, s={}, threads={}, abs_threshold={}, rel_threshold={:.2}{}",
+            "Skope v{}; mode: classify (from {}); options: k={}, s={}, threads={}, abs_threshold={}, rel_threshold={:.2}{}",
             version,
+            if matches!(source, TargetSource::Directory(_)) {
+                "directory"
+            } else {
+                "fastx"
+            },
             config.kmer_length,
             config.smer_length,
             config.threads,
@@ -1073,8 +1242,10 @@ pub fn run_classification(config: &ClassifyConfig) -> Result<()> {
             limit_str
         );
 
-        let (index, group_names) = build_index_in_memory(
-            &config.index_path,
+        let (index, group_names) = build_classification_index(
+            source.groups(),
+            &config.targets_path.to_string_lossy(),
+            source.splits_records(config.individual),
             config.kmer_length,
             config.smer_length,
             config.threads,
@@ -1092,7 +1263,7 @@ pub fn run_classification(config: &ClassifyConfig) -> Result<()> {
         );
 
         let load_start = Instant::now();
-        let (index, group_names, k, s) = load_index(&config.index_path)?;
+        let (index, group_names, k, s) = load_classification_index(&config.targets_path)?;
 
         if !config.quiet {
             let elapsed = load_start.elapsed();

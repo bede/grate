@@ -1,9 +1,4 @@
-//! # Skope
-//!
-//! A fast open syncmer-based containment analysis tool for genomic sequences
-//!
-//! Skope analyses the containment of open syncmers from reference sequences in sequence datasets,
-//! providing detailed statistics on containment and abundance per target sequence
+//! Accelerated genome containment estimation using syncmers.
 pub mod classify;
 pub mod length;
 pub mod query;
@@ -20,18 +15,16 @@ use std::sync::Arc;
 // Re-export the main functionality
 pub use query::{
     BuildQueryConfig, ContainmentConfig, ContainmentParameters, ContainmentResult,
-    PatchinessResult, Report, SampleResults, SortOrder, TimingStats, TotalStats, build_query_index,
-    is_query_index, read_query_index_meta, run_containment_analysis,
+    PatchinessResult, Report, SampleResults, SortOrder, TimingStats, TotalStats,
+    read_query_index_meta, run_build_query, run_query,
 };
 
 pub use length::{
     LengthHistogramConfig, LengthHistogramParameters, LengthHistogramReport, LengthHistogramResult,
-    run_length_histogram_analysis,
+    run_lenhist,
 };
 
-pub use classify::{
-    BuildClassifyConfig, ClassifyConfig, build_classification_index, run_classification,
-};
+pub use classify::{BuildClassifyConfig, ClassifyConfig, run_build_classify, run_classification};
 
 pub use syncmers::{
     Buffers, DEFAULT_KMER_LENGTH, DEFAULT_SMER_LENGTH, FracMinHash, KmerHasher, SyncmerVec,
@@ -78,6 +71,15 @@ impl IndexKind {
             1 => Some(Self::Query),
             _ => None,
         }
+    }
+}
+
+impl std::fmt::Display for IndexKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Classify => "classification",
+            Self::Query => "query",
+        })
     }
 }
 
@@ -138,6 +140,18 @@ pub fn reader_with_inferred_batch_size(
     let mut reader = paraseq::fastx::Reader::from_optional_path(in_path)?;
     reader.update_batch_size_in_bp(256 * 1024)?;
     Ok(reader)
+}
+
+/// Reader for one target path, treating `-` as stdin
+pub fn reader_for_path(
+    path: &Path,
+) -> Result<paraseq::fastx::Reader<Box<dyn std::io::Read + Send>>> {
+    let in_path = if path.to_string_lossy() == "-" {
+        None
+    } else {
+        Some(path)
+    };
+    reader_with_inferred_batch_size(in_path)
 }
 
 pub fn format_bp(bp: usize) -> String {
@@ -220,7 +234,7 @@ pub fn is_fastx_file(path: &Path) -> bool {
 /// One sequence group discovered under a target/class directory:
 /// either a single top-level FASTX file or all FASTX files directly inside a subdirectory.
 #[derive(Debug, Clone)]
-pub struct SequenceGroup {
+pub struct TargetGroup {
     pub name: String,
     pub files: Vec<PathBuf>,
 }
@@ -232,7 +246,7 @@ pub struct SequenceGroup {
 ///   sub-subdirectories are not allowed and are rejected with an error.
 /// - Hidden top-level entries and hidden files inside subdirectories are skipped.
 /// - Duplicate derived group names (including `foo.fa` colliding with `foo/`) are rejected.
-pub fn discover_sequence_groups(dir_path: &Path) -> Result<Vec<SequenceGroup>> {
+pub fn discover_target_groups(dir_path: &Path) -> Result<Vec<TargetGroup>> {
     let mut top_files: Vec<PathBuf> = Vec::new();
     let mut top_subdirs: Vec<PathBuf> = Vec::new();
 
@@ -275,10 +289,10 @@ pub fn discover_sequence_groups(dir_path: &Path) -> Result<Vec<SequenceGroup>> {
         ));
     }
 
-    let mut groups: Vec<SequenceGroup> = Vec::with_capacity(top_files.len() + top_subdirs.len());
+    let mut groups: Vec<TargetGroup> = Vec::with_capacity(top_files.len() + top_subdirs.len());
 
     for file in top_files {
-        groups.push(SequenceGroup {
+        groups.push(TargetGroup {
             name: derive_sample_name(&file, false),
             files: vec![file],
         });
@@ -331,7 +345,7 @@ pub fn discover_sequence_groups(dir_path: &Path) -> Result<Vec<SequenceGroup>> {
         }
 
         subdir_files.sort();
-        groups.push(SequenceGroup {
+        groups.push(TargetGroup {
             name: derive_sample_name(&subdir, true),
             files: subdir_files,
         });
@@ -348,6 +362,163 @@ pub fn discover_sequence_groups(dir_path: &Path) -> Result<Vec<SequenceGroup>> {
     }
 
     Ok(groups)
+}
+
+/// Check whether a path is a special input (FIFO / process substitution)
+#[cfg(unix)]
+pub fn is_special_input_path(path: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    let path_str = path.to_string_lossy();
+    if path_str.starts_with("/dev/fd/") || path_str.starts_with("/proc/self/fd/") {
+        return true;
+    }
+    if let Ok(metadata) = std::fs::metadata(path) {
+        return metadata.file_type().is_fifo();
+    }
+    false
+}
+
+#[cfg(not(unix))]
+pub fn is_special_input_path(_path: &Path) -> bool {
+    false
+}
+
+/// Cheap sniff for fastx content: a plain `>`/`@` header, or a compression magic. Extensions
+/// are too varied to check (`.fna` and friends are legitimate), so this reads the first bytes,
+/// purely to give a clear error for non-sequence files.
+fn looks_like_fastx(path: &Path) -> bool {
+    use std::io::Read;
+    let mut buf = [0u8; 8];
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return true; // let the reader report the real I/O error
+    };
+    let Ok(n) = file.read(&mut buf) else {
+        return true;
+    };
+    let buf = &buf[..n];
+
+    const MAGICS: [&[u8]; 4] = [
+        &[0x1f, 0x8b],                   // gzip
+        &[0x28, 0xb5, 0x2f, 0xfd],       // zstd
+        &[0xfd, b'7', b'z', b'X', b'Z'], // xz
+        b"BZh",                          // bzip2
+    ];
+    if MAGICS.iter().any(|magic| buf.starts_with(magic)) {
+        return true;
+    }
+
+    matches!(
+        buf.iter().find(|b| !b.is_ascii_whitespace()),
+        Some(b'>') | Some(b'@')
+    )
+}
+
+/// What a `<TARGETS>` positional resolved to. `File` and `Directory` differ because
+/// `--individual` splits the records of a file, but a directory's children already group it.
+#[derive(Debug, Clone)]
+pub enum TargetSource {
+    /// A prebuilt `.sk` index of the expected kind
+    Index(PathBuf),
+    /// A single fastx file or stdin: records merge into one group unless `--individual`
+    File(TargetGroup),
+    /// A directory: one group per top-level fastx file or subdirectory
+    Directory(Vec<TargetGroup>),
+}
+
+impl TargetSource {
+    /// Groups to build from, empty for a prebuilt index
+    pub fn groups(&self) -> &[TargetGroup] {
+        match self {
+            Self::Index(_) => &[],
+            Self::File(group) => std::slice::from_ref(group),
+            Self::Directory(groups) => groups,
+        }
+    }
+
+    /// True when `--individual` should split records into separate groups
+    pub fn splits_records(&self, individual: bool) -> bool {
+        individual && matches!(self, Self::File(_))
+    }
+}
+
+/// Name of the single group formed from stdin
+pub const STDIN_TARGET_NAME: &str = "stdin";
+
+/// Whether a subcommand can take its targets from stdin. Only `index build-*` can:
+/// elsewhere the samples already claim `-`, and there is only one stdin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdinTargets {
+    Accept,
+    Reject,
+}
+
+/// Resolve a `<TARGETS>` positional for a subcommand expecting an index of kind `expect`.
+///
+/// Accepts, in order: `-` (only where `stdin` is [`StdinTargets::Accept`]), a prebuilt `.sk`
+/// index, a directory (one group per top-level fastx file or subdirectory), or a single fastx
+/// file (one group). Pipes are always rejected: paraseq cannot sniff compression on a
+/// non-seekable path, so they fail later with a confusing parse error.
+pub fn resolve_targets(
+    path: &Path,
+    expect: IndexKind,
+    stdin: StdinTargets,
+) -> Result<TargetSource> {
+    if path.to_string_lossy() == "-" {
+        if stdin == StdinTargets::Reject {
+            return Err(anyhow::anyhow!(
+                "Targets cannot be read from stdin; `-` is accepted only for samples. \
+                 Give a fastx file, a directory of fastx files, or a skope {expect} index."
+            ));
+        }
+        return Ok(TargetSource::File(TargetGroup {
+            name: STDIN_TARGET_NAME.to_string(),
+            files: vec![path.to_path_buf()],
+        }));
+    }
+
+    if is_special_input_path(path) {
+        return Err(anyhow::anyhow!(
+            "Targets cannot be read from a pipe ({}). \
+             Give a fastx file, a directory of fastx files, or a skope {expect} index.",
+            path.display()
+        ));
+    }
+
+    if !path.exists() {
+        return Err(anyhow::anyhow!("Path does not exist: {}", path.display()));
+    }
+
+    if let Some(kind) = read_index_kind(path) {
+        if kind != expect {
+            return Err(anyhow::anyhow!(
+                "{} is a skope {kind} index, not a {expect} index",
+                path.display()
+            ));
+        }
+        return Ok(TargetSource::Index(path.to_path_buf()));
+    }
+
+    if path.is_dir() {
+        return Ok(TargetSource::Directory(discover_target_groups(path)?));
+    }
+
+    if path.is_file() {
+        if !looks_like_fastx(path) {
+            return Err(anyhow::anyhow!(
+                "{} is not a fastx file, a directory of fastx files, or a skope {expect} index",
+                path.display()
+            ));
+        }
+        return Ok(TargetSource::File(TargetGroup {
+            name: derive_sample_name(path, false),
+            files: vec![path.to_path_buf()],
+        }));
+    }
+
+    Err(anyhow::anyhow!(
+        "{} is neither a fastx file, a directory of fastx files, nor a skope {expect} index",
+        path.display()
+    ))
 }
 
 /// Find all fastx files in a directory (non-recursive, following symlinks)
