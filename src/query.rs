@@ -28,7 +28,6 @@ type CountDepth = u16;
 pub enum SortOrder {
     Original,    // Original order from reference file (default)
     Target,      // Alphabetical by target name
-    Sample,      // Alphabetical by sample name
     Containment, // Descending by containment1 (highest first)
 }
 
@@ -157,73 +156,41 @@ struct TargetInfo {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct PatchinessResult {
-    pub z: f64,
-    pub p: f64,
+struct PatchinessResult {
+    z: f64,
+    p: f64,
 }
 
-#[derive(Debug, Clone)]
-pub struct ContainmentResult {
-    pub target: String,
-    pub length: usize,
-    pub target_kmers: usize,
-    pub containment1_hits: usize,
-    pub containment1: f64,
-    pub ani_est: Option<f64>,
-    pub median_nz_abundance: f64,
-    pub containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
-    pub hits_at_threshold: HashMap<usize, usize>,      // threshold -> hit count
-    pub patchiness: Option<PatchinessResult>,
+#[derive(Debug)]
+struct ContainmentResult {
+    target: String,
+    length: usize,
+    target_kmers: usize,
+    containment1_hits: usize,
+    containment1: f64,
+    ani_est: Option<f64>,
+    median_nz_abundance: f64,
+    containment_at_threshold: HashMap<usize, f64>, // threshold -> containment
+    hits_at_threshold: HashMap<usize, usize>,      // threshold -> hit count
+    patchiness: Option<PatchinessResult>,
 }
 
-#[derive(Debug, Clone)]
-pub struct ContainmentParameters {
-    pub kmer_length: u8,
-    pub smer_length: u8,
-    pub threads: usize,
-    pub abundance_thresholds: Vec<usize>,
-    pub confidence: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct TotalStats {
-    pub total_targets: usize,
-    pub target_kmers: usize,
-    pub total_containment1_hits: usize,
-    pub total_containment1: f64,
-    pub total_seqs_processed: u64,
-    pub total_bp_processed: u64,
-    pub total_containment_at_threshold: HashMap<usize, f64>, // threshold -> overall containment
-}
-
-#[derive(Debug, Clone)]
-pub struct TimingStats {
-    pub reference_processing_time: f64,
-    pub seqs_processing_time: f64,
-    pub analysis_time: f64,
-    pub total_time: f64,
-    pub seqs_per_second: f64,
-    pub bp_per_second: f64,
+#[derive(Debug)]
+struct TotalStats {
+    target_kmers: usize,
+    total_containment1_hits: usize,
+    total_containment1: f64,
+    total_seqs_processed: u64,
+    total_bp_processed: u64,
+    total_containment_at_threshold: HashMap<usize, f64>, // threshold -> overall containment
 }
 
 /// Results for a single sample in multi-sample mode
-#[derive(Debug, Clone)]
-pub struct SampleResults {
-    pub sample_name: String,
-    pub seq_files: Vec<String>, // Multiple files per sample
-    pub targets: Vec<ContainmentResult>,
-    pub total_stats: TotalStats,
-    pub timing: TimingStats,
-}
-
-/// Report containing results for one or more samples
-#[derive(Debug, Clone)]
-pub struct Report {
-    pub version: String,
-    pub targets_file: String,
-    pub parameters: ContainmentParameters,
-    pub samples: Vec<SampleResults>,
-    pub total_timing: TimingStats,
+#[derive(Debug)]
+struct SampleResults {
+    sample_name: String,
+    targets: Vec<ContainmentResult>,
+    total_stats: TotalStats,
 }
 
 pub struct ContainmentConfig {
@@ -238,7 +205,6 @@ pub struct ContainmentConfig {
     pub quiet: bool,
     pub abundance_thresholds: Vec<usize>,
     pub discriminatory: bool,
-    pub positions: bool,
     pub individual: bool,
     pub limit_bp: Option<u64>,
     pub sort_order: SortOrder,
@@ -1164,7 +1130,6 @@ fn calculate_containment_statistics(
 
 /// Process a single sample's sequences and calculate statistics
 fn process_single_sample(
-    _idx: usize,
     sample_paths: &[PathBuf], // Multiple files per sample
     sample_name: &str,
     targets: &[TargetInfo],
@@ -1174,8 +1139,6 @@ fn process_single_sample(
 ) -> Result<SampleResults> {
     // Silence per-sample progress for >1 sample
     let quiet_sample = config.quiet || config.sample_paths.len() > 1;
-
-    let seqs_start = Instant::now();
 
     // Initialise empty abundance map based on k-mer length
     let mut combined_abundance_map = if config.kmer_length <= 32 {
@@ -1232,19 +1195,17 @@ fn process_single_sample(
         }
     }
 
-    let seqs_time = seqs_start.elapsed();
     let abundance_map = combined_abundance_map;
 
     // Calculate containment statistics for this sample
-    let analysis_start = Instant::now();
-    let containment_results = calculate_containment_statistics(
+    let mut containment_results = calculate_containment_statistics(
         targets,
         &abundance_map,
         abundance_thresholds,
         config.kmer_length,
         config.confidence,
     );
-    let analysis_time = analysis_start.elapsed();
+    sort_results(&mut containment_results, config.sort_order);
 
     // Overall stats for this sample
     let target_kmers: usize = containment_results.iter().map(|r| r.target_kmers).sum();
@@ -1257,9 +1218,6 @@ fn process_single_sample(
     } else {
         0.0
     };
-
-    let seqs_per_second = total_seqs as f64 / seqs_time.as_secs_f64();
-    let bp_per_second = total_bp as f64 / seqs_time.as_secs_f64();
 
     // Calculate overall containment at each threshold
     let mut total_containment_at_threshold = HashMap::new();
@@ -1281,33 +1239,14 @@ fn process_single_sample(
 
     Ok(SampleResults {
         sample_name: sample_name.to_string(),
-        seq_files: sample_paths
-            .iter()
-            .map(|p| {
-                if p.to_string_lossy() == "-" {
-                    "stdin".to_string()
-                } else {
-                    p.to_string_lossy().to_string()
-                }
-            })
-            .collect(),
         targets: containment_results,
         total_stats: TotalStats {
-            total_targets: targets.len(),
             target_kmers,
             total_containment1_hits,
             total_containment1,
             total_seqs_processed: total_seqs,
             total_bp_processed: total_bp,
             total_containment_at_threshold,
-        },
-        timing: TimingStats {
-            reference_processing_time: 0.0, // Not per-sample
-            seqs_processing_time: seqs_time.as_secs_f64(),
-            analysis_time: analysis_time.as_secs_f64(),
-            total_time: seqs_time.as_secs_f64() + analysis_time.as_secs_f64(),
-            seqs_per_second,
-            bp_per_second,
         },
     })
 }
@@ -1768,7 +1707,6 @@ pub fn run_build_query(config: &BuildQueryConfig) -> Result<()> {
 }
 
 pub fn run_query(config: &ContainmentConfig) -> Result<()> {
-    let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let abundance_thresholds = normalize_abundance_thresholds(&config.abundance_thresholds);
 
@@ -1831,9 +1769,7 @@ pub fn run_query(config: &ContainmentConfig) -> Result<()> {
     );
 
     // Load a prebuilt query index else extract targets from fastx
-    let targets_start = Instant::now();
     let need_positions = config.dump_syncmers_path.is_some() || config.confidence;
-    let collect_positions = config.positions || need_positions;
     let mut targets = if let TargetSource::Index(path) = &source {
         let index = load_query_index(path)?;
         if need_positions && !index.has_positions {
@@ -1850,10 +1786,9 @@ pub fn run_query(config: &ContainmentConfig) -> Result<()> {
             config.smer_length,
             fmh,
             config.quiet,
-            collect_positions,
+            need_positions,
         )?
     };
-    let targets_time = targets_start.elapsed();
 
     // Runtime masking
     if !config.background_paths.is_empty() {
@@ -2044,14 +1979,12 @@ pub fn run_query(config: &ContainmentConfig) -> Result<()> {
         None
     };
 
-    let mut sample_results_with_idx: Vec<(usize, SampleResults)> = config
+    let sample_results: Vec<SampleResults> = config
         .sample_paths
         .par_iter()
         .zip(&config.sample_names)
-        .enumerate()
-        .map(|(idx, (sample_paths, sample_name))| {
+        .map(|(sample_paths, sample_name)| {
             let result = process_single_sample(
-                idx,
                 sample_paths, // Now a &Vec<PathBuf>
                 sample_name,
                 &targets,
@@ -2071,56 +2004,20 @@ pub fn run_query(config: &ContainmentConfig) -> Result<()> {
                 );
             }
 
-            result.map(|r| (idx, r))
+            result
         })
         .collect::<Result<Vec<_>>>()?;
-
-    // Sort by original index to maintain CLI argument order
-    sample_results_with_idx.sort_by_key(|(idx, _)| *idx);
-    let sample_results: Vec<SampleResults> = sample_results_with_idx
-        .into_iter()
-        .map(|(_, result)| result)
-        .collect();
 
     if is_multisample && !config.quiet {
         eprintln!();
     }
 
-    let total_seqs_time: f64 = sample_results
-        .iter()
-        .map(|s| s.timing.seqs_processing_time)
-        .sum();
-    let total_analysis_time: f64 = sample_results.iter().map(|s| s.timing.analysis_time).sum();
-
-    let total_time = start_time.elapsed();
-
-    // Create report
-    let report = Report {
-        version: format!("skope {}", version),
-        targets_file: config.targets_path.to_string_lossy().to_string(),
-        parameters: ContainmentParameters {
-            kmer_length: config.kmer_length,
-            smer_length: config.smer_length,
-            threads: config.threads,
-            abundance_thresholds: abundance_thresholds.clone(),
-            confidence: config.confidence,
-        },
-        samples: sample_results,
-        total_timing: TimingStats {
-            reference_processing_time: targets_time.as_secs_f64(),
-            seqs_processing_time: total_seqs_time,
-            analysis_time: total_analysis_time,
-            total_time: total_time.as_secs_f64(),
-            seqs_per_second: 0.0, // Not meaningful across samples
-            bp_per_second: 0.0,   // Not meaningful across samples
-        },
-    };
-
     // Output results
     output_results(
-        &report,
+        &sample_results,
         config.output_path.as_ref(),
-        config.sort_order,
+        &abundance_thresholds,
+        config.confidence,
         config.no_total,
     )?;
 
@@ -2136,11 +2033,6 @@ fn sort_results(results: &mut [ContainmentResult], sort_order: SortOrder) {
         SortOrder::Target => {
             results.sort_by(|a, b| a.target.cmp(&b.target));
         }
-        SortOrder::Sample => {
-            // For per-sample sorting (CSV/JSON), this doesn't make sense
-            // but we'll keep it for consistency - sorts by target name
-            results.sort_by(|a, b| a.target.cmp(&b.target));
-        }
         SortOrder::Containment => {
             // Sort by containment descending (highest first)
             results.sort_by(|a, b| {
@@ -2153,9 +2045,10 @@ fn sort_results(results: &mut [ContainmentResult], sort_order: SortOrder) {
 }
 
 fn output_results(
-    report: &Report,
+    samples: &[SampleResults],
     output_path: Option<&PathBuf>,
-    sort_order: SortOrder,
+    abundance_thresholds: &[usize],
+    confidence: bool,
     no_total: bool,
 ) -> Result<()> {
     let writer: Box<dyn Write> = if let Some(path) = output_path {
@@ -2165,14 +2058,13 @@ fn output_results(
     };
 
     let mut writer = writer;
-
-    let mut sorted_report = report.clone();
-    if sort_order != SortOrder::Original {
-        for sample in &mut sorted_report.samples {
-            sort_results(&mut sample.targets, sort_order);
-        }
-    }
-    output_tsv(&mut writer, &sorted_report, no_total)?;
+    output_tsv(
+        &mut writer,
+        samples,
+        abundance_thresholds,
+        confidence,
+        no_total,
+    )?;
 
     Ok(())
 }
@@ -2209,11 +2101,13 @@ fn format_patchiness(value: Option<PatchinessResult>) -> String {
     }
 }
 
-fn output_tsv(writer: &mut dyn Write, report: &Report, no_total: bool) -> Result<()> {
-    let mut thresholds = report.parameters.abundance_thresholds.clone();
-    thresholds.sort_unstable();
-    let confidence = report.parameters.confidence;
-
+fn output_tsv(
+    writer: &mut dyn Write,
+    samples: &[SampleResults],
+    thresholds: &[usize],
+    confidence: bool,
+    no_total: bool,
+) -> Result<()> {
     // Build header with target column first
     let mut header = "target\tsample\tcontainment1\tcontainment1_hits".to_string();
     if confidence {
@@ -2221,7 +2115,7 @@ fn output_tsv(writer: &mut dyn Write, report: &Report, no_total: bool) -> Result
         header.push_str("\tpatchiness");
         header.push_str("\tani_est");
     }
-    for threshold in &thresholds {
+    for threshold in thresholds {
         header.push_str(&format!(
             "\tcontainment{}\tcontainment{}_hits",
             threshold, threshold
@@ -2235,7 +2129,7 @@ fn output_tsv(writer: &mut dyn Write, report: &Report, no_total: bool) -> Result
     writeln!(writer, "{}", header)?;
 
     // Output data rows for all samples
-    for sample in &report.samples {
+    for sample in samples {
         for result in &sample.targets {
             let mut row = format!(
                 "{}\t{}\t{:.3}\t{}",
@@ -2252,7 +2146,7 @@ fn output_tsv(writer: &mut dyn Write, report: &Report, no_total: bool) -> Result
                 row.push_str(&format!("\t{}", format_patchiness(result.patchiness)));
                 row.push_str(&format!("\t{}", format_ani_est(result.ani_est)));
             }
-            for threshold in &thresholds {
+            for threshold in thresholds {
                 let containment = result
                     .containment_at_threshold
                     .get(threshold)
@@ -2297,7 +2191,7 @@ fn output_tsv(writer: &mut dyn Write, report: &Report, no_total: bool) -> Result
                 total_row.push_str("\t-");
                 total_row.push_str("\t-");
             }
-            for threshold in &thresholds {
+            for threshold in thresholds {
                 let containment = sample
                     .total_stats
                     .total_containment_at_threshold

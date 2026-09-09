@@ -9,7 +9,6 @@ use tempfile::{NamedTempFile, TempDir};
 fn test_multisample_processing() {
     let config = ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: PathBuf::from("data/zmrp21.viruses.fa"),
         sample_paths: vec![
             vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
@@ -36,13 +35,12 @@ fn test_multisample_processing() {
 }
 
 #[test]
-fn test_multisample_report_structure() {
+fn test_multisample_tsv_structure() {
     let temp_output = NamedTempFile::new().unwrap();
     let output_path = temp_output.path().to_path_buf();
 
     let config = ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: PathBuf::from("data/zmrp21.viruses.fa"),
         sample_paths: vec![
             vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")],
@@ -96,6 +94,19 @@ fn test_multisample_report_structure() {
         .count();
     assert_eq!(total_rows, 2, "Expected 2 TOTAL rows (one per sample)");
 
+    let last_sample_a = lines
+        .iter()
+        .rposition(|line| line.contains("\tsample_a\t"))
+        .unwrap();
+    let first_sample_b = lines
+        .iter()
+        .position(|line| line.contains("\tsample_b\t"))
+        .unwrap();
+    assert!(
+        last_sample_a < first_sample_b,
+        "samples should remain grouped in input order"
+    );
+
     let header_cols: Vec<&str> = lines[0].split('\t').collect();
     let median_idx = header_cols
         .iter()
@@ -139,7 +150,6 @@ fn test_confidence_outputs_ani_and_patchiness_columns() {
 
     let config = ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: PathBuf::from("data/zmrp21.viruses.fa"),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["sample".to_string()],
@@ -193,7 +203,6 @@ fn test_sort_target() {
     let temp_output = NamedTempFile::new().unwrap();
     let config = ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: PathBuf::from("data/zmrp21.viruses.fa"),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
@@ -241,7 +250,6 @@ fn test_sort_containment() {
     let temp_output = NamedTempFile::new().unwrap();
     let config = ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: PathBuf::from("data/zmrp21.viruses.fa"),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
@@ -483,7 +491,6 @@ fn test_query_directory_mixed_layout() {
     let output = NamedTempFile::new().unwrap();
     let config = ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: root.to_path_buf(),
         sample_paths: vec![vec![sample.path().to_path_buf()]],
         sample_names: vec!["s".to_string()],
@@ -564,7 +571,6 @@ fn test_dump_syncmers_respects_discriminatory() {
 
     let make_config = |discriminatory: bool, dump: PathBuf| ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path: root.to_path_buf(),
         sample_paths: vec![vec![sample.path().to_path_buf()]],
         sample_names: vec!["s".to_string()],
@@ -695,6 +701,29 @@ fn test_classify_too_many_groups_errors() {
     assert!(msg.contains("Too many groups"), "got: {}", msg);
 }
 
+#[test]
+fn test_query_cli_omits_noop_options() {
+    let query_help = std::process::Command::new(env!("CARGO_BIN_EXE_skope"))
+        .args(["query", "--help"])
+        .output()
+        .unwrap();
+    assert!(query_help.status.success());
+    let query_help = String::from_utf8(query_help.stdout).unwrap();
+    assert!(!query_help.contains("--positions"));
+    assert!(query_help.contains("possible values: containment, target, input"));
+
+    let build_help = std::process::Command::new(env!("CARGO_BIN_EXE_skope"))
+        .args(["index", "build-query", "--help"])
+        .output()
+        .unwrap();
+    assert!(build_help.status.success());
+    assert!(
+        String::from_utf8(build_help.stdout)
+            .unwrap()
+            .contains("--positions")
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn test_fifo_sample_input() {
@@ -809,7 +838,6 @@ fn build_index(targets: PathBuf, background: Vec<PathBuf>, out: PathBuf) {
 fn query_to_tsv(targets_path: PathBuf, sample: &std::path::Path, out: &std::path::Path) {
     skope::run_query(&ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path,
         sample_paths: vec![vec![sample.to_path_buf()]],
         sample_names: vec!["s".to_string()],
@@ -856,6 +884,62 @@ fn test_query_index_matches_fastx() {
     );
 }
 
+#[test]
+fn test_query_index_positions_required_only_when_consumed() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("t.fa");
+    let sample = dir.path().join("s.fa");
+    let positioned_index = dir.path().join("positioned.sk");
+    let plain_index = dir.path().join("plain.sk");
+    write_fasta(&target, "t1", SEQ_A);
+    write_fasta(&sample, "s1", SEQ_A);
+
+    let build = |output_path: PathBuf, positions: bool| {
+        skope::run_build_query(&skope::BuildQueryConfig {
+            targets_path: target.clone(),
+            background_paths: vec![],
+            kmer_length: 15,
+            smer_length: 7,
+            individual: false,
+            positions,
+            threads: 1,
+            output_path: Some(output_path),
+            quiet: true,
+            fraction: 1.0,
+        })
+        .unwrap();
+    };
+    build(positioned_index.clone(), true);
+    build(plain_index.clone(), false);
+
+    let query = |targets_path: PathBuf, output_path: PathBuf| {
+        skope::run_query(&ContainmentConfig {
+            targets_path,
+            background_paths: vec![],
+            sample_paths: vec![vec![sample.clone()]],
+            sample_names: vec!["s".to_string()],
+            kmer_length: 15,
+            smer_length: 7,
+            threads: 1,
+            output_path: Some(output_path),
+            quiet: true,
+            abundance_thresholds: vec![10],
+            discriminatory: false,
+            individual: false,
+            limit_bp: None,
+            sort_order: SortOrder::Original,
+            dump_syncmers_path: None,
+            no_total: true,
+            confidence: true,
+            fraction: 1.0,
+        })
+    };
+
+    assert!(query(positioned_index, dir.path().join("positioned.tsv")).is_ok());
+    let error = query(plain_index, dir.path().join("plain.tsv")).unwrap_err();
+    assert!(error.to_string().contains("built without --positions"));
+}
+
 // Deterministic pseudo-random DNA for thinning tests
 fn pseudo_dna_string(n: usize, seed: u64) -> String {
     let mut x = seed | 1;
@@ -894,7 +978,6 @@ fn query_frac(
 ) {
     skope::run_query(&ContainmentConfig {
         background_paths: Vec::new(),
-        positions: false,
         targets_path,
         sample_paths: vec![vec![sample.to_path_buf()]],
         sample_names: vec!["s".to_string()],

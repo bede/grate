@@ -2,7 +2,6 @@ use crate::classify::{
     Classification, ClassificationIndex, apply_discriminatory_filter, build_classification_index,
     classify_seq_kmers, load_classification_index,
 };
-use crate::query::TimingStats;
 use crate::syncmers::{Buffers, KmerHasher};
 use crate::{
     IndexKind, ProcessingStats, StdinTargets, TargetSource, create_spinner, format_bp,
@@ -27,37 +26,14 @@ const ALL_LABEL: &str = "all";
 
 /// Per-sample length histogram output. Buckets are indexed as
 /// `0..group_names.len()` for groups, then `ambiguous`, then `unclassified`.
-#[derive(Debug, Clone)]
-pub struct LengthHistogramResult {
-    pub sample_name: String,
-    pub seq_files: Vec<String>,
-    pub total_seqs_processed: u64,
-    pub total_bp_processed: u64,
-    pub group_names: Vec<String>,
-    pub bucket_histograms: Vec<Vec<(usize, usize)>>,
-    pub bucket_seqs: Vec<u64>,
-    pub bucket_bases: Vec<u64>,
-}
-
-/// Combined `lenhist` output
-#[derive(Debug, Clone)]
-pub struct LengthHistogramReport {
-    pub version: String,
-    pub index_source: String,
-    pub parameters: LengthHistogramParameters,
-    pub samples: Vec<LengthHistogramResult>,
-    pub timing: TimingStats,
-}
-
-/// `lenhist` parameters
-#[derive(Debug, Clone)]
-pub struct LengthHistogramParameters {
-    pub kmer_length: u8,
-    pub smer_length: u8,
-    pub threads: usize,
-    pub abs_threshold: u64,
-    pub rel_threshold: f64,
-    pub discriminatory: bool,
+#[derive(Debug)]
+struct LengthHistogramResult {
+    sample_name: String,
+    total_seqs_processed: u64,
+    total_bp_processed: u64,
+    bucket_histograms: Vec<Vec<(usize, usize)>>,
+    bucket_seqs: Vec<u64>,
+    bucket_bases: Vec<u64>,
 }
 
 /// `lenhist` run settings
@@ -358,7 +334,7 @@ fn process_single_sample(
     sample_paths: &[PathBuf],
     sample_name: &str,
     index: Arc<ClassificationIndex>,
-    group_names: &[String],
+    num_groups: usize,
     kmer_length: u8,
     smer_length: u8,
     config: &LengthHistogramConfig,
@@ -366,7 +342,6 @@ fn process_single_sample(
     // Silence per-sample progress for >1 sample
     let quiet_sample = config.quiet || config.sample_paths.len() > 1;
 
-    let num_groups = group_names.len();
     let bucket_count = num_groups + 2;
     let mut combined_buckets: Vec<BucketState> = vec![BucketState::default(); bucket_count];
     let mut total_seqs = 0u64;
@@ -418,19 +393,8 @@ fn process_single_sample(
 
     Ok(LengthHistogramResult {
         sample_name: sample_name.to_string(),
-        seq_files: sample_paths
-            .iter()
-            .map(|p| {
-                if p.to_string_lossy() == "-" {
-                    "stdin".to_string()
-                } else {
-                    p.to_string_lossy().to_string()
-                }
-            })
-            .collect(),
         total_seqs_processed: total_seqs,
         total_bp_processed: total_bp,
-        group_names: group_names.to_vec(),
         bucket_histograms,
         bucket_seqs,
         bucket_bases,
@@ -438,7 +402,6 @@ fn process_single_sample(
 }
 
 pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
-    let start_time = Instant::now();
     let version = env!("CARGO_PKG_VERSION").to_string();
 
     let mut options = format!(
@@ -467,8 +430,7 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
     eprintln!("Skope v{}; mode: lenhist; options: {}", version, options);
 
     // Load or build the classification index
-    let index_start = Instant::now();
-    let (index, group_names, kmer_length, smer_length, index_source) = if config.no_filter {
+    let (index, group_names, kmer_length, smer_length) = if config.no_filter {
         if !config.quiet {
             eprintln!("Groups: none (target filtering disabled, single \"all\" bucket)");
         }
@@ -483,7 +445,6 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
             vec![ALL_LABEL.to_string()],
             config.kmer_length,
             config.smer_length,
-            "none (target filtering disabled)".to_string(),
         )
     } else {
         let src = config.targets_path.to_string_lossy().to_string();
@@ -512,7 +473,7 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
                 {
                     eprintln!("Note: using k={k}, s={s} from index (CLI k/s ignored)");
                 }
-                (index, group_names, k, s, src)
+                (index, group_names, k, s)
             }
             source => {
                 let (index, group_names) = build_classification_index(
@@ -524,13 +485,7 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
                     config.threads,
                     config.quiet,
                 )?;
-                (
-                    index,
-                    group_names,
-                    config.kmer_length,
-                    config.smer_length,
-                    src,
-                )
+                (index, group_names, config.kmer_length, config.smer_length)
             }
         }
     };
@@ -548,7 +503,6 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
     }
 
     let index = Arc::new(index);
-    let index_time = index_start.elapsed();
 
     // Process each sample in parallel
     use rayon::prelude::*;
@@ -576,7 +530,7 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
                 sample_paths,
                 sample_name,
                 Arc::clone(&index),
-                &group_names,
+                group_names.len(),
                 kmer_length,
                 smer_length,
                 config,
@@ -600,31 +554,6 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
         eprintln!();
     }
 
-    let seqs_time = start_time.elapsed().as_secs_f64() - index_time.as_secs_f64();
-    let total_time = start_time.elapsed();
-
-    let report = LengthHistogramReport {
-        version: format!("skope {}", version),
-        index_source,
-        parameters: LengthHistogramParameters {
-            kmer_length,
-            smer_length,
-            threads: config.threads,
-            abs_threshold: config.abs_threshold,
-            rel_threshold: config.rel_threshold,
-            discriminatory: config.discriminatory,
-        },
-        samples: sample_results,
-        timing: TimingStats {
-            reference_processing_time: index_time.as_secs_f64(),
-            seqs_processing_time: seqs_time,
-            analysis_time: 0.0,
-            total_time: total_time.as_secs_f64(),
-            seqs_per_second: 0.0,
-            bp_per_second: 0.0,
-        },
-    };
-
     // Output TSV
     let writer: Box<dyn Write> = if let Some(path) = &config.output_path {
         Box::new(BufWriter::new(File::create(path)?))
@@ -647,14 +576,14 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
         "group_bases",
     ])?;
 
-    for sample in &report.samples {
-        let n = sample.group_names.len();
+    for sample in &sample_results {
+        let n = group_names.len();
         for (bucket_idx, hist) in sample.bucket_histograms.iter().enumerate() {
             if hist.is_empty() {
                 continue;
             }
             let group_label: &str = if bucket_idx < n {
-                &sample.group_names[bucket_idx]
+                &group_names[bucket_idx]
             } else if bucket_idx == n {
                 AMBIGUOUS_LABEL
             } else {

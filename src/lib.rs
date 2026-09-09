@@ -14,15 +14,11 @@ use std::sync::Arc;
 
 // Re-export the main functionality
 pub use query::{
-    BuildQueryConfig, ContainmentConfig, ContainmentParameters, ContainmentResult,
-    PatchinessResult, Report, SampleResults, SortOrder, TimingStats, TotalStats,
-    read_query_index_meta, run_build_query, run_query,
+    BuildQueryConfig, ContainmentConfig, SortOrder, read_query_index_meta, run_build_query,
+    run_query,
 };
 
-pub use length::{
-    LengthHistogramConfig, LengthHistogramParameters, LengthHistogramReport, LengthHistogramResult,
-    run_lenhist,
-};
+pub use length::{LengthHistogramConfig, run_lenhist};
 
 pub use classify::{BuildClassifyConfig, ClassifyConfig, run_build_classify, run_classification};
 

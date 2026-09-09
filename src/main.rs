@@ -272,10 +272,6 @@ enum Commands {
         #[arg(short = 'd', long = "discriminatory", default_value_t = false)]
         discriminatory: bool,
 
-        /// Collect syncmer positions (implied by --confidence and --dump-syncmers)
-        #[arg(short = 'p', long = "positions", default_value_t = false)]
-        positions: bool,
-
         /// Fraction of target syncmers to keep [0, 1]
         #[arg(
             short = 'f',
@@ -321,7 +317,7 @@ enum Commands {
         sample_names: Option<Vec<String>>,
 
         /// Sort results
-        #[arg(long = "sort", default_value = "containment", value_parser = ["containment", "target", "sample", "input"])]
+        #[arg(long = "sort", default_value = "containment", value_parser = ["containment", "target", "input"])]
         sort: String,
 
         /// Dump selected target syncmers to TSV file (target, position, kmer)
@@ -683,7 +679,6 @@ fn main() -> Result<()> {
             no_total,
             confidence,
             background,
-            positions,
             fraction,
         } => {
             // Expand directories to lists of files
@@ -746,7 +741,6 @@ fn main() -> Result<()> {
             let sort_order = match sort.as_str() {
                 "input" => skope::SortOrder::Original,
                 "target" => skope::SortOrder::Target,
-                "sample" => skope::SortOrder::Sample,
                 "containment" => skope::SortOrder::Containment,
                 _ => unreachable!("clap should have validated the sort order"),
             };
@@ -767,7 +761,6 @@ fn main() -> Result<()> {
                 quiet: *quiet,
                 abundance_thresholds: abundance_thresholds.clone(),
                 discriminatory: *discriminatory,
-                positions: *positions,
                 individual: *individual,
                 limit_bp,
                 sort_order,

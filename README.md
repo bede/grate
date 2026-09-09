@@ -109,7 +109,6 @@ Options:
   -i, --individual                      Treat each fastx record as separate target (default: merge records into one target)
   -c, --confidence                      Report confidence intervals, ANI estimates, and patchiness columns
   -d, --discriminatory                  Consider only syncmers unique to each target
-  -p, --positions                       Collect syncmer positions (implied by --confidence and --dump-syncmers)
   -f, --fraction <FLOAT>                Fraction of target syncmers to keep [0, 1] [default: 1]
   -a, --abundance-thresholds <INT,...>  Comma-separated additional abundance thresholds for containment estimation [default: 10]
   -b, --background <BACKGROUND>         Path to fastx file(s) whose syncmers we wish to drop from our targets
@@ -117,7 +116,7 @@ Options:
   -t, --threads <THREADS>               Number of execution threads (0 = auto) [default: 8]
   -o, --output <OUTPUT>                 Path to output file (- for stdout) [default: -]
   -n, --names <NAME,...>                Comma-separated sample names (default is file/dir name without extension)
-      --sort <SORT>                     Sort results [default: containment] [possible values: containment, target, sample, input]
+      --sort <SORT>                     Sort results [default: containment] [possible values: containment, target, input]
       --dump-syncmers <FILE>            Dump selected target syncmers to TSV file (target, position, kmer)
       --no-total                        Suppress TOTAL summary rows in output
   -q, --quiet                           Suppress progress reporting

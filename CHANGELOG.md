@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `index build-query` and `index build-classify` can read targets from stdin (`-`). Elsewhere `-` still means the samples.
 - Better errors for a bad `<TARGETS>`: the wrong kind of index, a pipe, or a file that isn't sequence data are all caught up front rather than deep in the parser.
 - `Note: using k=…, s=… from index` is now printed only when `-k`/`-s` were actually given.
+- `query` no longer exposes the ineffective `--positions` option implied by `--confidence` and `--dump-syncmers`.
+- Removed the redundant `query --sort sample`.
+- Removed unused public query and length-histogram result/report types.
 
 ## [0.4.0] - 2026-07-08
 
