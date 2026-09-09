@@ -15,10 +15,10 @@ exclude = ["data/*", "plot/*", "*.pdf", "*.png"]
 too_many_arguments = "allow"
 
 [features]
-# Disable for faster builds.
-compression = ["zstd", "liblzma", "flate2"]
+# Enable all compression formats supported by niffler. Disable for faster builds.
+compression = ["niffler/default", "dep:flate2"]
 # Use to still handle .gz files when "compression" is not enabled.
-gz = ["niffler/gz", "flate2", "flate2/default"]
+gz = ["niffler/gz", "dep:flate2"]
 default = ["compression"]
 
 [lib]
@@ -28,7 +28,6 @@ path = "src/lib.rs"
 [dependencies]
 clap = { version = "4.6", features = ["derive"] }
 anyhow = "1.0"
-thiserror = "2.0"
 rayon = "1"
 csv = "1.4"
 rapidhash = "4.4.1"
@@ -40,11 +39,9 @@ packed-seq = "4.4.2"
 simd-minimizers = "2.3.1"
 
 paraseq = { version = "0.4.13", default-features = false, features = ["anyhow", "niffler"] }
-niffler = "3"
+niffler = { version = "3", default-features = false }
 
-liblzma = { version = "0.4", optional = true }
 flate2 = { version = "1.1", features = ["zlib-rs"], optional = true }
-zstd = { version = "0.13", optional = true }
 
 [dev-dependencies]
 tempfile = "3.27"

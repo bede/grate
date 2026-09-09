@@ -25,3 +25,7 @@ jobs:
         run: mv .cargo/config-portable.toml .cargo/config.toml
       - name: Run tests
         run: cargo test
+      - name: Check without compression
+        run: cargo check --no-default-features
+      - name: Check gzip-only feature
+        run: cargo check --no-default-features --features gz

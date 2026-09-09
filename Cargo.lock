@@ -1029,7 +1029,6 @@ dependencies = [
  "csv",
  "flate2",
  "indicatif",
- "liblzma",
  "niffler",
  "nix",
  "packed-seq",
@@ -1039,9 +1038,7 @@ dependencies = [
  "rayon",
  "simd-minimizers",
  "tempfile",
- "thiserror 2.0.18",
  "wincode",
- "zstd",
 ]
 
 [[package]]
