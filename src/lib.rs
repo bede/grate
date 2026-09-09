@@ -1,4 +1,4 @@
-//! Accelerated genome containment estimation using syncmers.
+//! Accelerated genome containment estimation using syncmers
 pub mod classify;
 pub mod length;
 pub mod query;
@@ -91,6 +91,29 @@ pub fn read_index_kind(path: &Path) -> Option<IndexKind> {
     }
 }
 
+/// Effective k/s for `targets`: a prebuilt index supplies its own, noting any conflicting CLI
+/// values, otherwise CLI values fall back to defaults and are validated
+pub fn resolve_k_s(targets: &Path, k: Option<u8>, s: Option<u8>, quiet: bool) -> Result<(u8, u8)> {
+    if read_index_kind(targets).is_some() {
+        // Both index kinds share the header prefix (magic, kind, version, k, s)
+        use std::io::Read;
+        let mut buf = [0u8; 8];
+        std::fs::File::open(targets)?.read_exact(&mut buf)?;
+        let (index_k, index_s) = (buf[6], buf[7]);
+        let conflicts = k.is_some_and(|k| k != index_k) || s.is_some_and(|s| s != index_s);
+        if conflicts && !quiet {
+            eprintln!("Note: using k={index_k}, s={index_s} from index (CLI k/s ignored)");
+        }
+        return Ok((index_k, index_s));
+    }
+    let (k, s) = (
+        k.unwrap_or(DEFAULT_KMER_LENGTH),
+        s.unwrap_or(DEFAULT_SMER_LENGTH),
+    );
+    validate_k_s(k, s)?;
+    Ok((k, s))
+}
+
 /// Print metadata for a skope index of either kind (`skope index info`)
 pub fn run_index_info(path: &Path) -> Result<()> {
     let start = std::time::Instant::now();
@@ -138,7 +161,7 @@ pub fn reader_with_inferred_batch_size(
     Ok(reader)
 }
 
-/// Reader for one target path, treating `-` as stdin
+/// Read one target path, treating `-` as stdin
 pub fn reader_for_path(
     path: &Path,
 ) -> Result<paraseq::fastx::Reader<Box<dyn std::io::Read + Send>>> {
@@ -360,7 +383,7 @@ pub fn discover_target_groups(dir_path: &Path) -> Result<Vec<TargetGroup>> {
     Ok(groups)
 }
 
-/// Check whether a path is a special input (FIFO / process substitution)
+/// Whether a path is a FIFO or process substitution
 #[cfg(unix)]
 pub fn is_special_input_path(path: &Path) -> bool {
     use std::os::unix::fs::FileTypeExt;
@@ -413,16 +436,16 @@ fn looks_like_fastx(path: &Path) -> bool {
 /// `--individual` splits the records of a file, but a directory's children already group it.
 #[derive(Debug, Clone)]
 pub enum TargetSource {
-    /// A prebuilt `.sk` index of the expected kind
+    /// Prebuilt `.sk` index of the expected kind
     Index(PathBuf),
-    /// A single fastx file or stdin: records merge into one group unless `--individual`
+    /// Fastx file or stdin, merged unless `--individual`
     File(TargetGroup),
-    /// A directory: one group per top-level fastx file or subdirectory
+    /// Directory grouped by top-level file or subdirectory
     Directory(Vec<TargetGroup>),
 }
 
 impl TargetSource {
-    /// Groups to build from, empty for a prebuilt index
+    /// Groups to build, empty for a prebuilt index
     pub fn groups(&self) -> &[TargetGroup] {
         match self {
             Self::Index(_) => &[],
@@ -431,13 +454,13 @@ impl TargetSource {
         }
     }
 
-    /// True when `--individual` should split records into separate groups
+    /// Whether `--individual` should split records into groups
     pub fn splits_records(&self, individual: bool) -> bool {
         individual && matches!(self, Self::File(_))
     }
 }
 
-/// Name of the single group formed from stdin
+/// Name of the group formed from stdin
 pub const STDIN_TARGET_NAME: &str = "stdin";
 
 /// Whether a subcommand can take its targets from stdin. Only `index build-*` can:
@@ -448,7 +471,7 @@ pub enum StdinTargets {
     Reject,
 }
 
-/// Resolve a `<TARGETS>` positional for a subcommand expecting an index of kind `expect`.
+/// Resolve `<TARGETS>` for a subcommand expecting index kind `expect`
 ///
 /// Accepts, in order: `-` (only where `stdin` is [`StdinTargets::Accept`]), a prebuilt `.sk`
 /// index, a directory (one group per top-level fastx file or subdirectory), or a single fastx

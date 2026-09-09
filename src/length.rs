@@ -41,8 +41,6 @@ pub struct LengthHistogramConfig {
     /// Fastx file, directory of groups, `.sk` index, or `-` to disable group filtering
     pub targets_path: PathBuf,
     pub individual: bool,
-    /// True when the user passed -k/-s explicitly, so a prebuilt index can say it ignored them
-    pub k_s_from_cli: bool,
     pub sample_paths: Vec<Vec<PathBuf>>,
     pub sample_names: Vec<String>,
     pub kmer_length: u8,
@@ -54,7 +52,7 @@ pub struct LengthHistogramConfig {
     pub output_path: Option<PathBuf>,
     pub quiet: bool,
     pub limit_bp: Option<u64>,
-    /// True when targets_path == "-": no filtering, all reads go to a single "all" bucket
+    /// Whether targets_path disables filtering, placing everything in one bucket
     pub no_filter: bool,
 }
 
@@ -167,6 +165,7 @@ impl<Rf: Record> ParallelProcessor<Rf> for LengthHistogramProcessor {
         if let Some(limit) = self.limit_bp {
             let global_bp = self.global_stats.lock().total_bp;
             if global_bp >= limit {
+                ParallelProcessor::<Rf>::on_batch_complete(self)?;
                 return Err(paraseq::parallel::ProcessError::IoError(
                     sample_limit_reached_io_error(),
                 ));
@@ -466,12 +465,6 @@ pub fn run_lenhist(config: &LengthHistogramConfig) -> Result<()> {
                     for (i, name) in group_names.iter().enumerate() {
                         eprintln!("  [{}] {}", i, name);
                     }
-                }
-                if config.k_s_from_cli
-                    && (k != config.kmer_length || s != config.smer_length)
-                    && !config.quiet
-                {
-                    eprintln!("Note: using k={k}, s={s} from index (CLI k/s ignored)");
                 }
                 (index, group_names, k, s)
             }

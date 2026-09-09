@@ -327,7 +327,6 @@ fn test_length_histogram() {
 
     let config = LengthHistogramConfig {
         individual: false,
-        k_s_from_cli: false,
         targets_path: targets_path.path().to_path_buf(),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
@@ -367,7 +366,6 @@ fn test_length_histogram_all_seqs() {
 
     let config = LengthHistogramConfig {
         individual: false,
-        k_s_from_cli: false,
         targets_path: PathBuf::from("-"),
         sample_paths: vec![vec![PathBuf::from("data/rsviruses17900.1k.fastq.zst")]],
         sample_names: vec!["test".to_string()],
@@ -400,6 +398,33 @@ fn write_fasta(path: &std::path::Path, header: &str, seq: &str) {
     let mut f = std::fs::File::create(path).unwrap();
     writeln!(f, ">{}", header).unwrap();
     writeln!(f, "{}", seq).unwrap();
+}
+
+fn classify_to(
+    targets: &std::path::Path,
+    sample_paths: Vec<Vec<PathBuf>>,
+    sample_names: &[&str],
+    output: &std::path::Path,
+    per_seq: bool,
+    limit_bp: Option<u64>,
+) {
+    skope::run_classification(&ClassifyConfig {
+        targets_path: targets.to_path_buf(),
+        individual: false,
+        sample_paths,
+        sample_names: sample_names.iter().map(|name| name.to_string()).collect(),
+        kmer_length: 15,
+        smer_length: 7,
+        abs_threshold: 1,
+        rel_threshold: 0.0,
+        threads: 1,
+        limit_bp,
+        output_path: Some(output.to_path_buf()),
+        per_seq,
+        discriminatory: false,
+        quiet: true,
+    })
+    .unwrap();
 }
 
 const SEQ_A: &str =
@@ -722,6 +747,50 @@ fn test_query_cli_omits_noop_options() {
             .unwrap()
             .contains("--positions")
     );
+}
+
+#[test]
+fn test_query_cli_k_s_defaults_and_index_precedence() {
+    let dir = TempDir::new().unwrap();
+    let target = dir.path().join("target.fa");
+    let sample = dir.path().join("sample.fa");
+    let index = dir.path().join("target.sk");
+    write_fasta(&target, "target", SEQ_A);
+    write_fasta(&sample, "sample", SEQ_A);
+    build_index(target.clone(), vec![], index.clone());
+
+    let raw_out = dir.path().join("raw.tsv");
+    let raw = std::process::Command::new(env!("CARGO_BIN_EXE_skope"))
+        .args(["query", "-q", "-o"])
+        .arg(raw_out)
+        .arg(&target)
+        .arg(&sample)
+        .output()
+        .unwrap();
+    assert!(raw.status.success());
+    assert!(String::from_utf8_lossy(&raw.stderr).contains("options: k=31, s=9"));
+
+    let matching_out = dir.path().join("matching.tsv");
+    let matching = std::process::Command::new(env!("CARGO_BIN_EXE_skope"))
+        .args(["query", "-q", "-k", "15", "-o"])
+        .arg(matching_out)
+        .arg(&index)
+        .arg(&sample)
+        .output()
+        .unwrap();
+    assert!(matching.status.success());
+    assert!(!String::from_utf8_lossy(&matching.stderr).contains("CLI k/s ignored"));
+
+    let conflicting_out = dir.path().join("conflicting.tsv");
+    let conflicting = std::process::Command::new(env!("CARGO_BIN_EXE_skope"))
+        .args(["query", "-k", "31", "-o"])
+        .arg(conflicting_out)
+        .arg(&index)
+        .arg(&sample)
+        .output()
+        .unwrap();
+    assert!(conflicting.status.success());
+    assert!(String::from_utf8_lossy(&conflicting.stderr).contains("CLI k/s ignored"));
 }
 
 #[cfg(unix)]
@@ -1060,7 +1129,6 @@ fn lenhist_groups(
     skope::run_lenhist(&LengthHistogramConfig {
         targets_path,
         individual,
-        k_s_from_cli: false,
         sample_paths: vec![vec![sample.to_path_buf()]],
         sample_names: vec!["s".to_string()],
         kmer_length: 15,
@@ -1089,7 +1157,7 @@ fn lenhist_groups(
 
 #[test]
 fn test_lenhist_accepts_bare_fastx_file() {
-    // Regression: a fastx file was rejected as "not a skope classification index"
+    // Regression for fastx files misread as classification indexes
     let dir = TempDir::new().unwrap();
     let (targets, sample) = (dir.path().join("segments.fa"), dir.path().join("s.fa"));
     let seq = pseudo_dna_string(500, 11);
@@ -1161,7 +1229,7 @@ fn test_classify_accepts_bare_fastx_file() {
     })
     .unwrap();
 
-    // The one group is named after the file, and the matching read lands in it
+    // The matching read lands in the file-named group
     let content = std::fs::read_to_string(out).unwrap();
     let row = content
         .lines()
@@ -1172,6 +1240,118 @@ fn test_classify_accepts_bare_fastx_file() {
         Some("1"),
         "expected the read classified into 'refs': {content}"
     );
+}
+
+#[test]
+fn test_classify_limit_spans_files_and_resets_per_sample() {
+    let dir = TempDir::new().unwrap();
+    let targets = dir.path().join("targets.fa");
+    let first = dir.path().join("first.fa");
+    let second = dir.path().join("second.fa");
+    write_fasta(&targets, "target", SEQ_A);
+    write_fasta(&first, "first", SEQ_A);
+    write_fasta(&second, "second", SEQ_A);
+
+    let summary_out = dir.path().join("summary.tsv");
+    classify_to(
+        &targets,
+        vec![vec![first.clone(), second.clone()]],
+        &["sample"],
+        &summary_out,
+        false,
+        Some(1),
+    );
+
+    let summary_seqs: u64 = std::fs::read_to_string(summary_out)
+        .unwrap()
+        .lines()
+        .skip(1)
+        .map(|line| line.split('\t').nth(3).unwrap().parse::<u64>().unwrap())
+        .sum();
+    assert_eq!(summary_seqs, 1, "summary mode should skip the second file");
+
+    let per_seq_out = dir.path().join("per-seq.tsv");
+    classify_to(
+        &targets,
+        vec![vec![first.clone(), second.clone()], vec![first, second]],
+        &["sample_a", "sample_b"],
+        &per_seq_out,
+        true,
+        Some(1),
+    );
+
+    let output = std::fs::read_to_string(per_seq_out).unwrap();
+    let rows: Vec<&str> = output.lines().skip(1).collect();
+    assert_eq!(rows.len(), 2, "each sample should receive its own limit");
+    assert!(rows.iter().any(|row| row.starts_with("sample_a\tfirst\t")));
+    assert!(rows.iter().any(|row| row.starts_with("sample_b\tfirst\t")));
+    assert!(!output.contains("\tsecond\t"));
+}
+
+#[test]
+fn test_classify_modes_report_all_outcomes() {
+    let dir = TempDir::new().unwrap();
+    let targets = dir.path().join("targets");
+    let sample = dir.path().join("sample.fa");
+    std::fs::create_dir(&targets).unwrap();
+
+    let seq_a = pseudo_dna_string(500, 11);
+    let seq_b = pseudo_dna_string(500, 29);
+    let unrelated = pseudo_dna_string(500, 47);
+    write_fasta(&targets.join("a.fa"), "a", &seq_a);
+    write_fasta(&targets.join("b.fa"), "b", &seq_b);
+    std::fs::write(
+        &sample,
+        format!(
+            ">classified\n{seq_a}\n>ambiguous\n{seq_a}NNNNNNNNNNNNNNN{seq_b}\n>unclassified\n{unrelated}\n"
+        ),
+    )
+    .unwrap();
+
+    let summary = dir.path().join("summary.tsv");
+    classify_to(
+        &targets,
+        vec![vec![sample.clone()]],
+        &["sample"],
+        &summary,
+        false,
+        None,
+    );
+    let summary = std::fs::read_to_string(summary).unwrap();
+    for (group, seqs) in [
+        ("a", "1"),
+        ("b", "0"),
+        ("ambiguous", "1"),
+        ("unclassified", "1"),
+    ] {
+        let row = summary
+            .lines()
+            .find(|line| line.split('\t').nth(1) == Some(group))
+            .unwrap();
+        assert_eq!(row.split('\t').nth(3), Some(seqs));
+    }
+
+    let per_seq = dir.path().join("per-seq.tsv");
+    classify_to(
+        &targets,
+        vec![vec![sample]],
+        &["sample"],
+        &per_seq,
+        true,
+        None,
+    );
+    let per_seq = std::fs::read_to_string(per_seq).unwrap();
+    for (id, outcome) in [
+        ("classified", "classified"),
+        ("ambiguous", "ambiguous"),
+        ("unclassified", "unclassified"),
+    ] {
+        let row = per_seq
+            .lines()
+            .find(|line| line.split('\t').nth(1) == Some(id))
+            .unwrap();
+        assert_eq!(row.split('\t').nth(2), Some(outcome));
+    }
 }
 
 #[test]
@@ -1249,7 +1429,7 @@ fn test_resolve_targets_input_forms() {
     let file = dir.path().join("t.fa");
     write_fasta(&file, "t1", SEQ_A);
 
-    // Single fastx file: one group named after the file
+    // Single fastx file grouped by filename
     match skope::resolve_targets(&file, skope::IndexKind::Query, skope::StdinTargets::Reject)
         .unwrap()
     {
@@ -1260,7 +1440,7 @@ fn test_resolve_targets_input_forms() {
         other => panic!("expected File, got {other:?}"),
     }
 
-    // Directory: one group per child
+    // Directory grouped by child
     let groups_dir = TempDir::new().unwrap();
     write_fasta(&groups_dir.path().join("a.fa"), "a1", SEQ_A);
     write_fasta(&groups_dir.path().join("b.fa"), "b1", SEQ_B);
@@ -1287,7 +1467,7 @@ fn test_resolve_targets_input_forms() {
         skope::TargetSource::Index(_)
     ));
 
-    // stdin: rejected where the samples already claim `-`, accepted by the build commands
+    // stdin rejected when samples claim `-`, accepted by build commands
     let dash = std::path::Path::new("-");
     let err = skope::resolve_targets(dash, skope::IndexKind::Query, skope::StdinTargets::Reject)
         .unwrap_err()

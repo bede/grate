@@ -470,7 +470,7 @@ fn merge_targets(targets: Vec<TargetInfo>, name: String) -> Result<TargetInfo> {
     Ok(merged)
 }
 
-/// Process resolved targets into `TargetInfo`s.
+/// Process resolved targets into `TargetInfo`s
 ///
 /// A directory always yields one target per child, named after that child. A single fastx
 /// file yields one target named after the file, unless `--individual` is set or it holds a
@@ -604,6 +604,7 @@ impl<Rf: Record> ParallelProcessor<Rf> for SeqsProcessor {
         if let Some(limit) = self.limit_bp {
             let global_bp = self.global_stats.lock().total_bp;
             if global_bp >= limit {
+                ParallelProcessor::<Rf>::on_batch_complete(self)?;
                 return Err(paraseq::parallel::ProcessError::IoError(
                     sample_limit_reached_io_error(),
                 ));

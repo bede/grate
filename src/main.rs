@@ -1,15 +1,12 @@
 use anyhow::{Context, Result};
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{Parser, Subcommand};
 use std::collections::HashSet;
 use std::path::PathBuf;
 
 use skope::{
-    derive_sample_name, find_fastx_files, find_fastx_files_recursive, is_special_input_path,
-    validate_k_s,
+    DEFAULT_KMER_LENGTH, DEFAULT_SMER_LENGTH, derive_sample_name, find_fastx_files,
+    find_fastx_files_recursive, is_special_input_path, resolve_k_s, validate_k_s,
 };
-
-const DEFAULT_KMER_LENGTH: u8 = 31;
-const DEFAULT_SMER_LENGTH: u8 = 9;
 
 /// Validate the FracMinHash fraction is in (0, 1]
 fn validate_fraction(fraction: f64) -> Result<()> {
@@ -21,19 +18,12 @@ fn validate_fraction(fraction: f64) -> Result<()> {
     Ok(())
 }
 
-/// True when -k or -s were given explicitly on the subcommand at `path`, rather than left at
-/// their clap defaults, so a prebuilt index only reports ignoring values the user chose.
-fn k_s_from_cli(matches: &clap::ArgMatches, path: &[&str]) -> bool {
-    let mut matches = matches;
-    for name in path {
-        match matches.subcommand_matches(name) {
-            Some(sub) => matches = sub,
-            None => return false,
-        }
-    }
-    ["kmer_length", "smer_length"]
-        .iter()
-        .any(|arg| matches.value_source(arg) == Some(clap::parser::ValueSource::CommandLine))
+fn k_help() -> String {
+    format!("K-mer length (1-61, default {DEFAULT_KMER_LENGTH}), read from a prebuilt index")
+}
+
+fn s_help() -> String {
+    format!("S-mer length (odd, s < k, default {DEFAULT_SMER_LENGTH}), read from a prebuilt index")
 }
 
 fn validate_sample_names(names: &[String]) -> Result<()> {
@@ -56,50 +46,77 @@ fn validate_sample_names(names: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Expand sample inputs (files and directories) into lists of files per sample
-fn expand_sample_inputs(inputs: &[PathBuf]) -> Result<(Vec<Vec<PathBuf>>, Vec<bool>)> {
-    let mut expanded_samples = Vec::new();
-    let mut is_directory = Vec::new();
+#[derive(Debug)]
+struct PreparedSamples {
+    paths: Vec<Vec<PathBuf>>,
+    names: Vec<String>,
+}
 
-    for input in inputs {
-        // Check stdin special case
-        if input.to_string_lossy() == "-" {
-            expanded_samples.push(vec![input.clone()]);
-            is_directory.push(false);
-            continue;
-        }
-
-        // Check for special input paths (FIFOs / process substitution)
-        if is_special_input_path(input) {
-            expanded_samples.push(vec![input.clone()]);
-            is_directory.push(false);
-            continue;
-        }
-
-        // Check path exists
-        if !input.exists() {
-            return Err(anyhow::anyhow!("Path does not exist: {}", input.display()));
-        }
-
-        let metadata = std::fs::metadata(input)
-            .with_context(|| format!("Failed to access path: {}", input.display()))?;
-
-        if metadata.is_file() {
-            expanded_samples.push(vec![input.clone()]);
-            is_directory.push(false);
-        } else if metadata.is_dir() {
-            let files = find_fastx_files(input)?;
-            expanded_samples.push(files);
-            is_directory.push(true);
-        } else {
-            return Err(anyhow::anyhow!(
-                "Path is neither a regular file nor directory: {}",
-                input.display()
-            ));
-        }
+fn prepare_samples(inputs: &[PathBuf], names: Option<&[String]>) -> Result<PreparedSamples> {
+    if let Some(names) = names
+        && names.len() != inputs.len()
+    {
+        return Err(anyhow::anyhow!(
+            "Number of sample names ({}) must match number of samples ({})",
+            names.len(),
+            inputs.len()
+        ));
     }
 
-    Ok((expanded_samples, is_directory))
+    let mut paths = Vec::with_capacity(inputs.len());
+    let mut prepared_names = Vec::with_capacity(inputs.len());
+
+    for (i, input) in inputs.iter().enumerate() {
+        let (sample_paths, is_directory) =
+            if input.to_string_lossy() == "-" || is_special_input_path(input) {
+                (vec![input.clone()], false)
+            } else {
+                if !input.exists() {
+                    return Err(anyhow::anyhow!("Path does not exist: {}", input.display()));
+                }
+                let metadata = std::fs::metadata(input)
+                    .with_context(|| format!("Failed to access path: {}", input.display()))?;
+                if metadata.is_file() {
+                    (vec![input.clone()], false)
+                } else if metadata.is_dir() {
+                    (find_fastx_files(input)?, true)
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "Path is neither a regular file nor directory: {}",
+                        input.display()
+                    ));
+                }
+            };
+        paths.push(sample_paths);
+        prepared_names.push(names.map_or_else(
+            || derive_sample_name(input, is_directory),
+            |names| names[i].clone(),
+        ));
+    }
+
+    validate_sample_names(&prepared_names)?;
+    Ok(PreparedSamples {
+        paths,
+        names: prepared_names,
+    })
+}
+
+fn initialise_thread_pool(threads: usize) -> Result<()> {
+    if threads > 0 {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .build_global()
+            .context("Failed to initialise thread pool")?;
+    }
+    Ok(())
+}
+
+fn output_path(output: &str) -> Option<PathBuf> {
+    (output != "-").then(|| PathBuf::from(output))
+}
+
+fn parse_limit(limit: Option<&str>) -> Result<Option<u64>> {
+    limit.map(parse_bases).transpose()
 }
 
 /// Expand background inputs into a flat list of fastx files (directories searched recursively)
@@ -156,7 +173,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum IndexCommands {
-    /// Build a classification index (.sk) from fastx file(s) or a directory of groups
+    /// Build a classification index (.sk) from fastx file(s) or a directory of groups (alpha)
     #[command(alias = "build")]
     BuildClassify {
         /// Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir), or - for stdin
@@ -187,7 +204,7 @@ enum IndexCommands {
         quiet: bool,
     },
 
-    /// Build a query index (.sk) from target fastx file(s), optionally masking background syncmers
+    /// Build a query index (.sk) from target fastx file(s), optionally masking background syncmers (alpha)
     BuildQuery {
         /// Path to fastx file (single target unless -i), directory of fastx files/subdirs (one target per child file/subdir), or - for stdin
         targets: PathBuf,
@@ -234,7 +251,7 @@ enum IndexCommands {
         quiet: bool,
     },
 
-    /// Show metadata for an index (.sk)
+    /// Show metadata for an index (.sk) (alpha)
     Info {
         /// Path to index file (.sk)
         index: PathBuf,
@@ -252,13 +269,11 @@ enum Commands {
         #[arg(required = true)]
         samples: Vec<PathBuf>,
 
-        /// K-mer length (1-61)
-        #[arg(short = 'k', long = "kmer", value_name = "K", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
-        kmer_length: u8,
+        #[arg(short = 'k', long = "kmer", value_name = "K", value_parser = clap::value_parser!(u8).range(1..=61), help = k_help())]
+        kmer_length: Option<u8>,
 
-        /// S-mer length used for syncmer selection (s < k, s must be odd)
-        #[arg(short = 's', long = "smer", value_name = "S", default_value_t = DEFAULT_SMER_LENGTH)]
-        smer_length: u8,
+        #[arg(short = 's', long = "smer", value_name = "S", help = s_help())]
+        smer_length: Option<u8>,
 
         /// Treat each fastx record as separate target (default: merge records into one target)
         #[arg(short = 'i', long = "individual", default_value_t = false)]
@@ -333,7 +348,7 @@ enum Commands {
         quiet: bool,
     },
 
-    /// Classify sequences into groups by syncmer content
+    /// Classify sequences into groups by syncmer content (alpha)
     Classify {
         /// Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir) or classification index (.sk)
         targets: PathBuf,
@@ -346,13 +361,11 @@ enum Commands {
         #[arg(required = true)]
         samples: Vec<PathBuf>,
 
-        /// K-mer length, ignored when targets is a prebuilt index (1-61, must be odd)
-        #[arg(short = 'k', long = "kmer", value_name = "K", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
-        kmer_length: u8,
+        #[arg(short = 'k', long = "kmer", value_name = "K", value_parser = clap::value_parser!(u8).range(1..=61), help = k_help())]
+        kmer_length: Option<u8>,
 
-        /// S-mer length used for open syncmer selection, ignored when targets is a prebuilt index
-        #[arg(short = 's', long = "smer", value_name = "S", default_value_t = DEFAULT_SMER_LENGTH)]
-        smer_length: u8,
+        #[arg(short = 's', long = "smer", value_name = "S", help = s_help())]
+        smer_length: Option<u8>,
 
         /// Consider only syncmers unique to each group
         #[arg(short = 'd', long = "discriminatory", default_value_t = false)]
@@ -406,7 +419,7 @@ enum Commands {
         quiet: bool,
     },
 
-    /// Generate per-group length histograms based on syncmer classification
+    /// Generate per-group length histograms based on syncmer classification (alpha)
     Lenhist {
         /// Path to fastx file (single group unless -i), directory of fastx files/subdirs (one group per child file/subdir), classification index (.sk), or - to disable group filtering (single "all" bucket)
         targets: PathBuf,
@@ -420,13 +433,11 @@ enum Commands {
         samples: Vec<PathBuf>,
 
         // Algorithm parameters
-        /// K-mer length, ignored when targets is a prebuilt index (1-61, must be odd)
-        #[arg(short = 'k', long = "kmer", value_name = "K", default_value_t = DEFAULT_KMER_LENGTH, value_parser = clap::value_parser!(u8).range(1..=61))]
-        kmer_length: u8,
+        #[arg(short = 'k', long = "kmer", value_name = "K", value_parser = clap::value_parser!(u8).range(1..=61), help = k_help())]
+        kmer_length: Option<u8>,
 
-        /// S-mer length used for open syncmer selection, ignored when targets is a prebuilt index
-        #[arg(short = 's', long = "smer", value_name = "S", default_value_t = DEFAULT_SMER_LENGTH)]
-        smer_length: u8,
+        #[arg(short = 's', long = "smer", value_name = "S", help = s_help())]
+        smer_length: Option<u8>,
 
         /// Consider only syncmers unique to each group
         #[arg(short = 'd', long = "discriminatory", default_value_t = false)]
@@ -478,7 +489,7 @@ enum Commands {
         quiet: bool,
     },
 
-    /// Build and manage query and classification indexes
+    /// Build and manage query and classification indexes (alpha)
     #[command(subcommand)]
     Index(IndexCommands),
 }
@@ -492,10 +503,7 @@ fn main() -> Result<()> {
         );
     }
 
-    let matches = Cli::command().get_matches();
-    let cli = Cli::from_arg_matches(&matches)
-        .map_err(|e| e.exit())
-        .unwrap();
+    let cli = Cli::parse();
 
     match &cli.command {
         Commands::Index(index_cmd) => match index_cmd {
@@ -510,12 +518,7 @@ fn main() -> Result<()> {
             } => {
                 validate_k_s(*kmer_length, *smer_length)?;
 
-                if *threads > 0 {
-                    rayon::ThreadPoolBuilder::new()
-                        .num_threads(*threads)
-                        .build_global()
-                        .context("Failed to initialise thread pool")?;
-                }
+                initialise_thread_pool(*threads)?;
 
                 let config = skope::BuildClassifyConfig {
                     targets_path: targets.clone(),
@@ -523,11 +526,7 @@ fn main() -> Result<()> {
                     kmer_length: *kmer_length,
                     smer_length: *smer_length,
                     threads: *threads,
-                    output_path: if output == "-" {
-                        None
-                    } else {
-                        Some(PathBuf::from(output))
-                    },
+                    output_path: output_path(output),
                     quiet: *quiet,
                 };
 
@@ -550,12 +549,7 @@ fn main() -> Result<()> {
                 validate_k_s(*kmer_length, *smer_length)?;
                 validate_fraction(*fraction)?;
 
-                if *threads > 0 {
-                    rayon::ThreadPoolBuilder::new()
-                        .num_threads(*threads)
-                        .build_global()
-                        .context("Failed to initialise thread pool")?;
-                }
+                initialise_thread_pool(*threads)?;
 
                 let config = skope::BuildQueryConfig {
                     targets_path: targets.clone(),
@@ -565,11 +559,7 @@ fn main() -> Result<()> {
                     individual: *individual,
                     positions: *positions,
                     threads: *threads,
-                    output_path: if output == "-" {
-                        None
-                    } else {
-                        Some(PathBuf::from(output))
-                    },
+                    output_path: output_path(output),
                     quiet: *quiet,
                     fraction: *fraction,
                 };
@@ -598,61 +588,23 @@ fn main() -> Result<()> {
             per_seq,
             quiet,
         } => {
-            let (expanded_samples, is_directory) = expand_sample_inputs(samples)?;
-
-            let derived_sample_names: Vec<String> = if let Some(names) = sample_names {
-                if names.len() != expanded_samples.len() {
-                    return Err(anyhow::anyhow!(
-                        "Number of sample names ({}) must match number of samples ({})",
-                        names.len(),
-                        expanded_samples.len()
-                    ));
-                }
-                names.clone()
-            } else {
-                samples
-                    .iter()
-                    .zip(&is_directory)
-                    .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
-                    .collect()
-            };
-
-            validate_sample_names(&derived_sample_names)?;
-
-            // A prebuilt index carries its own k/s; otherwise the CLI values are used
-            if skope::read_index_kind(targets).is_none() {
-                validate_k_s(*kmer_length, *smer_length)?;
-            }
-
-            if *threads > 0 {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(*threads)
-                    .build_global()
-                    .context("Failed to initialise thread pool")?;
-            }
-
-            let limit_bp = if let Some(s) = limit {
-                Some(parse_bases(s)?)
-            } else {
-                None
-            };
+            let prepared = prepare_samples(samples, sample_names.as_deref())?;
+            let (kmer_length, smer_length) =
+                resolve_k_s(targets, *kmer_length, *smer_length, *quiet)?;
+            initialise_thread_pool(*threads)?;
 
             let config = skope::ClassifyConfig {
                 targets_path: targets.clone(),
                 individual: *individual,
-                sample_paths: expanded_samples,
-                sample_names: derived_sample_names,
-                kmer_length: *kmer_length,
-                smer_length: *smer_length,
+                sample_paths: prepared.paths,
+                sample_names: prepared.names,
+                kmer_length,
+                smer_length,
                 abs_threshold: *abs_threshold,
                 rel_threshold: *rel_threshold,
                 threads: *threads,
-                limit_bp,
-                output_path: if output == "-" {
-                    None
-                } else {
-                    Some(PathBuf::from(output))
-                },
+                limit_bp: parse_limit(limit.as_deref())?,
+                output_path: output_path(output),
                 per_seq: *per_seq,
                 discriminatory: *discriminatory,
                 quiet: *quiet,
@@ -681,61 +633,12 @@ fn main() -> Result<()> {
             background,
             fraction,
         } => {
-            // Expand directories to lists of files
-            let (expanded_samples, is_directory) = expand_sample_inputs(samples)?;
+            let prepared = prepare_samples(samples, sample_names.as_deref())?;
             let background_paths = expand_background_inputs(background)?;
-
-            // Derive or validate sample names
-            let derived_sample_names: Vec<String> = if let Some(names) = sample_names {
-                // User-provided names
-                if names.len() != expanded_samples.len() {
-                    return Err(anyhow::anyhow!(
-                        "Number of sample names ({}) must match number of samples ({})",
-                        names.len(),
-                        expanded_samples.len()
-                    ));
-                }
-                names.clone()
-            } else {
-                // Derive from filenames/directory names
-                samples
-                    .iter()
-                    .zip(&is_directory)
-                    .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
-                    .collect()
-            };
-
-            // Validate uniqueness and FracMinHash fraction before resolving target/index parameters
-            validate_sample_names(&derived_sample_names)?;
             validate_fraction(*fraction)?;
-
-            // A prebuilt index carries its own k/s and fraction; else validate CLI k/s
-            let (eff_k, eff_s) = if skope::read_index_kind(targets) == Some(skope::IndexKind::Query)
-            {
-                let (k, s, _fraction) = skope::read_query_index_meta(targets)?;
-                if k_s_from_cli(&matches, &["query"]) && (k, s) != (*kmer_length, *smer_length) {
-                    eprintln!("Note: using k={k}, s={s} from index (CLI k/s ignored)");
-                }
-                (k, s)
-            } else {
-                validate_k_s(*kmer_length, *smer_length)?;
-                (*kmer_length, *smer_length)
-            };
-
-            // Configure thread pool if specified (non-zero)
-            if *threads > 0 {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(*threads)
-                    .build_global()
-                    .context("Failed to initialise thread pool")?;
-            }
-
-            // Parse limit if provided
-            let limit_bp = if let Some(s) = limit {
-                Some(parse_bases(s)?)
-            } else {
-                None
-            };
+            let (kmer_length, smer_length) =
+                resolve_k_s(targets, *kmer_length, *smer_length, *quiet)?;
+            initialise_thread_pool(*threads)?;
 
             // Parse sort order
             let sort_order = match sort.as_str() {
@@ -748,21 +651,17 @@ fn main() -> Result<()> {
             let config = skope::ContainmentConfig {
                 targets_path: targets.clone(),
                 background_paths,
-                sample_paths: expanded_samples,
-                sample_names: derived_sample_names,
-                kmer_length: eff_k,
-                smer_length: eff_s,
+                sample_paths: prepared.paths,
+                sample_names: prepared.names,
+                kmer_length,
+                smer_length,
                 threads: *threads,
-                output_path: if output == "-" {
-                    None
-                } else {
-                    Some(PathBuf::from(output))
-                },
+                output_path: output_path(output),
                 quiet: *quiet,
                 abundance_thresholds: abundance_thresholds.clone(),
                 discriminatory: *discriminatory,
                 individual: *individual,
-                limit_bp,
+                limit_bp: parse_limit(limit.as_deref())?,
                 sort_order,
                 dump_syncmers_path: dump_syncmers.clone(),
                 no_total: *no_total,
@@ -789,48 +688,10 @@ fn main() -> Result<()> {
             quiet,
             limit,
         } => {
-            // Expand directories to lists of files
-            let (expanded_samples, is_directory) = expand_sample_inputs(samples)?;
-
-            // Derive or validate sample names
-            let derived_sample_names: Vec<String> = if let Some(names) = sample_names {
-                // User-provided names
-                if names.len() != expanded_samples.len() {
-                    return Err(anyhow::anyhow!(
-                        "Number of sample names ({}) must match number of samples ({})",
-                        names.len(),
-                        expanded_samples.len()
-                    ));
-                }
-                names.clone()
-            } else {
-                // Derive from filenames/directory names
-                samples
-                    .iter()
-                    .zip(&is_directory)
-                    .map(|(p, &is_dir)| derive_sample_name(p, is_dir))
-                    .collect()
-            };
-
-            // Validate uniqueness
-            validate_sample_names(&derived_sample_names)?;
-
-            validate_k_s(*kmer_length, *smer_length)?;
-
-            // Configure thread pool if specified (non-zero)
-            if *threads > 0 {
-                rayon::ThreadPoolBuilder::new()
-                    .num_threads(*threads)
-                    .build_global()
-                    .context("Failed to initialise thread pool")?;
-            }
-
-            // Parse limit if provided
-            let limit_bp = if let Some(s) = limit {
-                Some(parse_bases(s)?)
-            } else {
-                None
-            };
+            let prepared = prepare_samples(samples, sample_names.as_deref())?;
+            let (kmer_length, smer_length) =
+                resolve_k_s(targets, *kmer_length, *smer_length, *quiet)?;
+            initialise_thread_pool(*threads)?;
 
             // `-` keeps its lenhist-specific meaning: no filtering, single "all" bucket
             let no_filter = targets.to_string_lossy() == "-";
@@ -838,22 +699,17 @@ fn main() -> Result<()> {
             let config = skope::LengthHistogramConfig {
                 targets_path: targets.clone(),
                 individual: *individual,
-                k_s_from_cli: k_s_from_cli(&matches, &["lenhist"]),
-                sample_paths: expanded_samples,
-                sample_names: derived_sample_names,
-                kmer_length: *kmer_length,
-                smer_length: *smer_length,
+                sample_paths: prepared.paths,
+                sample_names: prepared.names,
+                kmer_length,
+                smer_length,
                 abs_threshold: *abs_threshold,
                 rel_threshold: *rel_threshold,
                 discriminatory: *discriminatory,
                 threads: *threads,
-                output_path: if output == "-" {
-                    None
-                } else {
-                    Some(PathBuf::from(output))
-                },
+                output_path: output_path(output),
                 quiet: *quiet,
-                limit_bp,
+                limit_bp: parse_limit(limit.as_deref())?,
                 no_filter,
             };
 
@@ -864,4 +720,38 @@ fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    #[test]
+    fn prepare_samples_expands_inputs_and_derives_names() {
+        let temp = TempDir::new().unwrap();
+        let file = temp.path().join("single.fastq");
+        let directory = temp.path().join("reads");
+        std::fs::write(&file, b"@r\nACGT\n+\nIIII\n").unwrap();
+        std::fs::create_dir(&directory).unwrap();
+        std::fs::write(directory.join("part.fa"), b">r\nACGT\n").unwrap();
+
+        let prepared = prepare_samples(&[file.clone(), directory.clone()], None).unwrap();
+        assert_eq!(prepared.names, ["single", "reads"]);
+        assert_eq!(
+            prepared.paths,
+            [vec![file], vec![directory.join("part.fa")]]
+        );
+    }
+
+    #[test]
+    fn prepare_samples_validates_supplied_names() {
+        let error = prepare_samples(&[PathBuf::from("-")], Some(&[])).unwrap_err();
+        assert!(error.to_string().contains("must match number of samples"));
+
+        let names = ["same".to_string(), "same".to_string()];
+        let error =
+            prepare_samples(&[PathBuf::from("-"), PathBuf::from("-")], Some(&names)).unwrap_err();
+        assert!(error.to_string().contains("Duplicate sample names"));
+    }
 }

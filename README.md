@@ -86,9 +86,9 @@ Run the plotting scripts with [uv](https://docs.astral.sh/uv/) to automatically 
 **Main commands**
 ```
   query     Estimate syncmer containment & abundance in fastx file(s) or directories thereof
-  classify  Classify sequences into groups by their syncmer content
-  lenhist   Generate per-group length histograms based on syncmer classification
-  index     Build and manage query and classification indexes
+  classify  Classify sequences into groups by their syncmer content (alpha)
+  lenhist   Generate per-group length histograms based on syncmer classification (alpha)
+  index     Build and manage query and classification indexes (alpha)
 ```
 
 **Query**
@@ -104,8 +104,8 @@ Arguments:
   <SAMPLES>...  Path(s) to fastx files/dirs (- for stdin). Each file/dir is treated as a separate sample
 
 Options:
-  -k, --kmer <K>                        K-mer length (1-61) [default: 31]
-  -s, --smer <S>                        S-mer length used for syncmer selection (s < k, s must be odd) [default: 9]
+  -k, --kmer <K>                        K-mer length (1-61, default 31), read from a prebuilt index
+  -s, --smer <S>                        S-mer length (odd, s < k, default 9), read from a prebuilt index
   -i, --individual                      Treat each fastx record as separate target (default: merge records into one target)
   -c, --confidence                      Report confidence intervals, ANI estimates, and patchiness columns
   -d, --discriminatory                  Consider only syncmers unique to each target
@@ -127,7 +127,7 @@ Options:
 
 ```bash
 $ skope classify -h
-Classify sequences into groups by syncmer content
+Classify sequences into groups by syncmer content (alpha)
 
 Usage: skope classify [OPTIONS] <TARGETS> <SAMPLES>...
 
@@ -137,8 +137,8 @@ Arguments:
 
 Options:
   -i, --individual                     Treat each fastx record as a separate group (single fastx file only)
-  -k, --kmer <K>                       K-mer length, ignored when targets is a prebuilt index (1-61, must be odd) [default: 31]
-  -s, --smer <S>                       S-mer length used for open syncmer selection, ignored when targets is a prebuilt index [default: 9]
+  -k, --kmer <K>                       K-mer length (1-61, default 31), read from a prebuilt index
+  -s, --smer <S>                       S-mer length (odd, s < k, default 9), read from a prebuilt index
   -d, --discriminatory                 Consider only syncmers unique to each group
   -a, --abs-threshold <ABS_THRESHOLD>  Minimum absolute number of syncmer hits for a match [default: 1]
   -r, --rel-threshold <REL_THRESHOLD>  Minimum relative proportion (0.0-1.0) of syncmer hits for a match [default: 0]
@@ -155,7 +155,7 @@ Options:
 
 ```bash
 $ skope lenhist -h
-Generate per-group length histograms based on syncmer classification
+Generate per-group length histograms based on syncmer classification (alpha)
 
 Usage: skope lenhist [OPTIONS] <TARGETS> <SAMPLES>...
 
@@ -165,8 +165,8 @@ Arguments:
 
 Options:
   -i, --individual                     Treat each fastx record as a separate group (single fastx file only)
-  -k, --kmer <K>                       K-mer length, ignored when targets is a prebuilt index (1-61, must be odd) [default: 31]
-  -s, --smer <S>                       S-mer length used for open syncmer selection, ignored when targets is a prebuilt index [default: 9]
+  -k, --kmer <K>                       K-mer length (1-61, default 31), read from a prebuilt index
+  -s, --smer <S>                       S-mer length (odd, s < k, default 9), read from a prebuilt index
   -d, --discriminatory                 Consider only syncmers unique to each group
   -a, --abs-threshold <ABS_THRESHOLD>  Minimum absolute number of syncmer hits for a match [default: 1]
   -r, --rel-threshold <REL_THRESHOLD>  Minimum relative proportion (0.0-1.0) of syncmer hits for a match [default: 0]
